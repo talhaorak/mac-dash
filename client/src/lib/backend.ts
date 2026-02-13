@@ -3,7 +3,9 @@
  * Detection: window.__TAURI__ is injected by Tauri runtime.
  */
 
-const isTauri = () => typeof window !== "undefined" && !!(window as any).__TAURI__;
+const isTauri = () =>
+  typeof window !== "undefined" &&
+  (!!((window as any).__TAURI__) || !!((window as any).__TAURI_INTERNALS__));
 
 let tauriInvoke: ((cmd: string, args?: any) => Promise<any>) | null = null;
 

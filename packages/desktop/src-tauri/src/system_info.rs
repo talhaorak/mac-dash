@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct CpuStats {
     pub user: f32,
     pub sys: f32,
@@ -14,6 +15,7 @@ pub struct CpuStats {
 }
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct MemoryStats {
     pub total: u64,
     pub used: u64,
@@ -24,6 +26,7 @@ pub struct MemoryStats {
 }
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct DiskStats {
     pub total: u64,
     pub used: u64,
@@ -33,6 +36,7 @@ pub struct DiskStats {
 }
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SystemStats {
     pub cpu: CpuStats,
     pub memory: MemoryStats,
@@ -45,6 +49,7 @@ pub struct SystemStats {
 }
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct HardwareInfo {
     pub model: String,
     pub cpu: String,

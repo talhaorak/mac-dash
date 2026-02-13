@@ -4,6 +4,7 @@ use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct LogEntry {
     pub timestamp: String,
     pub level: String,

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use tokio::process::Command;
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ServiceInfo {
     pub label: String,
     pub pid: Option<i32>,
@@ -18,6 +19,7 @@ pub struct ServiceInfo {
 }
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ServiceDetail {
     pub path: Option<String>,
     pub r#type: Option<String>,

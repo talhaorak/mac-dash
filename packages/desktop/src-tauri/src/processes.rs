@@ -3,6 +3,7 @@ use sysinfo::{ProcessesToUpdate, ProcessRefreshKind, System};
 use std::sync::Mutex;
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ProcessInfo {
     pub pid: u32,
     pub ppid: u32,
