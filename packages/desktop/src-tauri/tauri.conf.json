@@ -47,14 +47,5 @@
       "entitlements": null
     }
   },
-  "plugins": {
-    "global-shortcut": {
-      "shortcuts": ["CmdOrCtrl+Shift+D"]
-    },
-    "autostart": {
-      "macOS": {
-        "launchAtLogin": false
-      }
-    }
-  }
+  "plugins": {}
 }

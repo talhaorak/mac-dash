@@ -101,7 +101,7 @@ pub fn start_log_stream() {
         return; // already running
     }
 
-    tokio::spawn(async {
+    tauri::async_runtime::spawn(async {
         let mut child = match Command::new("log")
             .args(["stream", "--style", "compact", "--level", "info"])
             .stdout(std::process::Stdio::piped())
