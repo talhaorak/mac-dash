@@ -1,0 +1,77 @@
+{
+  "name": "mac-dash",
+  "version": "1.0.0",
+  "description": "Beautiful macOS system dashboard — monitor services, processes, resources and logs in real-time",
+  "type": "module",
+  "bin": {
+    "mac-dash": "./bin/mac-dash.mjs"
+  },
+  "main": "server/index.ts",
+  "files": [
+    "bin/",
+    "server/",
+    "client/src/",
+    "client/package.json",
+    "client/tsconfig.json",
+    "client/vite.config.ts",
+    "plugins/",
+    "scripts/",
+    "dist/",
+    "package.json",
+    "tsconfig.json",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c cyan,magenta \"bun run dev:server\" \"bun run dev:client\"",
+    "dev:server": "bun --watch server/index.ts",
+    "dev:client": "cd client && bunx --bun vite --port 5173",
+    "build": "cd client && bun install && bunx --bun vite build",
+    "start": "NODE_ENV=production bun server/index.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
+  },
+  "keywords": [
+    "macos",
+    "dashboard",
+    "system-monitor",
+    "launchctl",
+    "process-manager",
+    "services",
+    "bun",
+    "hono",
+    "react",
+    "cli",
+    "devtools",
+    "admin",
+    "monitoring"
+  ],
+  "author": {
+    "name": "Talha Orak",
+    "email": "talhaorak@gmail.com",
+    "url": "https://github.com/talhaorak"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/talhaorak/mac-dash.git"
+  },
+  "bugs": {
+    "url": "https://github.com/talhaorak/mac-dash/issues"
+  },
+  "homepage": "https://talhaorak.github.io/mac-dash",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "darwin"
+  ],
+  "dependencies": {
+    "hono": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.0"
+  }
+}

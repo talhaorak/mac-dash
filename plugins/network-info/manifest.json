@@ -1,0 +1,10 @@
+{
+  "id": "network-info",
+  "name": "Network Info",
+  "version": "1.0.0",
+  "description": "Shows active network interfaces, IP addresses, and connection statistics",
+  "icon": "globe",
+  "author": "mac-dash",
+  "sidebar": true,
+  "dashboardWidget": true
+}

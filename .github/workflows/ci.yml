@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install server dependencies
+        run: bun install
+
+      - name: Install client dependencies
+        run: cd client && bun install
+
+      - name: TypeScript check (server)
+        run: bun run typecheck
+
+      - name: Build client
+        run: bun run build
+
+      - name: Verify build output
+        run: |
+          test -f dist/client/index.html
+          echo "Build output verified"
