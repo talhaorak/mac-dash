@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/talhaorak/mac-dash/actions/workflows/ci.yml"><img src="https://github.com/talhaorak/mac-dash/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://www.npmjs.com/package/mac-dash"><img src="https://img.shields.io/npm/v/mac-dash.svg?color=06b6d4" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@talhaorak/mac-dash"><img src="https://img.shields.io/npm/v/mac-dash.svg?color=06b6d4" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/mac-dash"><img src="https://img.shields.io/npm/dm/mac-dash.svg?color=8b5cf6" alt="npm downloads" /></a>
   <a href="https://github.com/talhaorak/mac-dash/blob/master/LICENSE"><img src="https://img.shields.io/github/license/talhaorak/mac-dash?color=22c55e" alt="License" /></a>
   <a href="https://github.com/talhaorak/mac-dash/stargazers"><img src="https://img.shields.io/github/stars/talhaorak/mac-dash?style=social" alt="GitHub Stars" /></a>
