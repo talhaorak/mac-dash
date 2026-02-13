@@ -46,21 +46,21 @@ Built with **Bun + Hono** (server) and **React + Tailwind** (client). No Electro
 ### Quick Start (npx)
 
 ```bash
-npx mac-dash
+npx macdash
 ```
 
 ### Global Install (npm)
 
 ```bash
-npm install -g mac-dash
-mac-dash
+npm install -g @talhaorak/mac-dash
+macdash
 ```
 
 ### Homebrew
 
 ```bash
-brew install talhaorak/tap/mac-dash
-mac-dash
+brew install talhaorak/tap/macdash
+macdash
 ```
 
 ### From Source
@@ -106,13 +106,13 @@ See [plugins/README.md](plugins/README.md) for the full plugin development guide
 
 ```bash
 # Start with default port (7227)
-mac-dash
+macdash
 
 # Custom port
-mac-dash --port 8080
+macdash --port 8080
 
 # Or use environment variable
-PORT=8080 mac-dash
+PORT=8080 macdash
 ```
 
 Then open [http://localhost:7227](http://localhost:7227) in your browser.

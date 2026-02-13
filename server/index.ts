@@ -45,7 +45,7 @@ if (!isDev) {
 }
 
 // Initialize
-console.log(`\n  mac-dash starting...`);
+console.log(`\n  macdash starting...`);
 console.log(`  Mode: ${isDev ? "development" : "production"}`);
 
 // Log stream is now lazy — starts only when a client subscribes to "logs"
