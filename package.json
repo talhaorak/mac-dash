@@ -1,6 +1,6 @@
 {
   "name": "@talhaorak/mac-dash",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Beautiful macOS system dashboard — monitor services, processes, resources and logs in real-time",
   "type": "module",
   "bin": {
@@ -48,7 +48,7 @@
   ],
   "author": {
     "name": "Talha Orak",
-    "email": "talhaorak@gmail.com",
+    "email": "talhaorak.git@gmail.com",
     "url": "https://github.com/talhaorak"
   },
   "license": "MIT",

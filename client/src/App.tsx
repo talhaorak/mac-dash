@@ -15,7 +15,11 @@ import { ServicesPage } from "@/pages/ServicesPage";
 import { ProcessesPage } from "@/pages/ProcessesPage";
 import { LogsPage } from "@/pages/LogsPage";
 import { PluginsPage } from "@/pages/PluginsPage";
-import { NetworkInfoPage } from "@/pages/NetworkInfoPage";
+import { PluginRenderer } from "@/components/PluginRenderer";
+import { initPluginRuntime } from "@/lib/plugin-runtime";
+
+// Initialize the plugin runtime (shared module registry) once at import time
+initPluginRuntime();
 
 // ── Map current page to the WS topics it actually needs ──────────────
 function getTopicsForPage(page: string): string[] {
@@ -174,6 +178,12 @@ export default function App() {
   ]);
 
   const renderPage = () => {
+    // Dynamic plugin pages: "plugin:<id>" → PluginRenderer
+    if (currentPage.startsWith("plugin:")) {
+      const pluginId = currentPage.slice("plugin:".length);
+      return <PluginRenderer pluginId={pluginId} />;
+    }
+
     switch (currentPage) {
       case "dashboard":
         return <DashboardPage />;
@@ -185,8 +195,6 @@ export default function App() {
         return <LogsPage />;
       case "plugins":
         return <PluginsPage />;
-      case "plugin:network-info":
-        return <NetworkInfoPage />;
       default:
         return <DashboardPage />;
     }

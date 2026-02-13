@@ -2,10 +2,12 @@ import { Hono } from "hono";
 import {
   discoverPlugins,
   getPlugins,
+  getPlugin,
   enablePlugin,
   disablePlugin,
   loadPluginServer,
 } from "../plugins/registry";
+import { bundlePluginClient, clearBundleCache } from "../plugins/bundler";
 
 // We need a reference to the root app to register plugin routes
 let rootApp: Hono | null = null;
@@ -52,6 +54,28 @@ app.post("/discover", async (c) => {
   });
 });
 
+// ── Serve bundled plugin client JS ──────────────────────────────────
+app.get("/:id/client.js", async (c) => {
+  const id = c.req.param("id");
+  const plugin = getPlugin(id);
+
+  if (!plugin || !plugin.enabled || !plugin.hasClient) {
+    return c.json({ error: "Plugin client not found" }, 404);
+  }
+
+  const code = await bundlePluginClient(plugin);
+  if (!code) {
+    return c.json({ error: "Failed to bundle plugin client" }, 500);
+  }
+
+  return new Response(code, {
+    headers: {
+      "Content-Type": "application/javascript; charset=utf-8",
+      "Cache-Control": "no-cache",
+    },
+  });
+});
+
 app.post("/:id/enable", async (c) => {
   const id = c.req.param("id");
   const ok = enablePlugin(id);
@@ -64,6 +88,7 @@ app.post("/:id/enable", async (c) => {
 app.post("/:id/disable", async (c) => {
   const id = c.req.param("id");
   const ok = disablePlugin(id);
+  if (ok) clearBundleCache(id);
   return c.json({ ok }, ok ? 200 : 404);
 });
 

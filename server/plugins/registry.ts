@@ -74,6 +74,10 @@ export function getPlugins(): LoadedPlugin[] {
   return Array.from(plugins.values());
 }
 
+export function getPlugin(id: string): LoadedPlugin | undefined {
+  return plugins.get(id);
+}
+
 export function enablePlugin(id: string): boolean {
   const plugin = plugins.get(id);
   if (plugin) {
