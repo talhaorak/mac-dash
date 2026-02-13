@@ -64,7 +64,7 @@ jobs:
             mac-dash-${{ steps.version.outputs.version }}-darwin-x64.tar.gz
 
       - name: Publish to npm
-        run: npm publish --access public
+        run: npm publish
 
       - name: Update Homebrew tap
         uses: peter-evans/repository-dispatch@v3
