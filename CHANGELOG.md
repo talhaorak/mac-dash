@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-02-13
+
+### Added — Desktop App (Tauri v2)
+- **Native macOS desktop app** — no server needed, ~5MB binary
+- Rust backend with `sysinfo`, `plist`, `tokio` for native performance
+- System tray with "Show Dashboard" and "Quit"
+- **About Mac Dash** window with version, author, GitHub/website links
+- **Auto-update support** — checks on startup + every 6h, "Install & Relaunch" dialog
+- Desktop release CI/CD workflow (DMG + GitHub Release + Homebrew Cask)
+
+### Fixed
+- Traffic light buttons (close/minimize/fullscreen) no longer overlap app content
+- Plugins page shows appropriate message in desktop mode (no HTTP server)
+- Right-click context menu disabled in desktop mode
+- Text selection disabled (except in logs/code) for native app feel
+- Tauri v2 plugin configs (removed invalid map configs that caused startup crash)
+- Backend adapter auto-detects Tauri mode vs HTTP API
+- Serde camelCase rename on all Rust structs for proper JSON serialization
+
+### Changed
+- `backend.ts` adapter routes to `invoke()` in Tauri mode, HTTP in web mode
+- Desktop polls at 3s interval via Tauri invoke (no WebSocket needed)
+
+### Metadata
+- Copyright: © 2026 Talha Orak
+- Bundle: DMG + .app for macOS (arm64 + x64 universal)
+- Identifier: `com.talhaorak.macdash`
+
+## [1.0.5] - 2026-02-12
+
+### Changed
+- Renamed CLI command to `macdash`
+
 ## [1.0.0] - 2025-02-13
 
 ### Added
@@ -25,5 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI/CD (test, release, pages)
 - Project landing page
 
-[Unreleased]: https://github.com/talhaorak/mac-dash/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/talhaorak/mac-dash/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/talhaorak/mac-dash/releases/tag/v1.0.6
+[1.0.5]: https://github.com/talhaorak/mac-dash/releases/tag/v1.0.5
 [1.0.0]: https://github.com/talhaorak/mac-dash/releases/tag/v1.0.0

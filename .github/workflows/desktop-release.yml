@@ -37,20 +37,16 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
-      - name: Install dependencies (client)
+      - name: Install & build client (isolated from root)
         run: |
           cd client
-          bun install
-
-      - name: Build client
-        run: |
-          cd client
+          bun install --frozen-lockfile || bun install
           bunx --bun vite build
+          # Verify dist exists where Tauri expects it
+          ls -la ../dist/client/index.html
 
-      - name: Install dependencies (Tauri)
-        run: |
-          cd packages/desktop/src-tauri
-          cargo fetch
+      - name: Install Tauri CLI
+        run: bun add -g @tauri-apps/cli
 
       - name: Get version
         id: version
@@ -62,13 +58,11 @@ jobs:
           fi
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: packages/desktop
-          tauriScript: bunx tauri
-          args: ${{ matrix.args }}
+        run: |
+          cd packages/desktop
+          cargo tauri build ${{ matrix.args }}
           
       - name: Upload DMG
         uses: actions/upload-artifact@v4

@@ -239,6 +239,29 @@
         <div class="badge">Get Started</div>
         <h2>Up and running in <span class="gradient-text">seconds</span></h2>
       </div>
+      <!-- Desktop App Download -->
+      <div class="install-card" style="background: linear-gradient(135deg, rgba(6,182,212,0.08), rgba(139,92,246,0.08)); border: 1px solid rgba(6,182,212,0.2); margin-bottom: 2rem; padding: 2rem; text-align: center;">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 0.75rem; margin-bottom: 1rem;">
+          <span style="font-size: 2rem;">🖥️</span>
+          <div style="text-align: left;">
+            <h3 style="margin: 0; font-size: 1.25rem;">Desktop App <span class="muted" id="desktop-version">v1.0.6</span></h3>
+            <p style="margin: 0; font-size: 0.8rem; color: #9ca3af;">Native macOS app · No server needed · ~5MB</p>
+          </div>
+        </div>
+        <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+          <a id="desktop-download-btn" href="https://github.com/talhaorak/mac-dash/releases/latest" target="_blank" class="btn btn-primary" style="font-size: 0.9rem;">
+            ⬇ Download DMG
+          </a>
+          <div class="code-block" onclick="copyCmd(this)" style="margin: 0;">
+            <code>brew install --cask talhaorak/tap/macdash</code>
+            <span class="copy-hint">Copy</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="text-align: center; margin-bottom: 1.5rem;">
+        <span class="badge">CLI / Web Version</span>
+      </div>
       <div class="install-grid">
         <div class="install-card">
           <h3>npx <span class="muted">(quickest)</span></h3>
@@ -329,6 +352,24 @@
         setTimeout(() => { hint.textContent = 'Copy'; }, 2000);
       }
     }
+  </script>
+  <!-- Fetch latest desktop release version from GitHub -->
+  <script>
+    (async () => {
+      try {
+        const res = await fetch('https://api.github.com/repos/talhaorak/mac-dash/releases');
+        const releases = await res.json();
+        const desktop = releases.find(r => r.tag_name && r.tag_name.startsWith('desktop-v'));
+        if (desktop) {
+          const ver = desktop.tag_name.replace('desktop-', '');
+          const el = document.getElementById('desktop-version');
+          if (el) el.textContent = ver;
+          const dmg = desktop.assets && desktop.assets.find(a => a.name.endsWith('.dmg'));
+          const btn = document.getElementById('desktop-download-btn');
+          if (dmg && btn) btn.href = dmg.browser_download_url;
+        }
+      } catch (e) { /* fallback to static version */ }
+    })();
   </script>
 </body>
 </html>
