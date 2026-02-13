@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   LayoutDashboard,
   Cog,
@@ -84,6 +84,14 @@ export function Sidebar({ version }: SidebarProps) {
 
   const StatusIcon = isReceivingData ? Radio : wsConnected ? Wifi : WifiOff;
 
+  const handleDrag = useCallback(async (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest("button, a, input, [role=button]")) return;
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().startDragging();
+    } catch {}
+  }, []);
+
   return (
     <aside
       className={cn(
@@ -92,7 +100,7 @@ export function Sidebar({ version }: SidebarProps) {
       )}
     >
       {/* Logo + drag region */}
-      <div className="flex items-center gap-3 px-4 h-14 pt-5 border-b border-white/[0.06] drag-region">
+      <div onMouseDown={handleDrag} className="flex items-center gap-3 px-4 h-14 pt-5 border-b border-white/[0.06] drag-region">
         <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center flex-shrink-0">
           <Activity className="w-4 h-4 text-white" />
         </div>

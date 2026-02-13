@@ -3,12 +3,16 @@
 /* macOS titlebar drag region */
 .drag-region {
   -webkit-app-region: drag;
+  app-region: drag;
+  cursor: default;
 }
 .drag-region button,
 .drag-region a,
 .drag-region input,
+.drag-region [role="button"],
 .no-drag {
   -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 @theme {

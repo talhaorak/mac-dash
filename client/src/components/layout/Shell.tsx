@@ -3,8 +3,22 @@ import { Sidebar } from "./Sidebar";
 import { useNavStore, useConnectionStore } from "@/stores/app";
 import { cn } from "@/lib/utils";
 import { RefreshCw, Clock } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { backend } from "@/lib/backend";
+
+/** JS fallback: call Tauri startDragging when CSS app-region doesn't work */
+function useDragRegion() {
+  return useCallback(async (e: React.MouseEvent) => {
+    // Only drag on the element itself, not buttons/interactive children
+    if ((e.target as HTMLElement).closest("button, a, input, [role=button]")) return;
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().startDragging();
+    } catch {
+      // Not in Tauri — ignore
+    }
+  }, []);
+}
 
 interface ShellProps {
   children: ReactNode;
@@ -25,6 +39,7 @@ export function Shell({ children, version, onRefresh }: ShellProps) {
   const { sidebarCollapsed } = useNavStore();
   const lastDataAt = useConnectionStore((s) => s.lastDataAt);
   const [, setTick] = useState(0);
+  const onDrag = useDragRegion();
 
   // Update the "ago" text every second
   useEffect(() => {
@@ -43,7 +58,7 @@ export function Shell({ children, version, onRefresh }: ShellProps) {
         )}
       >
         {/* Top status bar — also acts as drag region */}
-        <div className="sticky top-0 z-40 backdrop-blur-md bg-bg-primary/80 border-b border-white/[0.04] px-6 py-2 flex items-center justify-end gap-3 drag-region">
+        <div onMouseDown={onDrag} className="sticky top-0 z-40 backdrop-blur-md bg-bg-primary/80 border-b border-white/[0.04] px-6 py-2 flex items-center justify-end gap-3 drag-region">
           <div className="flex items-center gap-1.5 text-xs text-gray-500">
             <Clock className="w-3 h-3" />
             <span>Updated {formatLastUpdate(lastDataAt)}</span>
