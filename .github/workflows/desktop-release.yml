@@ -46,7 +46,7 @@ jobs:
           ls -la ../dist/client/index.html
 
       - name: Install Tauri CLI
-        run: bun add -g @tauri-apps/cli
+        run: cargo install tauri-cli --locked
 
       - name: Get version
         id: version
