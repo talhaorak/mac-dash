@@ -146,7 +146,7 @@ fn setup_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::{menu::*, Manager};
     
     let app_menu = SubmenuBuilder::new(app, "Mac Dash")
-        .about(Some("About Mac Dash".into()))
+        .about(Some(AboutMetadata::default()))
         .separator()
         .quit()
         .build()?;
