@@ -46,3 +46,7 @@ temp/
 
 # TODO (personal notes)
 TODO.md
+
+# Tauri / Rust
+packages/desktop/src-tauri/target/
+

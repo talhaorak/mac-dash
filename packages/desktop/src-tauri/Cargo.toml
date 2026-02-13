@@ -1,0 +1,29 @@
+[package]
+name = "mac-dash-desktop"
+version = "1.0.6"
+description = "Mac Dash — macOS System Dashboard (Desktop)"
+authors = ["Talha Orak <talhaorak.git@gmail.com>"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = "0.33"
+tokio = { version = "1", features = ["full"] }
+plist = "1"
+glob = "0.3"
+dirs = "6"
+chrono = "0.4"
+libc = "0.2"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

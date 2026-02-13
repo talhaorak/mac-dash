@@ -29,7 +29,9 @@
     "build": "cd client && bun install && bunx --bun vite build",
     "start": "NODE_ENV=production bun server/index.ts",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "bun run build",
+    "desktop:dev": "concurrently -n vite,tauri -c magenta,cyan \"bun run dev:client\" \"cd packages/desktop && cargo tauri dev\"",
+    "desktop:build": "bun run build && cd packages/desktop && cargo tauri build"
   },
   "keywords": [
     "macos",

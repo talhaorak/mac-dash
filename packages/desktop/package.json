@@ -1,0 +1,14 @@
+{
+  "name": "mac-dash-desktop",
+  "private": true,
+  "version": "1.0.6",
+  "scripts": {
+    "dev": "cd ../../client && bunx --bun vite --port 5173",
+    "tauri:dev": "cargo tauri dev --config src-tauri/tauri.conf.json",
+    "tauri:build": "cargo tauri build --config src-tauri/tauri.conf.json",
+    "build": "cd ../../client && bunx --bun vite build && cd ../../packages/desktop && cargo tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0"
+  }
+}
