@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Shell } from "@/components/layout/Shell";
+import { UpdateNotification } from "@/components/UpdateNotification";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { backend } from "@/lib/backend";
 import {
@@ -205,8 +206,11 @@ export default function App() {
   };
 
   return (
-    <Shell version={version} onRefresh={fetchAll}>
-      {renderPage()}
-    </Shell>
+    <>
+      <Shell version={version} onRefresh={fetchAll}>
+        {renderPage()}
+      </Shell>
+      <UpdateNotification />
+    </>
   );
 }

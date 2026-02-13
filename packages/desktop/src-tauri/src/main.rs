@@ -180,6 +180,54 @@ fn setup_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// ── Updater ──────────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn check_for_updates(app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    
+    match app.updater() {
+        Ok(updater) => {
+            match updater.check().await {
+                Ok(Some(update)) => {
+                    Ok(Some(serde_json::json!({
+                        "version": update.version,
+                        "date": update.date,
+                        "body": update.body
+                    })))
+                }
+                Ok(None) => Ok(None),
+                Err(e) => Err(format!("Update check failed: {}", e))
+            }
+        }
+        Err(e) => Err(format!("Updater not available: {}", e))
+    }
+}
+
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+    
+    match app.updater() {
+        Ok(updater) => {
+            match updater.check().await {
+                Ok(Some(update)) => {
+                    // Download and install
+                    update.download_and_install(|_, _| {}, || {})
+                        .await
+                        .map_err(|e| format!("Update installation failed: {}", e))?;
+                    
+                    // Restart app
+                    app.restart();
+                }
+                Ok(None) => Err("No update available".into()),
+                Err(e) => Err(format!("Update check failed: {}", e))
+            }
+        }
+        Err(e) => Err(format!("Updater not available: {}", e))
+    }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 
 fn main() {
@@ -191,11 +239,22 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]),
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             setup_menu(app)?;
             tray::setup_tray(app)?;
             // Start log stream automatically
             logs::start_log_stream();
+            
+            // Check for updates on startup (async, non-blocking)
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use tauri_plugin_updater::UpdaterExt;
+                if let Ok(updater) = app_handle.updater() {
+                    let _ = updater.check().await;
+                }
+            });
+            
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -212,6 +271,8 @@ fn main() {
             query_logs,
             get_active_log_processes,
             show_about_window,
+            check_for_updates,
+            install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Mac Dash");
