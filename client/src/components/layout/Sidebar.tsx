@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { useNavStore, useConnectionStore } from "@/stores/app";
 import { backend } from "@/lib/backend";
 import { api } from "@/lib/api";
+import { startDesktopWindowDrag } from "@/lib/window-drag";
 
 interface SidebarProps {
   version: string | null;
@@ -73,23 +74,23 @@ export function Sidebar({ version }: SidebarProps) {
       ? "Live (WS)"
       : "Live (Poll)"
     : wsConnected
-    ? "Connected"
-    : "No data";
+      ? "Connected"
+      : "No data";
 
   const statusColor = isReceivingData
     ? "text-green-400 bg-green-500/5"
     : wsConnected
-    ? "text-cyan-400 bg-cyan-500/5"
-    : "text-amber-400 bg-amber-500/5";
+      ? "text-cyan-400 bg-cyan-500/5"
+      : "text-amber-400 bg-amber-500/5";
 
   const StatusIcon = isReceivingData ? Radio : wsConnected ? Wifi : WifiOff;
 
-  const handleDrag = useCallback(async (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest("button, a, input, [role=button]")) return;
-    try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().startDragging();
-    } catch {}
+  const handleDrag = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button, a, input, textarea, select, [role=button], [data-no-drag], .no-drag")) return;
+    if (!backend.isDesktop()) return;
+    e.preventDefault();
+    void startDesktopWindowDrag(e.screenX, e.screenY);
   }, []);
 
   return (
@@ -99,8 +100,18 @@ export function Sidebar({ version }: SidebarProps) {
         sidebarCollapsed ? "w-16" : "w-56"
       )}
     >
+      {/* Native titlebar space (traffic lights area on macOS) */}
+      {backend.isDesktop() && (
+        <div
+          onMouseDown={handleDrag}
+          className="h-8 w-full flex-shrink-0"
+        />
+      )}
       {/* Logo + drag region */}
-      <div onMouseDown={handleDrag} className="flex items-center gap-3 px-4 h-14 pt-5 border-b border-white/[0.06] drag-region">
+      <div
+        onMouseDown={handleDrag}
+        className="flex items-center gap-3 px-4 h-12 border-b border-white/[0.06] select-none"
+      >
         <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center flex-shrink-0">
           <Activity className="w-4 h-4 text-white" />
         </div>

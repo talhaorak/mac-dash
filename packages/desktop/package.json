@@ -1,7 +1,7 @@
 {
   "name": "mac-dash-desktop",
   "private": true,
-  "version": "1.0.6",
+  "version": "1.0.9",
   "scripts": {
     "dev": "cd ../../client && bunx --bun vite --port 5173",
     "tauri:dev": "cargo tauri dev --config src-tauri/tauri.conf.json",

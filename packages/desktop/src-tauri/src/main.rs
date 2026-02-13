@@ -116,6 +116,15 @@ fn get_active_log_processes() -> ApiResult<Vec<serde_json::Value>> {
     ok_result(result)
 }
 
+// ── Window Commands ──────────────────────────────────────────────────
+
+#[tauri::command]
+fn begin_window_drag(window: tauri::Window) -> Result<(), String> {
+    window
+        .start_dragging()
+        .map_err(|e| format!("start_dragging failed: {}", e))
+}
+
 // ── Menu & About Window ──────────────────────────────────────────────
 
 #[tauri::command]
@@ -270,6 +279,7 @@ fn main() {
             get_recent_logs,
             query_logs,
             get_active_log_processes,
+            begin_window_drag,
             show_about_window,
             check_for_updates,
             install_update,

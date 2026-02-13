@@ -1,6 +1,6 @@
 [package]
 name = "mac-dash-desktop"
-version = "1.0.6"
+version = "1.0.9"
 description = "Mac Dash — macOS System Dashboard (Desktop)"
 authors = ["Talha Orak <talhaorak.git@gmail.com>"]
 license = "MIT"

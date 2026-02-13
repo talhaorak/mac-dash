@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-02-13
+
+### Fixed
+- Desktop window drag now works reliably from the custom top areas by using Tauri drag regions in the client layout.
+- macOS traffic lights no longer overlap the app logo/header section in the sidebar.
+- Removed Electron-style `app-region` CSS usage that conflicted with Tauri window drag behavior.
+
 ## [1.0.6] - 2026-02-13
 
 ### Added — Desktop App (Tauri v2)
@@ -58,7 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI/CD (test, release, pages)
 - Project landing page
 
-[Unreleased]: https://github.com/talhaorak/mac-dash/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/talhaorak/mac-dash/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/talhaorak/mac-dash/releases/tag/v1.0.9
 [1.0.6]: https://github.com/talhaorak/mac-dash/releases/tag/v1.0.6
 [1.0.5]: https://github.com/talhaorak/mac-dash/releases/tag/v1.0.5
 [1.0.0]: https://github.com/talhaorak/mac-dash/releases/tag/v1.0.0
