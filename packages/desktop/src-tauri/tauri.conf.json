@@ -7,7 +7,7 @@
     "beforeDevCommand": "cd ../../client && bunx --bun vite --port 5173",
     "devUrl": "http://localhost:5173",
     "beforeBuildCommand": "cd ../../client && bunx --bun vite build",
-    "frontendDist": "../../dist/client"
+    "frontendDist": "../../../dist/client"
   },
   "app": {
     "withGlobalTauri": true,
