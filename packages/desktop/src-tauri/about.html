@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>About Mac Dash</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Display', sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    
+    .container {
+      text-align: center;
+      max-width: 400px;
+      width: 100%;
+    }
+    
+    .icon {
+      width: 96px;
+      height: 96px;
+      margin: 0 auto 24px;
+      background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+      border-radius: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 48px;
+      box-shadow: 0 20px 40px rgba(6, 182, 212, 0.3);
+    }
+    
+    h1 {
+      font-size: 32px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    
+    .version {
+      font-size: 14px;
+      color: #64748b;
+      margin-bottom: 24px;
+      font-weight: 500;
+    }
+    
+    .description {
+      font-size: 15px;
+      color: #94a3b8;
+      line-height: 1.6;
+      margin-bottom: 32px;
+    }
+    
+    .info {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      font-size: 14px;
+    }
+    
+    .info-row:not(:last-child) {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    .info-label {
+      color: #64748b;
+      font-weight: 500;
+    }
+    
+    .info-value {
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+    
+    .links {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      margin-bottom: 24px;
+    }
+    
+    .link {
+      padding: 10px 20px;
+      background: rgba(6, 182, 212, 0.1);
+      color: #06b6d4;
+      text-decoration: none;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s;
+      border: 1px solid rgba(6, 182, 212, 0.2);
+    }
+    
+    .link:hover {
+      background: rgba(6, 182, 212, 0.2);
+      border-color: rgba(6, 182, 212, 0.4);
+      transform: translateY(-2px);
+    }
+    
+    .license {
+      font-size: 11px;
+      color: #475569;
+      margin-top: 24px;
+      line-height: 1.5;
+    }
+    
+    .license a {
+      color: #64748b;
+      text-decoration: none;
+    }
+    
+    .license a:hover {
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">📊</div>
+    <h1>Mac Dash</h1>
+    <div class="version" id="version">Version 1.0.6</div>
+    <p class="description">
+      A beautiful macOS system dashboard for monitoring services, processes, and logs.
+    </p>
+    
+    <div class="info">
+      <div class="info-row">
+        <span class="info-label">Created by</span>
+        <span class="info-value">Talha Orak</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">License</span>
+        <span class="info-value">MIT</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Platform</span>
+        <span class="info-value">macOS 13.0+</span>
+      </div>
+    </div>
+    
+    <div class="links">
+      <a href="https://github.com/talhaorak/mac-dash" class="link" id="github">GitHub</a>
+      <a href="https://talhaorak.github.io/mac-dash" class="link" id="website">Website</a>
+    </div>
+    
+    <div class="license">
+      Licensed under the <a href="https://opensource.org/licenses/MIT">MIT License</a>
+      <br>
+      © 2026 Talha Orak. All rights reserved.
+      <br><br>
+      THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+    </div>
+  </div>
+  
+  <script>
+    // Open links in system browser (Tauri shell)
+    if (window.__TAURI__) {
+      import('https://unpkg.com/@tauri-apps/plugin-shell@2').then(({ open }) => {
+        document.getElementById('github').addEventListener('click', (e) => {
+          e.preventDefault();
+          open('https://github.com/talhaorak/mac-dash');
+        });
+        document.getElementById('website').addEventListener('click', (e) => {
+          e.preventDefault();
+          open('https://talhaorak.github.io/mac-dash');
+        });
+      });
+    }
+  </script>
+</body>
+</html>

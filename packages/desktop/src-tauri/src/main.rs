@@ -116,6 +116,70 @@ fn get_active_log_processes() -> ApiResult<Vec<serde_json::Value>> {
     ok_result(result)
 }
 
+// ── Menu & About Window ──────────────────────────────────────────────
+
+#[tauri::command]
+fn show_about_window(app: tauri::AppHandle) {
+    use tauri::Manager;
+    
+    // Check if about window already exists
+    if let Some(window) = app.get_webview_window("about") {
+        let _ = window.set_focus();
+        return;
+    }
+    
+    // Create new about window
+    let _ = tauri::WebviewWindowBuilder::new(
+        &app,
+        "about",
+        tauri::WebviewUrl::App("about.html".into())
+    )
+    .title("About Mac Dash")
+    .inner_size(450.0, 580.0)
+    .resizable(false)
+    .center()
+    .focused(true)
+    .build();
+}
+
+fn setup_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri::{menu::*, Manager};
+    
+    let app_menu = SubmenuBuilder::new(app, "Mac Dash")
+        .about(Some("About Mac Dash".into()))
+        .separator()
+        .quit()
+        .build()?;
+    
+    let edit_menu = SubmenuBuilder::new(app, "Edit")
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+    
+    let window_menu = SubmenuBuilder::new(app, "Window")
+        .minimize()
+        .close_window()
+        .build()?;
+    
+    let menu = MenuBuilder::new(app)
+        .item(&app_menu)
+        .item(&edit_menu)
+        .item(&window_menu)
+        .build()?;
+    
+    app.set_menu(menu)?;
+    
+    // Handle about menu click
+    app.on_menu_event(move |app, event| {
+        if event.id() == "about" {
+            show_about_window(app.clone());
+        }
+    });
+    
+    Ok(())
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 
 fn main() {
@@ -128,6 +192,7 @@ fn main() {
             Some(vec![]),
         ))
         .setup(|app| {
+            setup_menu(app)?;
             tray::setup_tray(app)?;
             // Start log stream automatically
             logs::start_log_stream();
@@ -146,6 +211,7 @@ fn main() {
             get_recent_logs,
             query_logs,
             get_active_log_processes,
+            show_about_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Mac Dash");

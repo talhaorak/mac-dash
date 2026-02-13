@@ -3,6 +3,9 @@ name = "mac-dash-desktop"
 version = "1.0.6"
 description = "Mac Dash — macOS System Dashboard (Desktop)"
 authors = ["Talha Orak <talhaorak.git@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/talhaorak/mac-dash"
+homepage = "https://talhaorak.github.io/mac-dash"
 edition = "2021"
 
 [build-dependencies]
