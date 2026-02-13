@@ -39,32 +39,48 @@ mac-dash is a lightweight, real-time system dashboard for macOS. It runs a local
 - **Stream** macOS unified logs in real-time
 - **Extend** with plugins
 
-Built with **Bun + Hono** (server) and **React + Tailwind** (client). No Electron. ~50ms overhead.
+Available as both a **native desktop app** (Tauri) and a **web server** (Bun + Hono). Desktop app uses native macOS APIs — no HTTP server, no Node.js, minimal overhead.
 
 ## Installation
 
-### Quick Start (npx)
+### Desktop App 🖥️ (Recommended)
 
+The native macOS desktop app uses Tauri — no server needed, native APIs, minimal resource usage.
+
+**Homebrew:**
+```bash
+brew install --cask talhaorak/tap/macdash
+```
+
+**Manual Download:**
+Download the latest `.dmg` from [GitHub Releases](https://github.com/talhaorak/mac-dash/releases) and drag to Applications.
+
+> ✨ **Benefits:** Native performance, no server, menu bar integration, auto-update support
+
+---
+
+### CLI / Web Server
+
+For the web-based version with plugin support:
+
+**Quick Start (npx):**
 ```bash
 npx macdash
 ```
 
-### Global Install (npm)
-
+**Global Install (npm):**
 ```bash
 npm install -g @talhaorak/mac-dash
 macdash
 ```
 
-### Homebrew
-
+**Homebrew:**
 ```bash
 brew install talhaorak/tap/macdash
 macdash
 ```
 
-### From Source
-
+**From Source:**
 ```bash
 git clone https://github.com/talhaorak/mac-dash.git
 cd mac-dash
