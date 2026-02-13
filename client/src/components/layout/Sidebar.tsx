@@ -91,8 +91,13 @@ export function Sidebar({ version }: SidebarProps) {
         sidebarCollapsed ? "w-16" : "w-56"
       )}
     >
+      {/* Drag region for macOS traffic lights */}
+      <div
+        data-tauri-drag-region
+        className="h-8 w-full flex-shrink-0"
+      />
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 h-14 border-b border-white/[0.06]">
+      <div className="flex items-center gap-3 px-4 h-10 border-b border-white/[0.06]">
         <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center flex-shrink-0">
           <Activity className="w-4 h-4 text-white" />
         </div>
