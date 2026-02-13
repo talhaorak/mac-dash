@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Shell } from "@/components/layout/Shell";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { api } from "@/lib/api";
+import { backend } from "@/lib/backend";
 import {
   useNavStore,
   useSystemStore,
@@ -82,12 +82,16 @@ export default function App() {
     setWsConnected(connected);
   }, [connected, setWsConnected]);
 
-  // Fetch version once
+  // Fetch version once (only in web mode; desktop uses package version)
   useEffect(() => {
-    api
-      .get<{ version: string }>("/system/version")
-      .then((r) => setVersion(r.version))
-      .catch(() => {});
+    if (backend.isDesktop()) {
+      setVersion("desktop");
+    } else {
+      fetch("/api/system/version")
+        .then((r) => r.json())
+        .then((r) => setVersion(r.version))
+        .catch(() => {});
+    }
   }, []);
 
   // Shared fetch function for both initial load and manual refresh
@@ -95,19 +99,25 @@ export default function App() {
     try {
       const [statsRes, servicesRes, processesRes, logsRes] =
         await Promise.allSettled([
-          api.get<any>("/system/stats"),
-          api.get<{ services: any[] }>("/services"),
-          api.get<{ processes: any[] }>("/processes"),
-          api.get<{ logs: any[] }>("/logs/recent?count=50"),
+          backend.getSystemStats(),
+          backend.getServices(),
+          backend.getProcesses(),
+          backend.getRecentLogs(50),
         ]);
 
-      if (statsRes.status === "fulfilled") setStats(statsRes.value);
-      if (servicesRes.status === "fulfilled")
-        setServices(servicesRes.value.services);
-      if (processesRes.status === "fulfilled")
-        setProcesses(processesRes.value.processes);
-      if (logsRes.status === "fulfilled")
-        setLogEntries(logsRes.value.logs);
+      if (statsRes.status === "fulfilled") setStats(statsRes.value as any);
+      if (servicesRes.status === "fulfilled") {
+        const val = servicesRes.value as any;
+        setServices(val.services || val);
+      }
+      if (processesRes.status === "fulfilled") {
+        const val = processesRes.value as any;
+        setProcesses(val.processes || val);
+      }
+      if (logsRes.status === "fulfilled") {
+        const val = logsRes.value as any;
+        setLogEntries(val.logs || val);
+      }
       recordData("poll");
     } catch {}
   }, [setStats, setServices, setProcesses, setLogEntries, recordData]);
@@ -119,13 +129,13 @@ export default function App() {
     // Initial data fetch
     fetchAll();
 
-    // Poll every 10s as fallback if WS isn't connected (was 3s)
-    // Smart polling: only fetch data relevant to the current page
+    // Poll every 3s in desktop mode (no WS), 10s in web mode as fallback
+    const pollInterval = backend.isDesktop() ? 3000 : 10000;
     pollRef.current = setInterval(async () => {
-      if (connected) return; // WS is handling it
+      if (connected && !backend.isDesktop()) return; // WS is handling it
       try {
         const fetches: Promise<any>[] = [
-          api.get<any>("/system/stats").then((r) => setStats(r)),
+          backend.getSystemStats().then((r: any) => setStats(r)),
         ];
 
         if (
@@ -133,9 +143,7 @@ export default function App() {
           currentPage === "services"
         ) {
           fetches.push(
-            api
-              .get<{ services: any[] }>("/services")
-              .then((r) => setServices(r.services))
+            backend.getServices().then((r: any) => setServices(r.services || r))
           );
         }
 
@@ -144,24 +152,20 @@ export default function App() {
           currentPage === "processes"
         ) {
           fetches.push(
-            api
-              .get<{ processes: any[] }>("/processes")
-              .then((r) => setProcesses(r.processes))
+            backend.getProcesses().then((r: any) => setProcesses(r.processes || r))
           );
         }
 
         if (currentPage === "logs") {
           fetches.push(
-            api
-              .get<{ logs: any[] }>("/logs/recent?count=100")
-              .then((r) => setLogEntries(r.logs))
+            backend.getRecentLogs(100).then((r: any) => setLogEntries(r.logs || r))
           );
         }
 
         await Promise.allSettled(fetches);
         recordData("poll");
       } catch {}
-    }, 10000);
+    }, pollInterval);
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);

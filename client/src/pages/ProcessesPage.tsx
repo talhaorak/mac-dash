@@ -7,7 +7,7 @@ import {
 } from "@/stores/app";
 import { GlowCard } from "@/components/ui/GlowCard";
 import { CopyButton } from "@/components/ui/CopyButton";
-import { api } from "@/lib/api";
+import { backend } from "@/lib/backend";
 import { cn, formatBytes } from "@/lib/utils";
 import {
   Search,
@@ -90,11 +90,9 @@ export function ProcessesPage() {
       return;
     }
     setLoadingExtended(true);
-    api
-      .get<ProcessExtended & ProcessInfo>(
-        `/processes/${selectedProcess.pid}`
-      )
-      .then((data) => {
+    fetch(`/api/processes/${selectedProcess.pid}`)
+      .then((r) => r.json())
+      .then((data: any) => {
         setExtendedInfo({
           cwd: data.cwd ?? null,
           parentChain: data.parentChain ?? [],
@@ -218,7 +216,7 @@ export function ProcessesPage() {
 
   const handleKill = async (pid: number, force = false) => {
     try {
-      await api.post(`/processes/${pid}/kill`, { force });
+      await backend.killProcess(pid, force);
       setKillConfirm(null);
     } catch (e: any) {
       console.error("Kill failed:", e.message);

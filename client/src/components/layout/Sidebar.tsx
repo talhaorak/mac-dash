@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavStore, useConnectionStore } from "@/stores/app";
+import { backend } from "@/lib/backend";
 import { api } from "@/lib/api";
 
 interface SidebarProps {
@@ -51,6 +52,7 @@ export function Sidebar({ version }: SidebarProps) {
 
   // Fetch plugins that should appear in sidebar
   useEffect(() => {
+    if (backend.isDesktop()) return; // No plugin API in desktop mode
     const fetchPlugins = () => {
       api
         .get<{ plugins: PluginInfo[] }>("/plugins")
@@ -60,7 +62,7 @@ export function Sidebar({ version }: SidebarProps) {
         .catch(() => {});
     };
     fetchPlugins();
-    const interval = setInterval(fetchPlugins, 60000); // 60s — plugins list rarely changes
+    const interval = setInterval(fetchPlugins, 60000);
     return () => clearInterval(interval);
   }, []);
 

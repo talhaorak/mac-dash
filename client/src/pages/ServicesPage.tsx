@@ -3,7 +3,7 @@ import { useServicesStore, useNavStore, type ServiceInfo } from "@/stores/app";
 import { GlowCard } from "@/components/ui/GlowCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { CopyButton } from "@/components/ui/CopyButton";
-import { api } from "@/lib/api";
+import { backend } from "@/lib/backend";
 import { cn } from "@/lib/utils";
 import {
   Search,
@@ -117,19 +117,7 @@ export function ServicesPage() {
     service: ServiceInfo
   ) => {
     try {
-      if (action === "start") {
-        await api.post(`/services/${service.label}/start`);
-      } else if (action === "stop") {
-        await api.post(`/services/${service.label}/stop`);
-      } else if (action === "enable") {
-        await api.post(`/services/${service.label}/enable`, {
-          plistPath: service.plistPath,
-        });
-      } else if (action === "disable") {
-        await api.post(`/services/${service.label}/disable`, {
-          plistPath: service.plistPath,
-        });
-      }
+      await backend.manageService(service.label, action, service.plistPath || undefined);
     } catch (e: any) {
       console.error(`Action ${action} failed:`, e.message);
     }

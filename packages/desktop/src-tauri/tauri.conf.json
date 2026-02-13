@@ -4,7 +4,9 @@
   "version": "1.0.6",
   "identifier": "com.talhaorak.macdash",
   "build": {
+    "beforeDevCommand": "cd ../../client && bunx --bun vite --port 5173",
     "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "cd ../../../client && bunx --bun vite build",
     "frontendDist": "../../../dist/client"
   },
   "app": {
@@ -16,7 +18,7 @@
         "height": 800,
         "minWidth": 800,
         "minHeight": 600,
-        "decorations": false,
+        "decorations": true,
         "transparent": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true
