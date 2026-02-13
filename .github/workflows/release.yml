@@ -46,9 +46,14 @@ jobs:
           bun build --compile --target=bun-darwin-x64 \
             server/index.ts --outfile mac-dash-darwin-x64
 
-      - name: Get version from tag
+      - name: Get version
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          else
+            echo "version=$(node -p "require('./package.json').version")-dev" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create tarballs
         run: |
