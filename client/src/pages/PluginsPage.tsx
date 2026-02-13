@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
+import { backend } from "@/lib/backend";
 
 interface PluginInfo {
   id: string;
@@ -42,6 +43,11 @@ export function PluginsPage() {
   };
 
   useEffect(() => {
+    // Skip plugin loading in desktop mode
+    if (backend.isDesktop()) {
+      setLoading(false);
+      return;
+    }
     fetchPlugins();
   }, []);
 
@@ -66,6 +72,33 @@ export function PluginsPage() {
       await fetchPlugins();
     } catch {}
   };
+
+  // Desktop mode: Show info message instead
+  if (backend.isDesktop()) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Plugins</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Extend mac-dash with custom functionality
+          </p>
+        </div>
+        <GlowCard className="text-center py-12">
+          <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 flex items-center justify-center mx-auto mb-4">
+            <Monitor className="w-8 h-8 text-cyan-400" />
+          </div>
+          <h3 className="text-lg font-semibold text-gray-300">Desktop App</h3>
+          <p className="text-sm text-gray-500 mt-2 max-w-md mx-auto">
+            Plugins are available in the web version. The desktop app has built-in functionality
+            using native macOS APIs — no server or plugins needed.
+          </p>
+          <p className="text-xs text-gray-600 mt-4">
+            To use plugins, run <code className="text-cyan-400/70 font-mono bg-cyan-500/5 px-1.5 py-0.5 rounded">mac-dash serve</code> and access the web UI.
+          </p>
+        </GlowCard>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

@@ -4,6 +4,7 @@ import { useNavStore, useConnectionStore } from "@/stores/app";
 import { cn } from "@/lib/utils";
 import { RefreshCw, Clock } from "lucide-react";
 import { useState, useEffect } from "react";
+import { backend } from "@/lib/backend";
 
 interface ShellProps {
   children: ReactNode;
@@ -37,7 +38,8 @@ export function Shell({ children, version, onRefresh }: ShellProps) {
       <main
         className={cn(
           "transition-all duration-300 min-h-screen",
-          sidebarCollapsed ? "ml-16" : "ml-56"
+          sidebarCollapsed ? "ml-16" : "ml-56",
+          backend.isDesktop() && "pt-7" // Extra padding for macOS traffic lights
         )}
       >
         {/* Top status bar */}
