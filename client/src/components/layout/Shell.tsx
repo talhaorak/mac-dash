@@ -43,7 +43,7 @@ export function Shell({ children, version, onRefresh }: ShellProps) {
         )}
       >
         {/* Top status bar — also acts as drag region */}
-        <div data-tauri-drag-region className="sticky top-0 z-40 backdrop-blur-md bg-bg-primary/80 border-b border-white/[0.04] px-6 py-2 flex items-center justify-end gap-3">
+        <div className="sticky top-0 z-40 backdrop-blur-md bg-bg-primary/80 border-b border-white/[0.04] px-6 py-2 flex items-center justify-end gap-3 drag-region">
           <div className="flex items-center gap-1.5 text-xs text-gray-500">
             <Clock className="w-3 h-3" />
             <span>Updated {formatLastUpdate(lastDataAt)}</span>

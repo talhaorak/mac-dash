@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+/* macOS titlebar drag region */
+.drag-region {
+  -webkit-app-region: drag;
+}
+.drag-region button,
+.drag-region a,
+.drag-region input,
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
