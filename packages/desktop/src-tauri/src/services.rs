@@ -155,7 +155,7 @@ pub struct PathFacts {
 }
 
 /// One plist file in a scope directory, with its parsed content.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JobFile {
     pub path: String,
     pub file_name: String,
@@ -528,12 +528,41 @@ fn scan_dirs(prev: &FileMap, dirs: &[(PathBuf, &'static JobScope)]) -> (FileMap,
         }
     }
 
+    resolve_label_collisions(&mut next, &mut changes);
+
     for (path, file) in prev.iter() {
         if !next.contains_key(path) {
             changes.push(JobFileChange { kind: "removed", file: Arc::clone(file) });
         }
     }
     (next, changes)
+}
+
+/// Contract rule 9: `(category, label)` is a unique key. macOS itself ships two files with one Label
+/// (`com.apple.sysdiagnose.plist` and `com.apple.sysdiagnose.darwinos.plist`). The file named
+/// `<Label>.plist` keeps the label, else the first by file name. Every other file is listed under its
+/// file name without the extension.
+fn resolve_label_collisions(files: &mut FileMap, changes: &mut [JobFileChange]) {
+    let mut groups: HashMap<(&'static str, String), Vec<Arc<JobFile>>> = HashMap::new();
+    for file in files.values() {
+        groups.entry((file.category, file.label.clone())).or_default().push(Arc::clone(file));
+    }
+    for mut group in groups.into_values().filter(|group| group.len() > 1) {
+        group.sort_by_cached_key(|file| label_sort_key(&file.file_name));
+        let owner = group
+            .iter()
+            .find(|file| file.file_name == format!("{}.plist", file.label))
+            .unwrap_or(&group[0])
+            .clone();
+        for file in group.iter().filter(|file| !Arc::ptr_eq(file, &owner)) {
+            // A cached entry is shared with the previous index: replace it, never change it in place.
+            let renamed = Arc::new(JobFile { label: strip_job_extension(&file.file_name).to_string(), ..JobFile::clone(file) });
+            for change in changes.iter_mut().filter(|change| Arc::ptr_eq(&change.file, file)) {
+                change.file = Arc::clone(&renamed);
+            }
+            files.insert(file.path.clone(), renamed);
+        }
+    }
 }
 
 /// Re-read the scope directories and report what changed since the previous scan.
@@ -2255,6 +2284,70 @@ mod tests {
         assert_eq!(next.len(), 2);
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn duplicate_labels_in_one_scope_get_unique_keys() {
+        let dir = std::env::temp_dir().join(format!("macdash-dup-{}-{}", std::process::id(), now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dirs = vec![(dir.clone(), scope_for("system-daemons").unwrap())];
+        let plist = |label: &str| format!("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>Label</key><string>{}</string></dict></plist>", label);
+
+        // Like macOS: two files, one Label. The file named after the label keeps it.
+        std::fs::write(dir.join("com.apple.sysdiagnose.plist"), plist("com.apple.sysdiagnose")).unwrap();
+        std::fs::write(dir.join("com.apple.sysdiagnose.darwinos.plist"), plist("com.apple.sysdiagnose")).unwrap();
+        // No file is named after the label: the first by file name keeps it.
+        std::fs::write(dir.join("b-second.plist"), plist("shared")).unwrap();
+        std::fs::write(dir.join("a-first.plist.disabled"), plist("shared")).unwrap();
+        std::fs::write(dir.join("c-third.plist"), plist("shared")).unwrap();
+        std::fs::write(dir.join("single.plist"), plist("com.example.single")).unwrap();
+
+        let (index, changes) = scan_dirs(&FileMap::new(), &dirs);
+        let labels = |files: &FileMap| files.values().map(|f| (f.file_name.clone(), f.label.clone())).collect::<HashMap<_, _>>();
+        let by_file = labels(&index);
+        assert_eq!(by_file["com.apple.sysdiagnose.plist"], "com.apple.sysdiagnose");
+        assert_eq!(by_file["com.apple.sysdiagnose.darwinos.plist"], "com.apple.sysdiagnose.darwinos");
+        assert_eq!(by_file["a-first.plist.disabled"], "shared");
+        assert_eq!(by_file["b-second.plist"], "b-second");
+        assert_eq!(by_file["c-third.plist"], "c-third");
+        assert_eq!(by_file["single.plist"], "com.example.single");
+
+        // The key is unique, and the change list points at the renamed entries.
+        let keys: HashSet<(&str, &str)> = index.values().map(|f| (f.category, f.label.as_str())).collect();
+        assert_eq!(keys.len(), index.len());
+        assert_eq!(changes.len(), 6);
+        for change in &changes {
+            assert!(Arc::ptr_eq(&change.file, &index[&change.file.path]), "{}", change.file.file_name);
+        }
+        // Everything else of the renamed file stays: the parsed plist still has the declared Label.
+        let renamed = index.values().find(|f| f.label == "com.apple.sysdiagnose.darwinos").unwrap();
+        assert_eq!(renamed.job.as_ref().unwrap().get("Label").and_then(Value::as_string), Some("com.apple.sysdiagnose"));
+
+        // The next scan of an unchanged folder reports nothing and reuses every entry.
+        let (again, changes) = scan_dirs(&index, &dirs);
+        assert!(changes.is_empty());
+        assert!(again.values().zip(index.values()).all(|(a, b)| Arc::ptr_eq(a, b)));
+        assert_eq!(labels(&again), by_file);
+
+        // The cached entry of the previous index is never changed in place.
+        let owner_before = Arc::clone(&index[dir.join("com.apple.sysdiagnose.plist").to_str().unwrap()]);
+        std::fs::write(dir.join("com.apple.sysdiagnose.darwinos.plist"), plist("com.apple.sysdiagnose") + "\n").unwrap();
+        let (third, changes) = scan_dirs(&again, &dirs);
+        assert_eq!(changes.len(), 1);
+        assert_eq!((changes[0].kind, changes[0].file.label.as_str()), ("modified", "com.apple.sysdiagnose.darwinos"));
+        assert!(Arc::ptr_eq(&third[&owner_before.path], &owner_before));
+        assert_eq!(owner_before.label, "com.apple.sysdiagnose");
+
+        // The same label in two scopes is no collision.
+        let other = std::env::temp_dir().join(format!("macdash-dup-agents-{}-{}", std::process::id(), now_ms()));
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("elsewhere.plist"), plist("com.apple.sysdiagnose")).unwrap();
+        let both = vec![(dir.clone(), scope_for("system-daemons").unwrap()), (other.clone(), scope_for("system-agents").unwrap())];
+        let (index, _) = scan_dirs(&FileMap::new(), &both);
+        assert!(index.values().any(|f| f.category == "system-agents" && f.label == "com.apple.sysdiagnose"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&other).unwrap();
     }
 
     #[test]

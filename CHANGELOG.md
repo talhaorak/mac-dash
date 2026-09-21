@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-21
+
 ### Added
 - **launchd job editor** with Lingon parity as the goal ([docs/lingon-parity.md](docs/lingon-parity.md)): form for every `launchd.plist` key, Expert mode (XML), validation, templates, duplicate, delete to Trash, revisions, notes and tags, timeline, output viewer, `launchctl print`.
 - **Job monitor**: watches the five launchd folders all the time, keeps a change history in `~/.macdash/job-events.json`, notifies on added, changed and removed jobs.
@@ -17,10 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Toasts, an accessible `Dialog`, and a two-step confirm for destructive actions.
 - `bun test` and a desktop `cargo check` job in CI. Release smoke test for the compiled binary.
 
+- **Code signature** of every job's executable, verified against Apple's root (`anchor apple`, `anchor apple generic`). Displayed certificate names are never trusted.
+- **Background items**: the macOS Background Task Management database (login items, app-embedded helpers) as a searchable list. Login items can be deleted.
+- **Smart folders** (saved rule-based filters), a **list view** with sortable columns, and a **quick switcher** (Cmd+K).
+- **Failed-job events**: the monitor records and notifies when a job's exit status changes to a failure. Monitor settings live in `~/.macdash/settings.json` and apply to both backends.
+- **Power schedule**: view and set repeating wake, start-up, sleep and shut-down times (`pmset repeat`).
+- **Wrap a script in an app**, so macOS can grant it privacy permissions.
+- Editor: Umask as a permission grid, find and replace in Expert mode, drafts that survive closing the editor.
+- `?selftest=1` in development builds runs an end-to-end check of every backend operation, in the browser and inside the desktop app.
+
 ### Security
 - The server listens on `127.0.0.1` instead of all interfaces.
 - CORS is limited to the app's own origins. Requests with a foreign `Origin` or a non-loopback `Host` get 403, for HTTP and for the WebSocket upgrade.
 - The API no longer accepts file paths from the client. Jobs are addressed by label and scope.
+- Every `osascript` argument follows a `--` separator, so a value that starts with `-e` cannot be compiled as script text.
 - `kill` refuses pid 1 and the server's own process.
 - Privileged saves hand the plist text to the root script instead of a temporary file, so no other process can swap the content while the administrator prompt is open.
 - Desktop: real CSP, no remote script in the About window, `withGlobalTauri` off, commands restricted to the main window.
@@ -31,11 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plist data is cached by modification time, so new and edited jobs appear without a restart.
 - Failed actions show the real launchd error instead of reporting success.
 - System stats use the `os` module and `statfs`: one subprocess per tick instead of six. Disk usage now counts the data volume.
-- The plugin runtime is a separate chunk: the main bundle went from 1769 KB to 937 KB.
+- The plugin runtime is a separate chunk and recharts is replaced by an SVG sparkline: the main bundle went from 1769 KB to 627 KB.
+- The Vite dev server uses port 7228 (`MACDASH_DEV_PORT`) instead of Vite's default 5173.
 - Polling pauses while the window is hidden. Navigation no longer refetches everything. WebSocket reconnect uses backoff.
 - Dependencies updated within their semver ranges. `react-router-dom` removed (unused).
 
 ### Fixed
+- Two plist files that declare the same Label (macOS ships such a pair) no longer produce duplicate rows.
+- The desktop app shows its real version, and its own WebView logging no longer floods the log page.
 - The log viewer updated the store once per log line. A burst of lines tripped React's update limit. Lines are now added in batches every 250 ms.
 - Log lines were all attributed to the process "system" (the parser did not match the `compact` log style).
 - `log stream` is restarted when it exits and is killed on shutdown.

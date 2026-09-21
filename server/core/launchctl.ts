@@ -237,6 +237,32 @@ async function parseJobFile(path: string): Promise<PlistDict | null> {
   }
 }
 
+/**
+ * launchd knows one job per label and domain. When two files of one scope declare the same Label
+ * (macOS ships com.apple.sysdiagnose.plist and com.apple.sysdiagnose.darwinos.plist), the file named
+ * <Label>.plist keeps the label and the others are listed under their file name. Every job stays
+ * visible and (category, label) stays a unique key.
+ */
+export function resolveLabelCollisions(files: Map<string, JobFile>, changes: JobFileChange[] = []): void {
+  const byKey = new Map<string, JobFile[]>();
+  for (const file of files.values()) {
+    const key = `${file.category}/${file.label}`;
+    byKey.set(key, [...(byKey.get(key) ?? []), file]);
+  }
+  for (const group of byKey.values()) {
+    if (group.length < 2) continue;
+    const owner = group.find((f) => f.fileName === `${f.label}.plist`) ?? group.sort((a, b) => a.fileName.localeCompare(b.fileName))[0];
+    for (const file of group) {
+      if (file === owner) continue;
+      // A cached entry is shared with the previous index: replace it instead of mutating it.
+      const renamed = { ...file, label: file.fileName.replace(/\.plist(\.disabled)?$/, "") };
+      files.set(file.path, renamed);
+      const change = changes.find((c) => c.file === file);
+      if (change) change.file = renamed;
+    }
+  }
+}
+
 /** Downloaded or AirDropped plists keep com.apple.quarantine. One xattr call covers all changed files. */
 async function markQuarantined(files: JobFile[]): Promise<void> {
   if (files.length === 0) return;
@@ -294,6 +320,7 @@ async function scanJobFiles(): Promise<JobFileChange[]> {
     })
   );
 
+  resolveLabelCollisions(next, changes);
   await markQuarantined(changes.filter((c) => scopeFor(c.file.category)!.writable).map((c) => c.file));
 
   for (const [path, file] of index) {

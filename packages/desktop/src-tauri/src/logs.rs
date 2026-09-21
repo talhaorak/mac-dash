@@ -9,6 +9,9 @@ const LOG: &str = "/usr/bin/log";
 /// Wait this long before a stream that ended by itself is started again.
 const RESTART_DELAY: Duration = Duration::from_secs(5);
 const MAX_QUERY_MINUTES: u32 = 24 * 60;
+/// One argv element. The process name is the file name of the executable. It is the Cargo package
+/// name in `cargo tauri dev` and in the bundled app, because tauri.conf.json sets no `mainBinaryName`.
+const STREAM_PREDICATE: &str = "process != \"mac-dash-desktop\"";
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +61,22 @@ fn parse_log_level(level: &str) -> &'static str {
     else { "default" }
 }
 
+/// The lines that `log` prints before the first entry: the active filter and the column header.
+fn is_preamble(line: &str) -> bool {
+    line.starts_with("Filtering the log data using") || line.starts_with("Timestamp ")
+}
+
+/// The message type column of the compact style.
+fn compact_level(column: &str) -> Option<&'static str> {
+    match column {
+        "E" | "F" => Some("error"),
+        "I" => Some("info"),
+        "Db" => Some("debug"),
+        "Df" | "A" => Some("default"),
+        _ => None, // a host name, in the older layout
+    }
+}
+
 fn parse_compact_line(line: &str) -> Option<LogEntry> {
     // Try JSON first
     if line.starts_with('{') {
@@ -77,37 +96,35 @@ fn parse_compact_line(line: &str) -> Option<LogEntry> {
         }
     }
 
-    // Compact format: "2024-01-01 12:00:00.000000+0300 hostname process[pid] <level> message"
-    // Simple regex-like parsing
+    // Compact format of `log stream` and `log show`:
+    //   "2026-09-21 09:39:54.207 E  kernel[0:144d] (IOSurface) message"
+    // The third column is the message type (Df, I, Db, E, F, A). An older layout has a host name there.
     let line = line.trim();
-    if line.is_empty() { return None; }
+    if line.is_empty() || is_preamble(line) { return None; }
 
-    // Try to find the pattern: timestamp hostname process[pid]
-    let parts: Vec<&str> = line.splitn(4, ' ').collect();
-    if parts.len() >= 4 {
-        // Check if this looks like a timestamp
-        if parts[0].len() >= 10 && parts[0].contains('-') {
-            let timestamp = format!("{} {}", parts[0], parts[1]);
-            let rest = &line[parts[0].len() + parts[1].len() + parts[2].len() + 3..];
+    let parts: Vec<&str> = line.splitn(3, ' ').collect();
+    if parts.len() == 3 && parts[0].len() >= 10 && parts[0].contains('-') {
+        let timestamp = format!("{} {}", parts[0], parts[1]);
+        let after_time = parts[2].trim_start();
+        let (column, rest) = after_time.split_once(' ').unwrap_or((after_time, ""));
+        let level = compact_level(column).unwrap_or("default");
+        let rest = rest.trim_start();
 
-            // Parse process[pid]
-            if let Some(bracket_pos) = rest.find('[') {
-                // Search after the opening bracket: a "]" before it would make the slice below panic.
-                if let Some(close_pos) = rest[bracket_pos..].find(']').map(|at| bracket_pos + at) {
-                    let process = &rest[..bracket_pos];
-                    let pid: Option<i32> = rest[bracket_pos+1..close_pos].parse().ok();
-                    let message = rest[close_pos+1..].trim().to_string();
-
-                    return Some(LogEntry {
-                        timestamp,
-                        level: "default".to_string(),
-                        process: process.to_string(),
-                        pid,
-                        message,
-                        subsystem: None,
-                        category: None,
-                    });
-                }
+        // Parse process[pid] or process[pid:tid]
+        if let Some(bracket_pos) = rest.find('[') {
+            // Search after the opening bracket: a "]" before it would make the slice below panic.
+            if let Some(close_pos) = rest[bracket_pos..].find(']').map(|at| bracket_pos + at) {
+                let ids = &rest[bracket_pos + 1..close_pos];
+                let pid: Option<i32> = ids.split(':').next().and_then(|pid| pid.parse().ok());
+                return Some(LogEntry {
+                    timestamp,
+                    level: level.to_string(),
+                    process: rest[..bracket_pos].trim().to_string(),
+                    pid,
+                    message: rest[close_pos + 1..].trim().to_string(),
+                    subsystem: None,
+                    category: None,
+                });
             }
         }
     }
@@ -147,7 +164,8 @@ fn ensure_running(control: &mut StreamControl) {
 
 async fn run_stream(generation: u64, mut stop: oneshot::Receiver<()>) {
     let spawned = Command::new(LOG)
-        .args(["stream", "--style", "compact", "--level", "info"])
+        // The WebView of this app logs every network request. Leave our own noise out.
+        .args(["stream", "--style", "compact", "--level", "info", "--predicate", STREAM_PREDICATE])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -330,5 +348,34 @@ mod tests {
         assert_eq!(odd.pid, Some(12));
         assert!(parse_compact_line("2026-09-21 10:00:00.1+0300 host only] closing").is_some());
         assert!(parse_compact_line("   ").is_none());
+    }
+
+    #[test]
+    fn compact_lines_of_current_macos() {
+        // Captured from `log stream --style compact`
+        let entry = parse_compact_line("2026-09-21 09:39:54.207 E  kernel[0:144d] (IOSurface) SID: 0x0 task: gone").unwrap();
+        assert_eq!(entry.timestamp, "2026-09-21 09:39:54.207");
+        assert_eq!((entry.level.as_str(), entry.process.as_str(), entry.pid), ("error", "kernel", Some(0)));
+        assert_eq!(entry.message, "(IOSurface) SID: 0x0 task: gone");
+
+        let info = parse_compact_line("2026-09-21 09:40:01.113 I  Google Chrome Helper[4242:1f3a2] [com.apple.network:connection] nw_flow done").unwrap();
+        assert_eq!((info.level.as_str(), info.process.as_str(), info.pid), ("info", "Google Chrome Helper", Some(4242)));
+        assert_eq!(info.message, "[com.apple.network:connection] nw_flow done");
+
+        assert_eq!(parse_compact_line("2026-09-21 09:40:01.113 Df launchd[1:2b] x").unwrap().level, "default");
+        assert_eq!(parse_compact_line("2026-09-21 09:40:01.113 Db launchd[1:2b] x").unwrap().level, "debug");
+        assert_eq!(parse_compact_line("2026-09-21 09:40:01.113 F  launchd[1:2b] x").unwrap().level, "error");
+
+        // The filter line (new with --predicate) and the column header are not log entries.
+        assert!(parse_compact_line("Filtering the log data using \"process !=[cd] \"mac-dash-desktop\"\"").is_none());
+        assert!(parse_compact_line("Timestamp               Ty Process[PID:TID]").is_none());
+    }
+
+    #[test]
+    fn stream_predicate_names_this_binary() {
+        // The bundled binary keeps the Cargo package name as long as tauri.conf.json has no mainBinaryName.
+        assert_eq!(STREAM_PREDICATE, format!("process != \"{}\"", env!("CARGO_PKG_NAME")));
+        assert!(!include_str!("../tauri.conf.json").contains("mainBinaryName"));
+        assert!(!env!("CARGO_PKG_NAME").contains(['"', '\\']));
     }
 }

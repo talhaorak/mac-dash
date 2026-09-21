@@ -33,7 +33,6 @@ declare global {
     icons: typeof LucideReact;
     framerMotion: typeof FramerMotion;
     zustand: any;
-    recharts: any;
     modules: Record<string, any>;
   };
 }
@@ -47,7 +46,6 @@ export function initPluginRuntime() {
     icons: LucideReact,
     framerMotion: FramerMotion,
     zustand: null,
-    recharts: null,
     modules: {
       "@/components/ui/GlowCard": GlowCardModule,
       "@/lib/api": ApiModule,

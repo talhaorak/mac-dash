@@ -95,7 +95,6 @@ const GLOBAL_MAP: Record<string, string> = {
   "lucide-react": "__macdash__.icons",
   "framer-motion": "__macdash__.framerMotion",
   zustand: "__macdash__.zustand",
-  recharts: "__macdash__.recharts",
 };
 
 function getGlobalRef(modulePath: string): string {

@@ -100,9 +100,9 @@ export function DashboardPage() {
             </div>
             <div className="grid grid-cols-2 gap-x-4 text-xs">
               <div className="text-gray-500">Used</div>
-              <div className="text-right text-green-400 font-mono">{stats ? formatBytes(stats.disk.used) : "-"}</div>
+              <div className="text-right text-green-400 font-mono whitespace-nowrap">{stats ? formatBytes(stats.disk.used) : "-"}</div>
               <div className="text-gray-500">Free</div>
-              <div className="text-right text-green-400 font-mono">{stats ? formatBytes(stats.disk.free) : "-"}</div>
+              <div className="text-right text-green-400 font-mono whitespace-nowrap">{stats ? formatBytes(stats.disk.free) : "-"}</div>
               <div className="text-gray-500">Mount</div>
               <div className="text-right text-gray-300 font-mono">/</div>
             </div>

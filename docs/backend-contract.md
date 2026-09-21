@@ -20,6 +20,8 @@ Backends only move XML text, touch files and call `launchctl`.
 7. Status comes from `launchctl print gui/<uid>` and `launchctl print system` (the `services = { pid status label }` block; pid `0` means not running, status `-` means never exited). Disabled overrides come from `launchctl print-disabled <domain>`.
 8. Use `bootstrap` / `bootout` / `enable` / `disable` / `kickstart` / `kill`. Never `load` / `unload`.
 
+9. `(category, label)` is a unique key. When two files of one scope declare the same `Label`, the file named `<Label>.plist` keeps it (else the first by file name), and the others are listed under their file name without the extension.
+
 ## Types
 
 ```ts

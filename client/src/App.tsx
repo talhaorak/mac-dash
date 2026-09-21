@@ -152,7 +152,11 @@ export default function App() {
   // Fetch version once (only in web mode; desktop uses package version)
   useEffect(() => {
     if (backend.isDesktop()) {
-      setVersion("desktop");
+      // The real app version comes from the Tauri bundle.
+      import("@tauri-apps/api/app")
+        .then((app) => app.getVersion())
+        .then(setVersion)
+        .catch(() => setVersion(null));
     } else {
       fetch("/api/system/version")
         .then((r) => r.json())

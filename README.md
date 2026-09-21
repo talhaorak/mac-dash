@@ -175,7 +175,7 @@ Install mac-dash as a LaunchAgent that starts on login:
 | Bundler | [Vite](https://vite.dev) |
 | Real-time | WebSocket |
 | State | [Zustand](https://zustand.docs.pmnd.rs/) |
-| Charts | [Recharts](https://recharts.org) |
+| Charts | Dependency-free SVG sparklines |
 
 ## Project Structure
 
