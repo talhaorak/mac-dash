@@ -25,7 +25,8 @@ const CODESIGN_VERIFY_TIMEOUT: Duration = Duration::from_secs(30);
 const REQUIREMENT_APPLE: &str = "anchor apple";
 /// Code whose certificate Apple issued: Apple, Developer ID, App Store.
 const REQUIREMENT_APPLE_ISSUED: &str = "anchor apple generic";
-const DUMPBTM_TIMEOUT: Duration = Duration::from_secs(15);
+/// Usually 5 s. On a busy Mac it took more than 15 s, so the limit is generous.
+const DUMPBTM_TIMEOUT: Duration = Duration::from_secs(60);
 const OSA_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn has_control_chars(text: &str) -> bool {

@@ -5,6 +5,7 @@
 
 import type { JobCategory, PathFacts } from "@shared/launchd";
 import type { ServiceInfo } from "@/stores/app";
+import { authHeaders, reportUnauthorized } from "@/lib/auth";
 
 const isTauri = () =>
   typeof window !== "undefined" &&
@@ -40,9 +41,10 @@ const BASE = "/api";
 
 async function httpRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...options?.headers },
   });
+  if (res.status === 401) reportUnauthorized();
   const body = await res.json().catch(() => null);
   if (!res.ok || (body && body.ok === false)) {
     throw new Error(body?.error || `Request failed: ${res.status} ${res.statusText}`);
@@ -213,6 +215,16 @@ export const backend = {
   isDesktop: isTauri,
 
   // System
+  /** Web: the server's package version. Desktop: the app bundle's version. */
+  async getVersion(): Promise<string | null> {
+    try {
+      if (isTauri()) return await (await import("@tauri-apps/api/app")).getVersion();
+      return (await httpRequest<{ version: string }>("/system/version")).version;
+    } catch {
+      return null;
+    }
+  },
+
   async getSystemStats() {
     if (isTauri()) return tauriCall("get_system_info");
     return httpRequest("/system/stats");

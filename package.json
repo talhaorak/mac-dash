@@ -29,8 +29,10 @@
     "dev:client": "cd client && bunx vite",
     "build": "cd client && bun install && bunx --bun vite build",
     "start": "NODE_ENV=production bun server/index.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p client",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p client && tsc --noEmit -p e2e",
     "test": "bun test",
+    "media": "bun scripts/media/capture.ts",
+    "test:e2e": "MACDASH_E2E=1 bun test e2e",
     "prepublishOnly": "bun run build",
     "desktop:dev": "cd packages/desktop && cargo tauri dev",
     "desktop:build": "bun run build && cd packages/desktop && cargo tauri build"
@@ -76,6 +78,7 @@
   "devDependencies": {
     "@types/bun": "^1.4.2",
     "concurrently": "^9.2.4",
+    "puppeteer-core": "^25.11.0",
     "typescript": "^5.9.3"
   }
 }

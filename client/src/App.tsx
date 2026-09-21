@@ -5,7 +5,8 @@ import { Toaster } from "@/components/ui/Toast";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { backend, type JobEvent } from "@/lib/backend";
 import { toast } from "@/components/ui/Toast";
-import { notifyJobEvent, refreshMonitorSettings } from "@/components/jobs/JobPanels";
+import { notifyJobEvent, openJobFromNotification, refreshMonitorSettings } from "@/components/jobs/JobPanels";
+import { jobRefFromParts } from "@/lib/router";
 import {
   useNavStore,
   useJobEventsStore,
@@ -22,6 +23,7 @@ import { ProcessesPage } from "@/pages/ProcessesPage";
 import { LogsPage } from "@/pages/LogsPage";
 import { PluginsPage } from "@/pages/PluginsPage";
 import { PluginRenderer } from "@/components/PluginRenderer";
+import { useFileDropToCreate } from "@/components/jobs/FileDrop";
 
 
 // Poll every 3s in desktop mode (no WS), 10s in web mode as WS fallback
@@ -53,6 +55,9 @@ function getDataTopicsForPage(page: string): string[] {
 }
 
 export default function App() {
+  // Desktop: drop an app, a script or a folder on the window to create a job for it.
+  useFileDropToCreate(useNavStore((s) => s.openEditor));
+
   const currentPage = useNavStore((s) => s.currentPage);
   const setStats = useSystemStore((s) => s.setStats);
   const setServices = useServicesStore((s) => s.setServices);
@@ -64,6 +69,12 @@ export default function App() {
   const addJobEvent = useJobEventsStore((s) => s.addEvent);
   const setJobEvents = useJobEventsStore((s) => s.setEvents);
   const [version, setVersion] = useState<string | null>(null);
+
+  // Several tabs or windows can show different pages: the title tells them apart.
+  useEffect(() => {
+    const name = currentPage.startsWith("plugin:") ? currentPage.slice("plugin:".length) : currentPage;
+    document.title = currentPage === "dashboard" ? "mac-dash" : `${name.charAt(0).toUpperCase()}${name.slice(1)} · mac-dash`;
+  }, [currentPage]);
 
   // ── Smart topic subscription based on current page ─────────────────
   const topics = useMemo(() => getTopicsForPage(currentPage), [currentPage]);
@@ -97,6 +108,29 @@ export default function App() {
       unlisten?.();
     };
   }, [handleJobEvent, setJobEvents]);
+
+  // ── Desktop: a click on a native notification opens the job ────────
+  // The shell emits "open-job" with { label, category }. An older shell never emits it: then nothing happens here.
+  useEffect(() => {
+    if (!backend.isDesktop()) return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<{ label?: unknown; category?: unknown; kind?: unknown }>("open-job", (e) => {
+          // The payload crosses a process border: check it like a URL.
+          const payload = e.payload ?? {};
+          const job = jobRefFromParts(payload.label, payload.category);
+          if (job) openJobFromNotification(job, payload.kind === "removed" ? "removed" : undefined);
+        })
+      )
+      .then((off) => (cancelled ? off() : (unlisten = off)))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   // `log stream` can deliver hundreds of lines per second. One store update per line
   // re-rendered the log list per line and tripped React's nested update limit.
@@ -149,20 +183,9 @@ export default function App() {
     setWsConnected(connected);
   }, [connected, setWsConnected]);
 
-  // Fetch version once (only in web mode; desktop uses package version)
+  // Web: the server's version. Desktop: the app bundle's version.
   useEffect(() => {
-    if (backend.isDesktop()) {
-      // The real app version comes from the Tauri bundle.
-      import("@tauri-apps/api/app")
-        .then((app) => app.getVersion())
-        .then(setVersion)
-        .catch(() => setVersion(null));
-    } else {
-      fetch("/api/system/version")
-        .then((r) => r.json())
-        .then((r) => setVersion(r.version))
-        .catch(() => {});
-    }
+    backend.getVersion().then(setVersion);
   }, []);
 
   // Fetch the given topics over REST / Tauri commands

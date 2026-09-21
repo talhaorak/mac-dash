@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, EventTarget};
 use tauri_plugin_notification::NotificationExt;
 
 const MAX_EVENTS: usize = 500;
@@ -288,8 +288,15 @@ fn notify(app: &AppHandle, title: &str, body: &str) {
 }
 
 fn publish(app: &AppHandle, fresh: &[JobEvent], settings: &MonitorSettings) {
+    // To every dashboard window (`main`, `main-2`, …), and to no other window.
     for event in fresh {
-        let _ = app.emit_to("main", "job-event", event);
+        let _ = app.emit_filter("job-event", event, |target| match target {
+            EventTarget::Window { label }
+            | EventTarget::Webview { label }
+            | EventTarget::WebviewWindow { label }
+            | EventTarget::AnyLabel { label } => crate::windows::is_dashboard_label(label),
+            _ => false,
+        });
     }
     let wanted = notifiable(settings, fresh);
     if wanted.len() > MAX_NOTIFICATIONS_PER_BATCH {

@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { useNavStore, useConnectionStore, useJobEventsStore } from "@/stores/app";
 import { backend } from "@/lib/backend";
 import { api } from "@/lib/api";
+import { formatRoute, routeForPage } from "@/lib/router";
 import { useWindowDrag } from "@/lib/window-drag";
 
 interface SidebarProps {
@@ -91,6 +92,14 @@ export function Sidebar({ version }: SidebarProps) {
 
   const handleDrag = useWindowDrag();
 
+  // The entries are links, so the browser can open a page in a new tab. A plain click stays inside the app.
+  const followLink = (e: React.MouseEvent, page: string) => {
+    const newTab = e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0;
+    if (newTab && !backend.isDesktop()) return;
+    e.preventDefault();
+    setPage(page);
+  };
+
   return (
     <aside
       className={cn(
@@ -131,10 +140,11 @@ export function Sidebar({ version }: SidebarProps) {
           // launchd job changes that the user has not opened yet
           const badge = item.id === "services" && unseenJobEvents > 0 ? unseenJobEvents : 0;
           return (
-            <button
+            <a
               key={item.id}
-              type="button"
-              onClick={() => setPage(item.id)}
+              href={formatRoute(routeForPage(item.id))}
+              draggable={false}
+              onClick={(e) => followLink(e, item.id)}
               aria-label={badge ? `${item.label}, ${badge} new job changes` : item.label}
               title={item.label}
               aria-current={isActive ? "page" : undefined}
@@ -163,7 +173,7 @@ export function Sidebar({ version }: SidebarProps) {
                   {!sidebarCollapsed && badge}
                 </span>
               )}
-            </button>
+            </a>
           );
         })}
 
@@ -180,10 +190,11 @@ export function Sidebar({ version }: SidebarProps) {
               const isActive = currentPage === pageId;
               const Icon = pluginIconMap[plugin.icon || ""] || Puzzle;
               return (
-                <button
+                <a
                   key={pageId}
-                  type="button"
-                  onClick={() => setPage(pageId)}
+                  href={formatRoute(routeForPage(pageId))}
+                  draggable={false}
+                  onClick={(e) => followLink(e, pageId)}
                   aria-label={plugin.name}
                   title={plugin.name}
                   aria-current={isActive ? "page" : undefined}
@@ -201,7 +212,7 @@ export function Sidebar({ version }: SidebarProps) {
                   {!sidebarCollapsed && (
                     <span className="font-medium">{plugin.name}</span>
                   )}
-                </button>
+                </a>
               );
             })}
           </>

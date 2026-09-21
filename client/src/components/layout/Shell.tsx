@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { RefreshCw, Clock, Search } from "lucide-react";
 import { backend } from "@/lib/backend";
 import { useWindowDrag } from "@/lib/window-drag";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 interface ShellProps {
   children: ReactNode;
@@ -100,6 +101,9 @@ export function Shell({ children, version, onRefresh }: ShellProps) {
             <RefreshCw className="w-3 h-3" aria-hidden="true" />
             Refresh
           </button>
+          <div className="no-drag">
+            <ThemeToggle />
+          </div>
           {isDesktop && <div data-tauri-drag-region className="h-6 w-10" />}
         </div>
         <div className="p-6">{children}</div>

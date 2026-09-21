@@ -1,7 +1,21 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "fs/promises";
+import { constants } from "fs";
+import { copyFile, lstat, mkdir, readdir, readFile, stat, writeFile } from "fs/promises";
 import { join } from "path";
 import { scopeFor, type JobCategory } from "../../shared/launchd";
-import { BACKUP_DIR, STATE_DIR, revisionLabel, safeFileName } from "./launchctl";
+import {
+  BACKUP_DIR,
+  JobError,
+  STATE_DIR,
+  errorMessage,
+  promptLabel,
+  revisionLabel,
+  runPrivileged,
+  runPrivilegedAfterTrashCopy,
+  safeFileName,
+  trashPath,
+  type PrivilegedStep,
+  type Result,
+} from "./launchctl";
 
 // Notes, tags, revisions and the startup mechanisms that are not launchd plists.
 // See docs/backend-contract.md. The Tauri backend mirrors this file.
@@ -11,6 +25,30 @@ import { BACKUP_DIR, STATE_DIR, revisionLabel, safeFileName } from "./launchctl"
 export interface JobMeta {
   notes: string;
   tags: string[];
+  icon?: string;
+}
+
+const MAX_ICON_EMOJI_CHARS = 8;
+const MAX_ICON_URL_LENGTH = 48 * 1024;
+const ICON_DATA_URL = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/;
+// Digits, "#" and "*" are emoji components too (keycaps), so a text such as "1234" needs the second test.
+const EMOJI_PARTS = /^[\p{Extended_Pictographic}\p{Emoji_Component}]+$/u;
+const EMOJI_BASE = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u;
+
+/** "" for no icon. Throws a JobError for anything other than an emoji or a small PNG/JPEG data URL. */
+export function checkJobIcon(icon: unknown): string {
+  if (icon === undefined || icon === null || icon === "") return "";
+  if (typeof icon !== "string") throw new JobError("The icon must be a string.");
+  if (icon.startsWith("data:")) {
+    if (icon.length > MAX_ICON_URL_LENGTH) throw new JobError("The icon image is larger than 48 KB.");
+    if (!ICON_DATA_URL.test(icon)) throw new JobError("The icon image must be a base64 PNG or JPEG data URL.");
+    return icon;
+  }
+  // Characters are code points: one family emoji is seven of them.
+  if ([...icon].length > MAX_ICON_EMOJI_CHARS || !EMOJI_PARTS.test(icon) || !EMOJI_BASE.test(icon)) {
+    throw new JobError("The icon must be an emoji of at most 8 characters or a PNG or JPEG image.");
+  }
+  return icon;
 }
 
 const META_FILE = join(STATE_DIR, "job-meta.json");
@@ -26,12 +64,13 @@ export async function getAllJobMeta(): Promise<Record<string, JobMeta>> {
 }
 
 export async function setJobMeta(label: string, category: JobCategory, meta: JobMeta): Promise<void> {
-  if (!scopeFor(category)) throw new Error(`Unknown category: ${category}`);
+  if (!scopeFor(category)) throw new JobError(`Unknown category: ${category}`);
+  const icon = checkJobIcon(meta.icon);
   const all = await getAllJobMeta();
   const notes = String(meta.notes ?? "").slice(0, 20_000);
   const tags = [...new Set((Array.isArray(meta.tags) ? meta.tags : []).map((t) => String(t).trim().slice(0, 40)).filter(Boolean))].slice(0, 20);
-  if (!notes && tags.length === 0) delete all[metaKey(category, label)];
-  else all[metaKey(category, label)] = { notes, tags };
+  if (!notes && tags.length === 0 && !icon) delete all[metaKey(category, label)];
+  else all[metaKey(category, label)] = { notes, tags, ...(icon ? { icon } : {}) };
   await mkdir(STATE_DIR, { recursive: true });
   await writeFile(META_FILE, JSON.stringify(all, null, 2), { mode: 0o600 });
 }
@@ -176,7 +215,47 @@ export async function deleteLoginItem(name: string): Promise<{ ok: true } | { ok
   return result.code === 0 ? { ok: true } : { ok: false, error: explainSystemEventsError(result.stderr, "Could not delete the login item.") };
 }
 
-// ── Background items (read-only) ─────────────────────────────────────
+// ── Helper tools ─────────────────────────────────────────────────────
+
+const HELPER_TOOLS_DIR = "/Library/PrivilegedHelperTools";
+export const TRASH_COPY_FAILED = "The file cannot be copied to the Trash. Delete it permanently?";
+
+/** One file name inside /Library/PrivilegedHelperTools. Throws a JobError for anything that could leave the folder. */
+export function checkHelperToolName(name: unknown): string {
+  if (typeof name !== "string" || !name || name.length > 255 || name.includes("/") || /^[.-]/.test(name) || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(name)) {
+    throw new JobError("Invalid helper tool name.");
+  }
+  return name;
+}
+
+/** Root only removes the file. The app makes the Trash copy itself: root never writes into ~/.Trash. */
+export function helperToolDeleteSteps(name: string): PrivilegedStep[] {
+  return [{ cmd: ["/bin/rm", "-f", join(HELPER_TOOLS_DIR, checkHelperToolName(name))] }];
+}
+
+/** `permanent` skips the Trash copy. The client sets it after the user confirmed TRASH_COPY_FAILED. */
+export async function deleteHelperTool(name: unknown, permanent: boolean): Promise<Result> {
+  try {
+    const tool = checkHelperToolName(name);
+    const path = join(HELPER_TOOLS_DIR, tool);
+    // lstat: a symlink is not a helper tool
+    if (!(await lstat(path).then((st) => st.isFile(), () => false))) throw new JobError("Helper tool not found.");
+
+    let trashCopy: string | null = null;
+    if (!permanent) {
+      trashCopy = await trashPath(tool);
+      await copyFile(path, trashCopy, constants.COPYFILE_EXCL).catch(() => {
+        throw new JobError(TRASH_COPY_FAILED);
+      });
+    }
+    await runPrivilegedAfterTrashCopy(helperToolDeleteSteps(tool), `mac-dash wants to delete the helper tool "${promptLabel(tool)}".`, trashCopy);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: errorMessage(e) };
+  }
+}
+
+// ── Background items ─────────────────────────────────────────────────
 
 export interface BackgroundItem {
   uid: number;
@@ -240,11 +319,44 @@ export function parseBtmDump(text: string, uids: number[]): BackgroundItem[] {
   return items;
 }
 
-/** Items of the current user, of root and of "all users" (uid -2). Read-only: never calls resetbtm. */
-export async function getBackgroundItems(): Promise<{ items: BackgroundItem[]; error: string | null }> {
-  const result = await capture(["sfltool", "dumpbtm"], 15_000);
-  if (result.code !== 0) return { items: [], error: result.stderr || "Could not read the background items." };
-  return { items: parseBtmDump(result.stdout, [process.getuid?.() ?? 501, 0, -2]), error: null };
+/** Items of the current user, of root and of "all users" (uid -2). */
+type BackgroundItemsResult = { items: BackgroundItem[]; error: string | null };
+const BTM_TTL_MS = 120_000;
+let btmCache: { at: number; result: BackgroundItemsResult } | null = null;
+let btmInFlight: Promise<BackgroundItemsResult> | null = null;
+
+/**
+ * `sfltool dumpbtm` usually answers in 5 s, but needs half a minute on a busy Mac and gets slower
+ * when several copies run at once. One run at a time, and a good answer is kept for two minutes.
+ */
+export function getBackgroundItems(): Promise<BackgroundItemsResult> {
+  if (btmCache && Date.now() - btmCache.at < BTM_TTL_MS) return Promise.resolve(btmCache.result);
+  btmInFlight ??= (async () => {
+    try {
+      const run = await capture(["sfltool", "dumpbtm"], 60_000);
+      if (run.code !== 0) return { items: [], error: run.stderr || "Could not read the background items." };
+      const result = { items: parseBtmDump(run.stdout, [process.getuid?.() ?? 501, 0, -2]), error: null };
+      btmCache = { at: Date.now(), result };
+      return result;
+    } finally {
+      btmInFlight = null;
+    }
+  })();
+  return btmInFlight;
+}
+
+export const RESET_BTM_STEPS: PrivilegedStep[] = [{ cmd: ["/usr/bin/sfltool", "resetbtm"] }];
+export const RESET_BTM_PROMPT = "mac-dash wants to reset the background-item approval of every app.";
+
+/** Resets the approval of EVERY app, and macOS asks for a restart. The client asks the user twice. */
+export async function resetBackgroundItems(): Promise<Result> {
+  try {
+    await runPrivileged(RESET_BTM_STEPS, RESET_BTM_PROMPT);
+    btmCache = null;
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: errorMessage(e) };
+  }
 }
 
 /** Names of the user's Shortcuts, for the "Shortcut" run kind (/usr/bin/shortcuts run <name>). */

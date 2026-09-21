@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import { backend } from "@/lib/backend";
+import { AuthGate } from "@/components/AuthGate";
 
 // Desktop-specific: Disable text selection and context menu.
 // `backend.isDesktop()` also works when `withGlobalTauri` is off (no `window.__TAURI__`).
@@ -34,7 +35,9 @@ if (backend.isDesktop()) {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <AuthGate>
+      <App />
+    </AuthGate>
   </React.StrictMode>
 );
 

@@ -7,6 +7,7 @@ import { metaKey, type JobMeta, type ServiceAction } from "@/lib/backend";
 import type { ServiceInfo } from "@/stores/app";
 import { cn } from "@/lib/utils";
 import { JOB_SCOPES, explainExitStatus, scopeFor } from "@shared/launchd";
+import { JobIcon } from "./JobIcon";
 import { JobRowActions, serviceKey, type ArmedAction } from "./ListJobRowActions";
 
 // ── Columns ──────────────────────────────────────────────────────────
@@ -81,7 +82,7 @@ const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "bas
 export interface JobListViewProps {
   /** Jobs after search, filters and smart folder. */
   services: ServiceInfo[];
-  /** Notes and tags by `metaKey`. */
+  /** Notes, tags and icons by `metaKey`. */
   meta: Record<string, JobMeta>;
   /** True while the first job list is still on its way. */
   loading: boolean;
@@ -196,6 +197,7 @@ export function JobListView({ services, meta, loading, busyKey, isArmed, onActio
                   key={key}
                   service={service}
                   tags={meta[metaKey(service)]?.tags}
+                  icon={meta[metaKey(service)]?.icon}
                   columns={visibleColumns}
                   busy={busyKey !== null && busyKey.endsWith(`:${key}`)}
                   armedAction={(["stop", "disable"] as const).find((a) => isArmed(`${a}:${key}`)) ?? null}
@@ -227,6 +229,7 @@ export function JobListView({ services, meta, loading, busyKey, isArmed, onActio
 const JobListRow = memo(function JobListRow({
   service,
   tags,
+  icon,
   columns,
   busy,
   armedAction,
@@ -236,6 +239,7 @@ const JobListRow = memo(function JobListRow({
 }: {
   service: ServiceInfo;
   tags: string[] | undefined;
+  icon: string | undefined;
   columns: ColumnSpec[];
   busy: boolean;
   armedAction: ArmedAction | null;
@@ -249,37 +253,40 @@ const JobListRow = memo(function JobListRow({
     switch (column) {
       case "name":
         return (
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 min-w-0">
-              {/* The button gives keyboard and screen-reader users the row action. The mouse can click the whole row. */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  open();
-                }}
-                aria-label={`${service.label}. Open details`}
-                className="min-w-0 truncate text-left font-mono text-[12px] font-medium text-gray-200 rounded hover:text-cyan-300 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
-              >
-                {service.label}
-              </button>
-              {(service.unreadable || service.quarantined) && (
-                <span title={service.unreadable ? "The plist cannot be parsed" : "The plist is quarantined"} className="text-red-400 flex-shrink-0">
-                  <ShieldAlert className="w-3.5 h-3.5" aria-hidden />
-                  <span className="sr-only">{service.unreadable ? "unreadable plist" : "quarantined plist"}</span>
-                </span>
-              )}
-              {tags?.map((t) => (
-                <span key={t} className="flex-shrink-0 px-1.5 py-px rounded text-[9px] font-medium bg-white/[0.06] text-gray-400">
-                  #{t}
-                </span>
-              ))}
-            </div>
-            {service.program && (
-              <div className="truncate text-[10px] text-gray-600" title={service.program}>
-                {service.program}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <JobIcon label={service.label} icon={icon} size={22} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 min-w-0">
+                {/* The button gives keyboard and screen-reader users the row action. The mouse can click the whole row. */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    open();
+                  }}
+                  aria-label={`${service.label}. Open details`}
+                  className="min-w-0 truncate text-left font-mono text-[12px] font-medium text-gray-200 rounded hover:text-cyan-300 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
+                >
+                  {service.label}
+                </button>
+                {(service.unreadable || service.quarantined) && (
+                  <span title={service.unreadable ? "The plist cannot be parsed" : "The plist is quarantined"} className="text-red-400 flex-shrink-0">
+                    <ShieldAlert className="w-3.5 h-3.5" aria-hidden />
+                    <span className="sr-only">{service.unreadable ? "unreadable plist" : "quarantined plist"}</span>
+                  </span>
+                )}
+                {tags?.map((t) => (
+                  <span key={t} className="flex-shrink-0 px-1.5 py-px rounded text-[9px] font-medium bg-white/[0.06] text-gray-400">
+                    #{t}
+                  </span>
+                ))}
               </div>
-            )}
+              {service.program && (
+                <div className="truncate text-[10px] text-gray-600" title={service.program}>
+                  {service.program}
+                </div>
+              )}
+            </div>
           </div>
         );
       case "scope":

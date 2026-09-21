@@ -8,7 +8,9 @@ import {
   describeCalendarEntry,
   type KeySpec,
 } from "@shared/launchd";
-import { isPlistDict, serializePlist, type PlistDict, type PlistValue } from "@shared/plist";
+import { isPlistDict, type PlistDict, type PlistValue } from "@shared/plist";
+import { ChoosePathButton, type PathPickerMode } from "./PathPicker";
+import { PlistTreeEditor, nestedKeyOptionsFor, presetsForKey } from "./PlistTreeEditor";
 import {
   DEFAULT_UMASK,
   UMASK_CLASSES,
@@ -37,16 +39,19 @@ export function FieldRow({
   help,
   htmlFor,
   issue,
+  jobKey,
   children,
 }: {
   label: string;
   help?: string;
   htmlFor?: string;
   issue?: { severity: "error" | "warning" | "info"; message: string } | null;
+  /** The plist key of the row. The form finds the row by it, to scroll to a key that was just added. */
+  jobKey?: string;
   children: ReactNode;
 }) {
   return (
-    <div className="grid grid-cols-[180px_1fr] gap-x-4 gap-y-1 items-start py-2">
+    <div data-job-key={jobKey} className="grid grid-cols-[180px_1fr] gap-x-4 gap-y-1 items-start py-2">
       <label htmlFor={htmlFor} className="text-xs font-medium text-gray-400 pt-2">
         {label}
       </label>
@@ -191,6 +196,8 @@ export function StringList({
   disabled,
   addLabel = "Add",
   mono = true,
+  choose,
+  chooseLabel = "Item",
 }: {
   values: string[];
   onChange: (next: string[] | undefined) => void;
@@ -198,6 +205,10 @@ export function StringList({
   disabled?: boolean;
   addLabel?: string;
   mono?: boolean;
+  /** Rows that hold a path get a "Choose…" button: return the picker mode of the row, or null for no button. */
+  choose?: (index: number) => PathPickerMode | null;
+  /** Name of the list in the accessible name of the buttons, for example "Watch path". */
+  chooseLabel?: string;
 }) {
   const update = (next: string[]) => onChange(next.length > 0 ? next : undefined);
   return (
@@ -214,6 +225,15 @@ export function StringList({
             onChange={(e) => update(values.map((x, j) => (j === i ? e.target.value : x)))}
             className={cn(inputClass, mono && "font-mono text-xs")}
           />
+          {choose?.(i) && (
+            <ChoosePathButton
+              mode={choose(i)!}
+              value={v}
+              disabled={disabled}
+              fieldLabel={`${chooseLabel} ${i + 1}`}
+              onPick={(path) => update(values.map((x, j) => (j === i ? path : x)))}
+            />
+          )}
           <button
             type="button"
             aria-label={`Remove item ${i + 1}`}
@@ -578,7 +598,7 @@ export function CalendarEditor({
   );
 }
 
-// ── Session type, complex values ─────────────────────────────────────
+// ── Session type ─────────────────────────────────────────────────────
 
 export function MultiChoice({
   options,
@@ -621,26 +641,6 @@ export function MultiChoice({
   );
 }
 
-/** Nested structures (Sockets, MachServices, LaunchEvents…) are shown as XML and edited in Expert mode. */
-export function ComplexValue({ value, onRemove, disabled }: { value: PlistValue; onRemove: () => void; disabled?: boolean }) {
-  const xml = serializePlist(value)
-    .split("\n")
-    .slice(3, -2)
-    .join("\n");
-  return (
-    <div className="space-y-1">
-      <pre className="max-h-40 overflow-auto rounded-lg bg-black/30 p-2 text-[11px] font-mono text-gray-400">{xml}</pre>
-      <div className="flex items-center gap-2">
-        <span className="text-[11px] text-gray-600">Edit this value in Expert mode.</span>
-        <button type="button" disabled={disabled} onClick={onRemove} className={smallButton}>
-          <X className="w-3.5 h-3.5" />
-          Remove key
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ── Umask ────────────────────────────────────────────────────────────
 
 /**
@@ -659,9 +659,9 @@ export function UmaskEditor({
 }) {
   const groupId = useId();
 
-  // A real, a date or a container is a type error (the Checks panel reports it). Show the raw value.
+  // A real, a date or a container is a type error (the Checks panel reports it). The tree editor can change the type.
   if (value !== undefined && typeof value !== "number" && typeof value !== "string") {
-    return <ComplexValue value={value} disabled={disabled} onRemove={() => onChange(undefined)} />;
+    return <PlistTreeEditor name="Umask" value={value} disabled={disabled} onChange={onChange} defaultType="integer" />;
   }
 
   if (typeof value === "string") {
@@ -795,6 +795,21 @@ const KEY_WIDGETS: Record<
   Umask: UmaskEditor,
 };
 
+/**
+ * Keys that hold one path: the picker mode of their "Choose…" button.
+ * `newFile` also offers "use this folder + file name": launchd creates a log file that does not exist yet.
+ */
+const PATH_KEYS: Record<string, { mode: PathPickerMode; newFile?: string }> = {
+  WorkingDirectory: { mode: "folder" },
+  RootDirectory: { mode: "folder" },
+  StandardOutPath: { mode: "file", newFile: "out.log" },
+  StandardErrorPath: { mode: "file", newFile: "err.log" },
+  StandardInPath: { mode: "file", newFile: "in.txt" },
+};
+
+/** Keys that hold a list of paths. WatchPaths takes files and folders. */
+const PATH_LIST_KEYS: Record<string, PathPickerMode> = { WatchPaths: "any", QueueDirectories: "folder" };
+
 /** Pick the widget for a key: a key-specific widget first, else one from its schema type. */
 export function SchemaField({
   spec,
@@ -802,12 +817,15 @@ export function SchemaField({
   onChange,
   disabled,
   id,
+  jobLabel,
 }: {
   spec: KeySpec;
   value: PlistValue | undefined;
   onChange: (next: PlistValue | undefined) => void;
   disabled?: boolean;
   id?: string;
+  /** Label of the job: names a new log file and a new Mach service. */
+  jobLabel?: string;
 }) {
   const KeyWidget = KEY_WIDGETS[spec.key];
   if (KeyWidget) return <KeyWidget value={value} onChange={onChange} disabled={disabled} />;
@@ -828,15 +846,29 @@ export function SchemaField({
           ))}
         </select>
       ) : (
-        <input
-          id={id}
-          type="text"
-          spellCheck={false}
-          value={typeof value === "string" ? value : ""}
-          disabled={disabled}
-          onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
-          className={cn(inputClass, "font-mono text-xs")}
-        />
+        <div className="flex gap-1.5">
+          <input
+            id={id}
+            type="text"
+            aria-label={id ? undefined : spec.title}
+            spellCheck={false}
+            value={typeof value === "string" ? value : ""}
+            disabled={disabled}
+            onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
+            className={cn(inputClass, "font-mono text-xs")}
+          />
+          {PATH_KEYS[spec.key] && (
+            <ChoosePathButton
+              mode={PATH_KEYS[spec.key].mode}
+              value={typeof value === "string" ? value : undefined}
+              disabled={disabled}
+              fieldLabel={spec.title}
+              allowNewFile={PATH_KEYS[spec.key].newFile !== undefined}
+              suggestedName={PATH_KEYS[spec.key].newFile ? `${jobLabel || "job"}.${PATH_KEYS[spec.key].newFile}` : undefined}
+              onPick={onChange}
+            />
+          )}
+        </div>
       );
     case "integer":
       return (
@@ -866,6 +898,8 @@ export function SchemaField({
           values={typeof value === "string" ? [value] : Array.isArray(value) ? value.map((v) => (typeof v === "string" ? v : "")) : []}
           disabled={disabled}
           onChange={onChange}
+          choose={PATH_LIST_KEYS[spec.key] ? () => PATH_LIST_KEYS[spec.key] : undefined}
+          chooseLabel={spec.title}
         />
       );
     case "string-dict":
@@ -881,10 +915,15 @@ export function SchemaField({
     case "session-type":
       return <MultiChoice options={spec.options ?? []} value={value} disabled={disabled} onChange={onChange} />;
     case "complex":
-      return value === undefined ? (
-        <p className="text-[11px] text-gray-600 pt-2">Not set. Add it in Expert mode.</p>
-      ) : (
-        <ComplexValue value={value} disabled={disabled} onRemove={() => onChange(undefined)} />
+      return (
+        <PlistTreeEditor
+          name={spec.key}
+          value={value}
+          disabled={disabled}
+          onChange={onChange}
+          presets={presetsForKey(spec.key, jobLabel)}
+          nestedKeyOptions={nestedKeyOptionsFor(spec.key)}
+        />
       );
   }
 }

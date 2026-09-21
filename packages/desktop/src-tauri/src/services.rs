@@ -375,7 +375,7 @@ fn explain_privileged_failure(stderr: &str) -> String {
 
 /// A label as it appears in the administrator prompt. It can come from a plist that any program
 /// dropped into a scope directory, so it must not be able to restyle the dialog: one line, 80 characters.
-fn prompt_label(label: &str) -> String {
+pub(crate) fn prompt_label(label: &str) -> String {
     label.chars().filter(|c| !c.is_control() && !matches!(c, '\u{2028}' | '\u{2029}')).take(80).collect()
 }
 
@@ -423,7 +423,7 @@ pub(crate) async fn run_privileged_command(cmd: &[&str], prompt: &str) -> JobRes
 // Parsed plists are cached by (mtime, size). rescan_jobs() is cheap: one readdir and
 // one stat per file, and it only re-parses files that changed.
 
-type FileMap = BTreeMap<String, Arc<JobFile>>;
+pub(crate) type FileMap = BTreeMap<String, Arc<JobFile>>;
 
 struct JobIndex {
     files: Arc<FileMap>,
@@ -606,7 +606,7 @@ async fn ensure_index() {
     }
 }
 
-async fn indexed_files() -> Arc<FileMap> {
+pub(crate) async fn indexed_files() -> Arc<FileMap> {
     ensure_index().await;
     Arc::clone(&INDEX.lock().await.files)
 }
@@ -1221,6 +1221,16 @@ fn now_ms() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
 }
 
+/// A free path in `~/.Trash` for a file that is no job plist: `<name>`, else `<name> <timestamp>`.
+pub(crate) fn free_trash_path(file_name: &str) -> PathBuf {
+    let trash = home_dir().join(".Trash");
+    let candidate = trash.join(file_name);
+    match std::fs::symlink_metadata(&candidate) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => candidate,
+        _ => trash.join(format!("{} {}", file_name, now_ms())),
+    }
+}
+
 /// A free path in `~/.Trash` for this file name.
 fn trash_path(file_name: &str) -> String {
     let trash = home_dir().join(".Trash");
@@ -1319,9 +1329,16 @@ fn copy_to_trash(file: &JobFile, has_backup: bool) -> Result<Option<PathBuf>, St
 /// Copy to a name that must not exist yet. `create_new` (O_EXCL) never writes through a file
 /// or a symlink that appeared at the name.
 fn copy_exclusive(source: &Path, dest: &Path) -> std::io::Result<()> {
+    copy_exclusive_with_mode(source, dest, 0o644)
+}
+
+/// `mode` is set on the open file, so the umask does not decide. Callers pass no setuid or setgid bit.
+pub(crate) fn copy_exclusive_with_mode(source: &Path, dest: &Path, mode: u32) -> std::io::Result<()> {
     let mut source = std::fs::File::open(source)?;
-    let mut target = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o644).open(dest)?;
-    let copied = std::io::copy(&mut source, &mut target).and_then(|_| target.sync_all());
+    let mut target = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(dest)?;
+    let copied = std::io::copy(&mut source, &mut target)
+        .and_then(|_| target.set_permissions(std::fs::Permissions::from_mode(mode & 0o777)))
+        .and_then(|_| target.sync_all());
     if copied.is_err() {
         let _ = std::fs::remove_file(dest); // our own half-written file
     }
@@ -1329,7 +1346,7 @@ fn copy_exclusive(source: &Path, dest: &Path) -> std::io::Result<()> {
 }
 
 /// The root script failed or was cancelled, so the original is still in place: take our copy back.
-fn discard_trash_copy(copy: Option<PathBuf>) {
+pub(crate) fn discard_trash_copy(copy: Option<PathBuf>) {
     if let Some(path) = copy {
         let _ = std::fs::remove_file(path);
     }

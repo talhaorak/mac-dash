@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { withToken } from "@/lib/auth";
 import { backend } from "@/lib/backend";
 
 interface UseWebSocketOptions {
@@ -38,7 +39,7 @@ export function useWebSocket({ topics, onMessage }: UseWebSocketOptions) {
       reconnectTimer = null;
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+      const ws = new WebSocket(withToken(`${protocol}//${window.location.host}/ws`));
       wsRef.current = ws;
 
       ws.onopen = () => {

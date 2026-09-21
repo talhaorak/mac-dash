@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { deleteLoginItemArgv, parseBtmDump } from "./job-extras";
+import { JobError, buildPrivilegedScript } from "./launchctl";
+import {
+  RESET_BTM_PROMPT,
+  RESET_BTM_STEPS,
+  TRASH_COPY_FAILED,
+  checkHelperToolName,
+  checkJobIcon,
+  deleteHelperTool,
+  deleteLoginItemArgv,
+  helperToolDeleteSteps,
+  parseBtmDump,
+} from "./job-extras";
 
 // Shape copied from `sfltool dumpbtm` on macOS 27.
 const DUMP = `========================
@@ -174,5 +185,81 @@ describe("deleteLoginItemArgv", () => {
     const argv = deleteLoginItemArgv('x" & (do shell script "id") & "');
     expect(argv.slice(0, -1).join(" ")).not.toContain("do shell script");
     expect(argv[argv.length - 1]).toBe('x" & (do shell script "id") & "');
+  });
+});
+
+describe("checkJobIcon", () => {
+  test("no icon is the empty string", () => {
+    for (const none of [undefined, null, ""]) expect(checkJobIcon(none)).toBe("");
+  });
+
+  test("accepts emoji, also sequences of several code points", () => {
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}"; // 7 code points, 11 UTF-16 units
+    for (const emoji of ["\u{1F680}", "\u2699\uFE0F", "\u{1F1F9}\u{1F1F7}", "1\uFE0F\u20E3", "\u{1F44D}\u{1F3FD}", family]) {
+      expect(checkJobIcon(emoji)).toBe(emoji);
+    }
+  });
+
+  test("accepts a PNG or JPEG data URL up to 48 KB", () => {
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    expect(checkJobIcon(png)).toBe(png);
+    expect(checkJobIcon("data:image/jpeg;base64,/9j/4AAQ")).toBe("data:image/jpeg;base64,/9j/4AAQ");
+    const prefix = "data:image/png;base64,";
+    expect(checkJobIcon(prefix + "A".repeat(48 * 1024 - prefix.length))).toHaveLength(48 * 1024);
+    expect(() => checkJobIcon(prefix + "A".repeat(48 * 1024 - prefix.length + 1))).toThrow("48 KB");
+  });
+
+  test("rejects everything else", () => {
+    const bad: unknown[] = [
+      "A",
+      "rocket",
+      "1234",
+      "#",
+      "\u200D",
+      "\u{1F680}".repeat(9),
+      "\u{1F680}<script>",
+      "\u{1F680} ",
+      42,
+      ["\u{1F680}"],
+      "data:image/svg+xml;base64,PHN2Zz4=",
+      "data:image/gif;base64,R0lGODlh",
+      "data:image/png;base64,",
+      "data:image/png;base64,iVBOR w0K",
+      "data:image/png,iVBORw0KGgo=",
+      'data:image/png;base64,iVBO"onerror="x',
+      "https://example.com/icon.png",
+    ];
+    for (const icon of bad) expect(() => checkJobIcon(icon)).toThrow(JobError);
+  });
+});
+
+describe("helper tools", () => {
+  test("a name is one visible file name", () => {
+    expect(checkHelperToolName("com.docker.vmnetd")).toBe("com.docker.vmnetd");
+    expect(checkHelperToolName("Helper Tool 2")).toBe("Helper Tool 2");
+    const bad: unknown[] = ["", null, undefined, 7, "a/b", "/etc/passwd", "../LaunchDaemons/x.plist", "..", ".hidden", "-rf", "a\nb", "a\u0000b", "a\u2028b", "x".repeat(256)];
+    for (const name of bad) expect(() => checkHelperToolName(name)).toThrow(JobError);
+  });
+
+  test("the root script only removes that one file", () => {
+    expect(helperToolDeleteSteps("com.example.helper")).toEqual([{ cmd: ["/bin/rm", "-f", "/Library/PrivilegedHelperTools/com.example.helper"] }]);
+    expect(buildPrivilegedScript(helperToolDeleteSteps("it's $(id) ; x"))).toBe(`'/bin/rm' '-f' '/Library/PrivilegedHelperTools/it'\\''s $(id) ; x'`);
+    expect(() => helperToolDeleteSteps("../x")).toThrow(JobError);
+  });
+
+  test("refuses a bad name and a missing file before anything privileged happens", async () => {
+    expect(await deleteHelperTool("../LaunchDaemons/com.apple.x.plist", false)).toEqual({ ok: false, error: "Invalid helper tool name." });
+    expect(await deleteHelperTool(`macdash-no-such-tool-${Date.now()}`, true)).toEqual({ ok: false, error: "Helper tool not found." });
+  });
+
+  test("the error text that makes the client ask for a permanent delete is the one of the contract", () => {
+    expect(TRASH_COPY_FAILED).toBe("The file cannot be copied to the Trash. Delete it permanently?");
+  });
+});
+
+describe("resetBackgroundItems", () => {
+  test("runs exactly `sfltool resetbtm` behind the prompt of the contract", () => {
+    expect(buildPrivilegedScript(RESET_BTM_STEPS)).toBe("'/usr/bin/sfltool' 'resetbtm'");
+    expect(RESET_BTM_PROMPT).toBe("mac-dash wants to reset the background-item approval of every app.");
   });
 });

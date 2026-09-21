@@ -22,9 +22,11 @@ import type { ServiceInfo } from "@/stores/app";
 import { cn } from "@/lib/utils";
 import { explainExitStatus, scopeFor } from "@shared/launchd";
 import { inputClass } from "./fields";
+import { JobIconPicker } from "./JobIcon";
+import { JobLogTab } from "./JobLogTab";
 import { authorityChain, describeSignature } from "./signature";
 
-type Tab = "overview" | "output" | "launchctl" | "notes";
+type Tab = "overview" | "output" | "log" | "launchctl" | "notes";
 
 export function JobDetailDrawer({
   service,
@@ -119,8 +121,9 @@ function DrawerBody({
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
     ...(hasFile ? [{ id: "output" as Tab, label: "Output" }] : []),
+    { id: "log", label: "Log" },
     { id: "launchctl", label: "launchctl print" },
-    { id: "notes", label: `Notes${meta?.notes || meta?.tags.length ? " •" : ""}` },
+    { id: "notes", label: `Notes${meta?.notes || meta?.tags.length || meta?.icon ? " •" : ""}` },
   ];
 
   return (
@@ -195,7 +198,7 @@ function DrawerBody({
       )}
       {service.unreadable && <Notice>The plist cannot be parsed. Open it in the editor: Expert mode shows the line of the error.</Notice>}
 
-      <div role="tablist" aria-label="Job details" className="flex gap-1">
+      <div role="tablist" aria-label="Job details" className="flex flex-wrap gap-1">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -239,6 +242,8 @@ function DrawerBody({
       )}
 
       {tab === "output" && <OutputTab service={service} />}
+
+      {tab === "log" && <JobLogTab label={service.label} program={service.program} />}
 
       {tab === "launchctl" &&
         (detail ? (
@@ -325,15 +330,21 @@ function OutputTab({ service }: { service: ServiceInfo }) {
 function NotesTab({ service, meta, onSaved }: { service: ServiceInfo; meta: JobMeta | undefined; onSaved: (meta: JobMeta) => void }) {
   const [notes, setNotes] = useState(meta?.notes ?? "");
   const [tags, setTags] = useState((meta?.tags ?? []).join(", "));
+  const [icon, setIcon] = useState<string | undefined>(meta?.icon || undefined);
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
-    const next: JobMeta = { notes: notes.trim(), tags: [...new Set(tags.split(/[,;\s]+/).map((t) => t.trim()).filter(Boolean))] };
+    const next: JobMeta = {
+      notes: notes.trim(),
+      tags: [...new Set(tags.split(/[,;\s]+/).map((t) => t.trim()).filter(Boolean))],
+      // No icon means no `icon` field: the backend deletes an entry that has no notes, no tags and no icon.
+      ...(icon ? { icon } : {}),
+    };
     setSaving(true);
     try {
       await backend.setJobMeta({ label: service.label, category: service.category }, next);
       onSaved(next);
-      toast.success("Notes saved");
+      toast.success("Notes, tags and icon saved");
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -343,6 +354,7 @@ function NotesTab({ service, meta, onSaved }: { service: ServiceInfo; meta: JobM
 
   return (
     <div className="space-y-3">
+      <JobIconPicker value={icon} onChange={setIcon} label={service.label} disabled={saving} />
       <label className="block space-y-1">
         <span className="text-xs font-medium text-gray-400">Tags</span>
         <input type="text" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="backup, work" className={inputClass} />
@@ -351,7 +363,7 @@ function NotesTab({ service, meta, onSaved }: { service: ServiceInfo; meta: JobM
       <label className="block space-y-1">
         <span className="text-xs font-medium text-gray-400">Notes</span>
         <textarea rows={8} value={notes} onChange={(e) => setNotes(e.target.value)} className={cn(inputClass, "resize-y")} />
-        <span className="text-[11px] text-gray-600">Notes stay on this Mac (~/.macdash). They work on read-only jobs too. Search finds them.</span>
+        <span className="text-[11px] text-gray-600">Notes, tags and the icon stay on this Mac (~/.macdash). They work on read-only jobs too. Search finds the notes.</span>
       </label>
       <button
         type="button"
@@ -359,7 +371,7 @@ function NotesTab({ service, meta, onSaved }: { service: ServiceInfo; meta: JobM
         onClick={save}
         className="px-3 py-1.5 rounded-lg text-xs font-medium text-cyan-950 bg-cyan-400 hover:bg-cyan-300 disabled:opacity-40"
       >
-        Save notes
+        Save notes, tags and icon
       </button>
     </div>
   );

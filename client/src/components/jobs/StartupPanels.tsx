@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, RotateCw, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, RotateCcw, RotateCw, Search, Trash2, X } from "lucide-react";
+import { Dialog } from "@/components/ui/Dialog";
 import { GlowCard } from "@/components/ui/GlowCard";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { toast } from "@/components/ui/Toast";
@@ -124,11 +125,7 @@ export function StartupExtrasCard() {
   }, [extras.load, background.load]);
 
   const e = extras.data;
-  const groups: { title: string; hint: string; rows: { main: string; sub?: string }[] | null }[] = [
-    { title: "cron", hint: "Your crontab (crontab -l)", rows: e?.cron.map((line) => ({ main: line })) ?? null },
-    { title: "Privileged helper tools", hint: "/Library/PrivilegedHelperTools", rows: e?.helperTools.map((h) => ({ main: h.name, sub: h.path })) ?? null },
-    { title: "Startup items", hint: "Legacy /Library/StartupItems", rows: e?.startupItems.map((h) => ({ main: h.name, sub: h.path })) ?? null },
-  ];
+  const hasExtras = !(extras.error && !e);
 
   return (
     <CollapsibleCard title="Other startup mechanisms" summary="cron, helper tools, login items, background items" onFirstOpen={loadAll}>
@@ -137,7 +134,11 @@ export function StartupExtrasCard() {
           <InlineError title="cron, helper tools and startup items could not be read." message={extras.error} onRetry={extras.load} retrying={extras.loading} />
         )}
         <div className="grid gap-4 md:grid-cols-2">
-          {!(extras.error && !e) && groups.map((g) => <ExtrasGroup key={g.title} title={g.title} hint={g.hint} rows={g.rows} />)}
+          {hasExtras && <ExtrasGroup title="cron" hint="Your crontab (crontab -l)" rows={e?.cron.map((line) => ({ main: line })) ?? null} />}
+          {hasExtras && <HelperToolsSection tools={e?.helperTools ?? null} onChanged={extras.load} />}
+          {hasExtras && (
+            <ExtrasGroup title="Startup items" hint="Legacy /Library/StartupItems" rows={e?.startupItems.map((h) => ({ main: h.name, sub: h.path })) ?? null} />
+          )}
           <LoginItemsSection />
         </div>
         <BackgroundItemsSection loader={background} />
@@ -166,6 +167,125 @@ function ExtrasGroup({ title, hint, rows }: { title: string; hint: string; rows:
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+// ── Privileged helper tools ──────────────────────────────────────────
+
+/** The backend answers with exactly this text when the Trash copy is not possible. The user must agree to the permanent delete. */
+const NEEDS_PERMANENT_DELETE = "The file cannot be copied to the Trash. Delete it permanently?";
+
+const rowDeleteButton =
+  "flex-shrink-0 inline-flex items-center gap-1 p-1.5 rounded-lg text-[11px] text-gray-500 hover:text-red-400 hover:bg-red-500/10 disabled:opacity-40 focus:outline-none focus-visible:ring-1 focus-visible:ring-red-500/50";
+
+function HelperToolsSection({ tools, onChanged }: { tools: StartupExtras["helperTools"] | null; onChanged: () => void }) {
+  const titleId = useId();
+  const textId = useId();
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  /** The last failed delete. Retry runs the same delete again. */
+  const [failure, setFailure] = useState<{ name: string; permanent: boolean; message: string } | null>(null);
+  /** The tool that waits for the explicit "delete permanently" answer. */
+  const [askPermanent, setAskPermanent] = useState<string | null>(null);
+  // The dialog text stays while the close animation runs.
+  const [lastAsked, setLastAsked] = useState("");
+
+  const remove = async (name: string, permanent: boolean) => {
+    setDeleting(name);
+    setFailure(null);
+    try {
+      await backend.deleteHelperTool(name, permanent);
+      toast.success(permanent ? `Helper tool "${name}" deleted permanently` : `Helper tool "${name}" moved to the Trash`);
+      onChanged();
+    } catch (e) {
+      const message = (e as Error).message || "The request failed.";
+      if (!permanent && message === NEEDS_PERMANENT_DELETE) {
+        setLastAsked(name);
+        setAskPermanent(name);
+      } else {
+        setFailure({ name, permanent, message });
+      }
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  return (
+    <div className="space-y-1.5 min-w-0">
+      <h3 className="text-xs font-semibold text-gray-400">
+        Privileged helper tools {tools && <span className="text-gray-600 font-normal">({tools.length})</span>}
+      </h3>
+      <p className="text-[11px] text-gray-600">/Library/PrivilegedHelperTools. A delete moves the tool to the Trash and asks for an administrator password.</p>
+
+      {failure && (
+        <InlineError
+          title={`The helper tool "${failure.name}" could not be deleted.`}
+          message={failure.message}
+          onRetry={() => remove(failure.name, failure.permanent)}
+          retrying={deleting === failure.name}
+        />
+      )}
+
+      {tools === null ? (
+        <p className="text-[11px] text-gray-600">Loading…</p>
+      ) : tools.length === 0 ? (
+        <p className="text-[11px] text-gray-600">None.</p>
+      ) : (
+        <ul className="space-y-0.5">
+          {tools.map((tool) => (
+            <li key={tool.path} className="flex items-center gap-2 min-w-0 rounded-lg hover:bg-white/[0.03] pl-1">
+              <div className="min-w-0 flex-1 text-xs font-mono text-gray-300 truncate" title={tool.path}>
+                {tool.name}
+              </div>
+              <ConfirmButton
+                onConfirm={() => remove(tool.name, false)}
+                disabled={deleting !== null}
+                confirmLabel="Click again to delete"
+                title="Delete this helper tool"
+                className={rowDeleteButton}
+                armedClassName="bg-red-500/20 text-red-300! px-2"
+              >
+                <Trash2 className="w-3 h-3" aria-hidden />
+                <span className="sr-only">{deleting === tool.name ? `Deleting helper tool ${tool.name}` : `Delete helper tool ${tool.name}`}</span>
+              </ConfirmButton>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Dialog open={askPermanent !== null} onClose={() => setAskPermanent(null)} labelledBy={titleId} describedBy={textId} initialFocusRef={cancelRef} className="max-w-md!">
+        <div className="p-6 space-y-4">
+          <h2 id={titleId} className="text-lg font-bold text-white">
+            Delete permanently?
+          </h2>
+          <p id={textId} className="text-sm text-gray-300">
+            macOS cannot copy <span className="font-mono text-xs break-all">{lastAsked}</span> to the Trash. If you continue, the file is deleted and you
+            cannot restore it.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              ref={cancelRef}
+              type="button"
+              onClick={() => setAskPermanent(null)}
+              className="px-3 py-2 rounded-xl text-xs text-gray-300 bg-white/[0.04] hover:bg-white/[0.08] focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
+            >
+              Keep the tool
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const name = askPermanent;
+                setAskPermanent(null);
+                if (name) void remove(name, true);
+              }}
+              className="px-3 py-2 rounded-xl text-xs font-semibold text-red-100 bg-red-500/30 hover:bg-red-500/40 border border-red-500/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
+            >
+              Delete permanently
+            </button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }
@@ -260,6 +380,7 @@ function BackgroundItemsSection({ loader }: { loader: Loader<BackgroundItem[]> }
   const [search, setSearch] = useState("");
   const [onlyEnabled, setOnlyEnabled] = useState(false);
   const [limit, setLimit] = useState(BACKGROUND_WINDOW);
+  const [resetOpen, setResetOpen] = useState(false);
 
   const all = loader.data;
   const filtered = useMemo(() => {
@@ -312,12 +433,22 @@ function BackgroundItemsSection({ loader }: { loader: Loader<BackgroundItem[]> }
           >
             Only enabled
           </button>
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            onClick={() => setResetOpen(true)}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-gray-500 hover:text-red-400 hover:bg-red-500/10 focus:outline-none focus-visible:ring-1 focus-visible:ring-red-500/50"
+          >
+            <RotateCcw className="w-3 h-3" aria-hidden />
+            Reset…
+          </button>
         </div>
       </div>
       <p className="text-[11px] text-gray-600">
-        These records come from the macOS Background Task Management database, which System Settings &gt; General &gt; Login Items &amp; Extensions shows. They are
-        read-only here.
+        These records come from the macOS Background Task Management database, which System Settings &gt; General &gt; Login Items &amp; Extensions shows. A single
+        record cannot be changed here. "Reset…" clears the whole database.
       </p>
+      <ResetBackgroundItemsDialog open={resetOpen} onClose={() => setResetOpen(false)} onDone={loader.load} />
 
       {loader.error && <InlineError title="The background items could not be read." message={loader.error} onRetry={loader.load} retrying={loader.loading} />}
 
@@ -361,6 +492,125 @@ function BackgroundItemsSection({ loader }: { loader: Loader<BackgroundItem[]> }
         </>
       )}
     </section>
+  );
+}
+
+const RESET_WORD = "RESET";
+
+/** Last question before `sfltool resetbtm`. The final button stays off until the user types the word. */
+function ResetBackgroundItemsDialog({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
+  const titleId = useId();
+  const textId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <Dialog open={open} onClose={onClose} labelledBy={titleId} describedBy={textId} initialFocusRef={inputRef} closeOnBackdrop={false} className="max-w-lg!">
+      {/* The dialog mounts its children on open, so every open starts with an empty field. */}
+      <ResetBody titleId={titleId} textId={textId} inputRef={inputRef} onClose={onClose} onDone={onDone} />
+    </Dialog>
+  );
+}
+
+function ResetBody({
+  titleId,
+  textId,
+  inputRef,
+  onClose,
+  onDone,
+}: {
+  titleId: string;
+  textId: string;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const armed = typed.trim() === RESET_WORD;
+
+  const run = async () => {
+    if (!armed || running) return;
+    setRunning(true);
+    setError(null);
+    try {
+      await backend.resetBackgroundItems();
+      toast.success("The background items are reset. Restart the Mac now.");
+      onDone();
+      onClose();
+    } catch (e) {
+      setError((e as Error).message || "The request failed.");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <form
+      className="p-6 space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void run();
+      }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <h2 id={titleId} className="text-lg font-bold text-white">
+          Reset the background items?
+        </h2>
+        <button type="button" aria-label="Close" onClick={onClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50">
+          <X className="w-4 h-4" aria-hidden />
+        </button>
+      </div>
+
+      <div id={textId} className="space-y-2 text-sm text-gray-300">
+        <p className="flex gap-2 rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3 text-xs text-red-200/90">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 text-red-400" aria-hidden />
+          <span>
+            <span className="font-semibold">Warning: </span>macOS forgets the approval of EVERY app, not only of the items in this list. There is no undo.
+          </span>
+        </p>
+        <p>
+          Every login item, launch agent and launch daemon that you allowed or switched off under System Settings &gt; General &gt; Login Items &amp; Extensions goes
+          back to its default. macOS asks again for each app, and apps can show their "background item added" notification again.
+        </p>
+        <p>The reset asks for an administrator password. macOS needs a restart before the new state is complete.</p>
+      </div>
+
+      <label className="block space-y-1">
+        <span className="text-xs font-medium text-gray-400">
+          Type <span className="font-mono text-gray-200">{RESET_WORD}</span> to continue
+        </span>
+        <input
+          ref={inputRef}
+          type="text"
+          value={typed}
+          autoComplete="off"
+          autoCapitalize="characters"
+          spellCheck={false}
+          disabled={running}
+          onChange={(e) => setTyped(e.target.value)}
+          className="w-full px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-sm font-mono text-gray-200 placeholder-gray-600 focus:outline-none focus:border-red-500/50 focus:ring-1 focus:ring-red-500/20 disabled:opacity-50"
+        />
+      </label>
+
+      {error && <InlineError title="The background items could not be reset." message={error} onRetry={run} retrying={running} />}
+
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-3 py-2 rounded-xl text-xs text-gray-300 bg-white/[0.04] hover:bg-white/[0.08] focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={!armed || running}
+          className="px-3 py-2 rounded-xl text-xs font-semibold text-red-100 bg-red-500/30 hover:bg-red-500/40 border border-red-500/40 disabled:opacity-40 disabled:hover:bg-red-500/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
+        >
+          {running ? "Resetting…" : "Reset every approval"}
+        </button>
+      </div>
+    </form>
   );
 }
 

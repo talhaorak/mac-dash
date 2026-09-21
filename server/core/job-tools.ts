@@ -1,11 +1,13 @@
-import { lstat, mkdir, stat } from "fs/promises";
+import { lstat, mkdir, readdir, readFile, stat } from "fs/promises";
 import { homedir } from "os";
-import { join } from "path";
+import { dirname, join, resolve } from "path";
 import { jobExecutable, type JobCategory } from "../../shared/launchd";
-import { JobError, errorMessage, findJobFile, run, runPrivileged, type Result } from "./launchctl";
+import { PlistData, PlistReal, type PlistValue } from "../../shared/plist";
+import { JobError, errorMessage, findJobFile, indexedJobFiles, run, runPrivileged, type Result } from "./launchctl";
 
-// Code signature of a job, script applets and the pmset power schedule.
-// See docs/backend-contract.md ("Signature, background items, apps, power"). The Tauri backend mirrors this file.
+// Code signature of a job, script applets, the pmset power schedule, the folder browser, the default PATH
+// and the plists as JSON. See docs/backend-contract.md ("Signature, background items, apps, power" and
+// "Helper tools, reset, browse, PATH, plists"). The Tauri backend mirrors this file.
 
 // ── Code signature ───────────────────────────────────────────────────
 
@@ -218,4 +220,104 @@ export async function setPowerSchedule(events: unknown): Promise<Result> {
   } catch (e) {
     return { ok: false, error: errorMessage(e) };
   }
+}
+
+// ── Folder browser ───────────────────────────────────────────────────
+
+export interface BrowseEntry {
+  name: string;
+  isDirectory: boolean;
+  isApp: boolean;
+  executable: boolean;
+  hidden: boolean;
+}
+
+export interface BrowseResult {
+  path: string;
+  parent: string | null;
+  entries: BrowseEntry[];
+  truncated: boolean;
+}
+
+const MAX_BROWSE_ENTRIES = 1000;
+
+/** Empty means the home folder. `..` is resolved here, so the client always gets a canonical path back. */
+export function checkBrowsePath(path: unknown): string {
+  if (path === undefined || path === null || path === "") return homedir();
+  if (typeof path !== "string" || !path.startsWith("/") || path.includes("\0")) throw new JobError("The path must be absolute.");
+  return resolve(path);
+}
+
+/** Directories first, then by name without case. Plain code-unit order, so that both backends agree. */
+export function sortBrowseEntries<T extends { name: string; isDirectory: boolean }>(entries: T[]): T[] {
+  const key = (e: T) => e.name.toLowerCase();
+  return [...entries].sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : a.name < b.name ? -1 : 1));
+}
+
+/** Names and flags only, for path pickers. Never reads a file. */
+export async function browsePath(path: unknown): Promise<BrowseResult> {
+  const dir = checkBrowsePath(path);
+  let dirents;
+  try {
+    dirents = await readdir(dir, { withFileTypes: true });
+  } catch {
+    throw new JobError("Cannot read this folder.");
+  }
+
+  // Only a symlink needs a stat to know whether it leads to a folder.
+  const typed = await Promise.all(
+    dirents.map(async (d) => ({
+      name: d.name,
+      isDirectory: d.isSymbolicLink() ? await stat(join(dir, d.name)).then((st) => st.isDirectory(), () => false) : d.isDirectory(),
+    }))
+  );
+  const kept = sortBrowseEntries(typed).slice(0, MAX_BROWSE_ENTRIES);
+  const entries = await Promise.all(
+    kept.map(async ({ name, isDirectory }): Promise<BrowseEntry> => ({
+      name,
+      isDirectory,
+      isApp: isDirectory && name.endsWith(".app"),
+      executable: !isDirectory && (await stat(join(dir, name)).then((st) => st.isFile() && (st.mode & 0o111) !== 0, () => false)),
+      hidden: name.startsWith("."),
+    }))
+  );
+  return { path: dir, parent: dir === "/" ? null : dirname(dir), entries, truncated: typed.length > kept.length };
+}
+
+// ── Default PATH ─────────────────────────────────────────────────────
+
+const EXTRA_PATH_DIRS = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin"];
+
+/** `pathsFile` is the text of /etc/paths, `pathsDFiles` the texts of the files in /etc/paths.d, sorted by file name. */
+export function buildDefaultPath(pathsFile: string, pathsDFiles: string[]): string {
+  const lines = [pathsFile, ...pathsDFiles].flatMap((text) => text.split("\n")).map((line) => line.trim());
+  return [...new Set([...lines, ...EXTRA_PATH_DIRS].filter(Boolean))].join(":");
+}
+
+/** The PATH a login shell starts with. launchd itself gives a job only /usr/bin:/bin:/usr/sbin:/sbin. */
+export async function getDefaultPath(): Promise<string> {
+  const read = (path: string) => readFile(path, "utf8").catch(() => "");
+  const names = await readdir("/etc/paths.d").then((n) => n.sort(), () => [] as string[]);
+  return buildDefaultPath(await read("/etc/paths"), await Promise.all(names.map((name) => read(join("/etc/paths.d", name)))));
+}
+
+// ── Plists as JSON ───────────────────────────────────────────────────
+
+/** date → ISO string, data → base64 string, real → number. Everything else is JSON already. */
+export function plistToJson(value: PlistValue): unknown {
+  if (value instanceof PlistReal) return value.value;
+  if (value instanceof PlistData) return value.base64;
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(plistToJson);
+  if (typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, v]) => [key, plistToJson(v)]));
+  return value;
+}
+
+/** Every readable indexed job under "<category>/<label>", for smart-folder rules over launchd keys. */
+export async function getJobPlists(): Promise<Record<string, unknown>> {
+  const plists: Record<string, unknown> = {};
+  for (const file of await indexedJobFiles()) {
+    if (file.job) plists[`${file.category}/${file.label}`] = plistToJson(file.job);
+  }
+  return plists;
 }

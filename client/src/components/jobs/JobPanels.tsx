@@ -4,7 +4,8 @@ import { Dialog } from "@/components/ui/Dialog";
 import { GlowCard } from "@/components/ui/GlowCard";
 import { toast } from "@/components/ui/Toast";
 import { backend, type JobEvent, type MonitorSettings } from "@/lib/backend";
-import { useJobEventsStore, type ServiceInfo } from "@/stores/app";
+import { useJobEventsStore, useNavStore, type ServiceInfo } from "@/stores/app";
+import { servicesRoute, type RouteJobRef } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { explainExitStatus, formatInterval, nextRuns, scopeFor } from "@shared/launchd";
 import { inputClass } from "./fields";
@@ -99,13 +100,32 @@ function kindText(event: JobEvent): string {
   return event.kind === "failed" && event.exitStatus !== undefined ? `${text} (exit ${event.exitStatus})` : text;
 }
 
-/** Browser notification for a job change. Only fires while the dashboard is not in front. */
+/**
+ * Show what a notification is about: `#/services?job=<category>/<label>`.
+ * A removed job has no drawer to open, so its notification leads to the change history: `#/services?panel=changes`.
+ * The browser notification and the desktop event "open-job" both end here.
+ */
+export function openJobFromNotification(job: RouteJobRef, kind?: JobEvent["kind"]): void {
+  const route = kind === "removed" ? servicesRoute({ panel: "changes" }) : servicesRoute({ job: { label: job.label, category: job.category } });
+  useNavStore.getState().navigate(route, "push");
+}
+
+/** Browser notification for a job change. Only fires while the dashboard is not in front. A click opens the job. */
 export function notifyJobEvent(event: JobEvent): void {
   const settings = cachedSettings;
   if (!settings.notify || settings.exclude.some((p) => p && event.label.startsWith(p))) return;
   if (backend.isDesktop()) return; // the desktop shell posts native notifications itself
   if (typeof Notification === "undefined" || Notification.permission !== "granted" || !document.hidden) return;
-  new Notification(`launchd job ${kindText(event).toLowerCase()}`, { body: `${event.label}\n${event.path}`, tag: event.id });
+  try {
+    const notification = new Notification(`launchd job ${kindText(event).toLowerCase()}`, { body: `${event.label}\n${event.path}`, tag: event.id });
+    notification.onclick = () => {
+      window.focus();
+      openJobFromNotification(event, event.kind);
+      notification.close();
+    };
+  } catch {
+    // Some browsers only allow notifications from a service worker. The toast and the badge still show the change.
+  }
 }
 
 const parsePrefixes = (text: string) =>

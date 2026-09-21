@@ -2,9 +2,11 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Activity, Cog, CornerDownLeft, LayoutDashboard, Puzzle, ScrollText, Search, type LucideIcon } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { useNavStore, useServicesStore, type ServiceInfo } from "@/stores/app";
+import { metaKey } from "@/lib/backend";
+import { useJobMetaStore, useNavStore, useServicesStore, type ServiceInfo } from "@/stores/app";
 import { cn } from "@/lib/utils";
 import { scopeFor } from "@shared/launchd";
+import { JobIcon } from "./JobIcon";
 
 const MAX_RESULTS = 50;
 
@@ -59,6 +61,7 @@ function SwitcherBody({ inputRef, onClose }: { inputRef: React.RefObject<HTMLInp
   const services = useServicesStore((s) => s.services);
   const setPage = useNavStore((s) => s.setPage);
   const navigateToService = useNavStore((s) => s.navigateToService);
+  const meta = useJobMetaStore((s) => s.meta);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
 
@@ -84,6 +87,12 @@ function SwitcherBody({ inputRef, onClose }: { inputRef: React.RefObject<HTMLInp
       .map(({ entry }): Result => ({ kind: "job", service: entry.service }));
     return [...pages, ...jobs];
   }, [indexed, query]);
+
+  // The icons come with the notes. The Services page loads them too. Without them every job shows its letter.
+  useEffect(() => {
+    const store = useJobMetaStore.getState();
+    if (Object.keys(store.meta).length === 0) void store.load();
+  }, []);
 
   // The job list refreshes in the background: keep the selection inside the list.
   const activeIndex = Math.min(active, Math.max(0, results.length - 1));
@@ -135,6 +144,7 @@ function SwitcherBody({ inputRef, onClose }: { inputRef: React.RefObject<HTMLInp
           </>
         ) : (
           <>
+            <JobIcon label={result.service.label} icon={meta[metaKey(result.service)]?.icon} size={24} />
             <StatusBadge status={result.service.status} label="" size="sm" />
             <div className="min-w-0 flex-1">
               <div className="text-[12px] font-mono text-gray-200 truncate">{result.service.label}</div>

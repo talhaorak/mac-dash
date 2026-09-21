@@ -3,18 +3,22 @@ import { Plus, Trash2, X } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { metaKey, type JobMeta } from "@/lib/backend";
-import type { ServiceInfo } from "@/stores/app";
+import { useJobPlists, type ServiceInfo } from "@/stores/app";
 import { cn } from "@/lib/utils";
-import { scopeFor } from "@shared/launchd";
+import { LAUNCHD_KEYS, scopeFor } from "@shared/launchd";
 import { inputClass } from "./fields";
+import { InlineError } from "./StartupPanels";
 import {
-  OPERATOR_TITLES,
+  MAX_KEY_LENGTH,
   RULE_FIELDS,
   defaultRule,
   fieldSpec,
   matchesFolder,
   newFolderId,
+  operatorTakesValue,
+  operatorTitle,
   operatorsFor,
+  ruleNeedsPlist,
   ruleProblem,
   type RuleField,
   type RuleOperator,
@@ -65,6 +69,7 @@ function EditorBody({
   onClose,
 }: Omit<SmartFolderEditorProps, "open"> & { titleId: string; nameRef: React.RefObject<HTMLInputElement | null> }) {
   const tagListId = useId();
+  const keyListId = useId();
   const problemId = useId();
   // The first render fixes the mode. The parent clears `folder` while the close animation still runs.
   const [original] = useState(folder);
@@ -77,20 +82,28 @@ function EditorBody({
   const nameProblem = name.trim() === "" ? "Enter a name." : null;
   const valid = nameProblem === null && rules.length > 0 && problems.every((p) => p === null);
 
+  // The plists are large. They are read when the first launchd-key rule appears in the draft.
+  const needsPlists = rules.some(ruleNeedsPlist);
+  const jobPlists = useJobPlists(needsPlists);
+  const plists = jobPlists.plists;
+  const waitsForPlists = needsPlists && plists === null;
+
   const preview = useMemo(() => {
     const draft: SmartFolder = { id: "preview", name: "", match, rules: rules.filter((r) => ruleProblem(r) === null) };
     if (draft.rules.length === 0) return { count: 0, first: [] as ServiceInfo[] };
     const now = new Date();
-    const hits = services.filter((s) => matchesFolder(s, meta[metaKey(s)], draft, now));
+    const hits = services.filter((s) => matchesFolder(s, meta[metaKey(s)], draft, now, plists ? (plists[metaKey(s)] ?? null) : undefined));
     return { count: hits.length, first: hits.slice(0, PREVIEW_ROWS) };
-  }, [services, meta, match, rules]);
+  }, [services, meta, match, rules, plists]);
 
   const setRule = (index: number, next: SmartRule) => setRules(rules.map((r, i) => (i === index ? next : r)));
 
   const save = () => {
     setSubmitted(true);
     if (!valid) return;
-    onSave({ id: original?.id ?? newFolderId(), name: name.trim().slice(0, 60), match, rules: rules.map((r) => ({ ...r, value: r.value.trim() })) });
+    const clean = (r: SmartRule): SmartRule =>
+      ruleNeedsPlist(r) ? { ...r, key: r.key?.trim() ?? "", value: operatorTakesValue(r.operator) ? r.value.trim() : "" } : { field: r.field, operator: r.operator, value: r.value.trim() };
+    onSave({ id: original?.id ?? newFolderId(), name: name.trim().slice(0, 60), match, rules: rules.map(clean) });
   };
 
   return (
@@ -156,8 +169,9 @@ function EditorBody({
               index={i}
               rule={rule}
               problem={problems[i]}
-              showProblem={submitted || rule.value !== ""}
+              showProblem={submitted || rule.value !== "" || (rule.key ?? "") !== ""}
               tagListId={tagListId}
+              keyListId={keyListId}
               canRemove={rules.length > 1}
               onChange={(next) => setRule(i, next)}
               onRemove={() => setRules(rules.filter((_, j) => j !== i))}
@@ -167,6 +181,13 @@ function EditorBody({
         <datalist id={tagListId}>
           {tags.map((t) => (
             <option key={t} value={t} />
+          ))}
+        </datalist>
+        <datalist id={keyListId}>
+          {LAUNCHD_KEYS.map((k) => (
+            <option key={k.key} value={k.key}>
+              {k.title}
+            </option>
           ))}
         </datalist>
 
@@ -182,8 +203,16 @@ function EditorBody({
 
       <section aria-label="Preview" className="rounded-xl border border-white/[0.06] bg-black/20 p-3 space-y-1.5">
         <p className="text-xs text-gray-300" aria-live="polite">
-          {preview.count} of {services.length} jobs match
+          {waitsForPlists && !jobPlists.error ? "Reading the plists of the jobs…" : `${preview.count} of ${services.length} jobs match`}
         </p>
+        {jobPlists.error && (
+          <InlineError
+            title={plists ? "The job plists could not be read again. The preview uses the last copy." : "The job plists could not be read. A launchd-key rule matches no job until they are."}
+            message={jobPlists.error}
+            onRetry={jobPlists.retry}
+            retrying={jobPlists.loading}
+          />
+        )}
         {preview.first.length > 0 && (
           <ul className="space-y-0.5">
             {preview.first.map((s) => (
@@ -233,6 +262,7 @@ function RuleRow({
   problem,
   showProblem,
   tagListId,
+  keyListId,
   canRemove,
   onChange,
   onRemove,
@@ -242,6 +272,7 @@ function RuleRow({
   problem: string | null;
   showProblem: boolean;
   tagListId: string;
+  keyListId: string;
   canRemove: boolean;
   onChange: (rule: SmartRule) => void;
   onRemove: () => void;
@@ -251,10 +282,19 @@ function RuleRow({
   const n = index + 1;
   const invalid = showProblem && problem !== null;
   const selectClass = cn(inputClass, "py-1.5 text-xs");
+  const isPlistRule = spec.kind === "plist";
+  const takesValue = operatorTakesValue(rule.operator);
 
   return (
     <li>
-      <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.4fr)_auto] gap-2 items-center">
+      <div
+        className={cn(
+          "grid gap-2 items-center",
+          isPlistRule
+            ? "grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
+            : "grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.4fr)_auto]"
+        )}
+      >
         <select
           aria-label={`Rule ${n}: field`}
           value={rule.field}
@@ -269,6 +309,22 @@ function RuleRow({
           ))}
         </select>
 
+        {isPlistRule && (
+          <input
+            aria-label={`Rule ${n}: launchd key`}
+            type="text"
+            list={keyListId}
+            value={rule.key ?? ""}
+            maxLength={MAX_KEY_LENGTH}
+            spellCheck={false}
+            onChange={(e) => onChange({ ...rule, key: e.target.value })}
+            aria-invalid={invalid}
+            aria-describedby={invalid ? problemId : undefined}
+            placeholder="RunAtLoad"
+            className={cn(inputClass, "py-1.5 text-xs font-mono")}
+          />
+        )}
+
         <select
           aria-label={`Rule ${n}: operator`}
           value={rule.operator}
@@ -277,12 +333,15 @@ function RuleRow({
         >
           {operatorsFor(rule.field).map((op) => (
             <option key={op} value={op}>
-              {OPERATOR_TITLES[op]}
+              {operatorTitle(rule.field, op)}
             </option>
           ))}
         </select>
 
-        {spec.kind === "enum" || spec.kind === "boolean" ? (
+        {!takesValue ? (
+          // "exists" and "does not exist" look at the key only. The empty cell keeps the columns in line.
+          <span aria-hidden />
+        ) : spec.kind === "enum" || spec.kind === "boolean" ? (
           <select
             aria-label={`Rule ${n}: value`}
             value={rule.value}
@@ -313,7 +372,7 @@ function RuleRow({
             onChange={(e) => onChange({ ...rule, value: e.target.value })}
             aria-invalid={invalid}
             aria-describedby={invalid ? problemId : undefined}
-            placeholder={spec.kind === "number" ? "0" : rule.field === "label" ? "com.example." : ""}
+            placeholder={spec.kind === "number" ? "0" : rule.field === "label" ? "com.example." : isPlistRule ? "true" : ""}
             className={cn(inputClass, "py-1.5 text-xs font-mono")}
           />
         )}
@@ -332,6 +391,12 @@ function RuleRow({
       {invalid && (
         <p id={problemId} className="mt-1 text-[11px] text-red-400">
           {problem}
+        </p>
+      )}
+      {isPlistRule && (
+        <p className="mt-1 text-[11px] text-gray-600">
+          The key comes from the plist of the job. A dot reaches into a dictionary: KeepAlive.SuccessfulExit. The value is compared as text, a boolean is
+          true or false, and a list matches when one element matches.
         </p>
       )}
     </li>

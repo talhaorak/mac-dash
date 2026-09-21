@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { useJobEventsStore, useNavStore, useServicesStore, type ServiceInfo } from "@/stores/app";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useJobEventsStore, useJobMetaStore, useJobPlists, useJobPlistsStore, useNavStore, useServicesStore, type ServiceInfo } from "@/stores/app";
 import { GlowCard } from "@/components/ui/GlowCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useConfirm } from "@/components/ui/ConfirmButton";
@@ -7,69 +7,143 @@ import { toast } from "@/components/ui/Toast";
 import { JobEditor, type JobEditorTarget } from "@/components/jobs/JobEditor";
 import { JobDetailDrawer } from "@/components/jobs/JobDetailDrawer";
 import { JobEventsDrawer, JobTimeline } from "@/components/jobs/JobPanels";
+import { JobGridView } from "@/components/jobs/GridView";
 import { JobListView } from "@/components/jobs/ListView";
 import { JobRowActions, serviceKey, type ArmedAction } from "@/components/jobs/ListJobRowActions";
 import { SmartFolderBar } from "@/components/jobs/SmartFolderBar";
-import { isAppleService, matchesFolder, type SmartFolder } from "@/components/jobs/SmartFolders";
-import { StartupExtrasCard } from "@/components/jobs/StartupPanels";
+import { DEFAULT_FOLDERS, SMART_FOLDERS_KEY, folderNeedsPlists, isAppleService, loadUserFolders, matchesFolder } from "@/components/jobs/SmartFolders";
+import { InlineError, StartupExtrasCard } from "@/components/jobs/StartupPanels";
 import { PowerSchedulePanel } from "@/components/jobs/PowerSchedulePanel";
-import { backend, metaKey, type JobMeta, type ServiceAction } from "@/lib/backend";
+import { ViewOptionsMenu, loadViewOptions, saveViewOptions, type ViewOptions } from "@/components/jobs/ViewOptions";
+import { backend, metaKey, type ServiceAction } from "@/lib/backend";
+import { DEFAULT_SERVICES_ROUTE, OWNER_FILTERS, STATUS_FILTERS, parseJobRef, type OwnerFilter, type RouteJobRef } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { JOB_SCOPES, JOB_TEMPLATES, type JobCategory } from "@shared/launchd";
-import { Bell, CalendarClock, ChevronDown, ChevronRight, List, Plus, Search, ShieldAlert, Table2 } from "lucide-react";
+import { Bell, CalendarClock, ChevronDown, ChevronRight, EyeOff, LayoutGrid, List, Plus, Search, ShieldAlert, Table2 } from "lucide-react";
 
 const categoryOrder: JobCategory[] = JOB_SCOPES.map((s) => s.category);
 const categoryLabels = Object.fromEntries(JOB_SCOPES.map((s) => [s.category, s.title])) as Record<JobCategory, string>;
 
-type StatusFilter = "all" | "running" | "stopped" | "error" | "disabled";
-type OwnerFilter = "all" | "apple" | "third-party";
-type View = "groups" | "list" | "timeline";
+const OWNER_TITLES: Record<OwnerFilter, string> = { all: "All", apple: "Apple", "third-party": "3rd Party" };
+
+const VIEWS = [
+  { id: "groups", icon: List, label: "Groups" },
+  { id: "list", icon: Table2, label: "List" },
+  { id: "grid", icon: LayoutGrid, label: "Grid" },
+  { id: "timeline", icon: CalendarClock, label: "Timeline" },
+] as const;
 
 const ROWS_PER_GROUP = 250;
 
+const findJob = (services: ServiceInfo[], ref: RouteJobRef) => services.find((s) => s.label === ref.label && (!ref.category || s.category === ref.category)) ?? null;
+
+/**
+ * The launchd jobs. What the page shows lives in the URL hash (lib/router.ts): view, filters, search text,
+ * the job in the drawer, the open editor and the change history. A reload or a copied link restores all of it.
+ * Filter changes replace the history entry. A drawer, the editor and the change history add one, so Back closes them.
+ */
 export function ServicesPage() {
   const services = useServicesStore((s) => s.services);
   const loading = useServicesStore((s) => s.loading);
   const setServices = useServicesStore((s) => s.setServices);
+  const route = useNavStore((s) => s.route);
+  const patchServices = useNavStore((s) => s.patchServices);
   const navigateToProcess = useNavStore((s) => s.navigateToProcess);
   const navigateToLogs = useNavStore((s) => s.navigateToLogs);
-  const targetServiceLabel = useNavStore((s) => s.targetServiceLabel);
-  const targetServiceCategory = useNavStore((s) => s.targetServiceCategory);
-  const clearServiceTarget = useNavStore((s) => s.clearServiceTarget);
+  const transientEditor = useNavStore((s) => s.transientEditor);
+  const openEditor = useNavStore((s) => s.openEditor);
+  const closeEditor = useNavStore((s) => s.closeEditor);
   const unseenEvents = useJobEventsStore((s) => s.unseen);
+  const meta = useJobMetaStore((s) => s.meta);
+  const metaError = useJobMetaStore((s) => s.error);
+  const metaLoading = useJobMetaStore((s) => s.loading);
+  const loadMeta = useJobMetaStore((s) => s.load);
+  const setOneMeta = useJobMetaStore((s) => s.setOne);
+  const removeOneMeta = useJobMetaStore((s) => s.removeOne);
 
-  const [search, setSearch] = useState("");
+  const sr = route.page === "services" ? route : DEFAULT_SERVICES_ROUTE;
+
+  // A late answer (a save that ends after the user left the page) must not pull the user back to Services.
+  const patch = useCallback<typeof patchServices>(
+    (fields, mode) => {
+      if (useNavStore.getState().route.page === "services") patchServices(fields, mode);
+    },
+    [patchServices]
+  );
+
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set(["system-agents", "system-daemons"]));
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [filterStatus, setFilterStatus] = useState<StatusFilter>("all");
-  const [filterOwner, setFilterOwner] = useState<OwnerFilter>("all");
-  const [filterTag, setFilterTag] = useState<string | null>(null);
-  const [folder, setFolder] = useState<SmartFolder | null>(null);
-  const [view, setView] = useState<View>("groups");
-  const [editor, setEditor] = useState<JobEditorTarget | null>(null);
-  const [eventsOpen, setEventsOpen] = useState(false);
   const [templateMenu, setTemplateMenu] = useState(false);
-  const [meta, setMeta] = useState<Record<string, JobMeta>>({});
+  const [viewOptions, setViewOptions] = useState(loadViewOptions);
+  const [userFolders, setUserFolders] = useState(loadUserFolders);
   const [busy, setBusy] = useState<string | null>(null);
   const { confirm, isArmed } = useConfirm<string>();
 
-  // The selected job follows live updates because it is looked up by key on every render.
-  const selected = useMemo(() => services.find((s) => serviceKey(s) === selectedKey) ?? null, [services, selectedKey]);
-
   useEffect(() => {
-    backend.getJobMeta().then(setMeta).catch(() => {});
+    void loadMeta();
+  }, [loadMeta]);
+
+  // Another tab or window saved its smart folders: read them again.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SMART_FOLDERS_KEY) setUserFolders(loadUserFolders());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // Jump from another page or from the quick switcher. The request is consumed, so the same label works again later.
-  // It waits here while the job list is still loading.
+  // The job of the drawer follows live updates because it is looked up on every render.
+  // A link can arrive before the job list: the drawer opens as soon as the job is there.
+  const selected = useMemo(() => (sr.job ? findJob(services, sr.job) : null), [services, sr.job]);
+
+  const reportedMissing = useRef<RouteJobRef | null>(null);
   useEffect(() => {
-    if (!targetServiceLabel) return;
-    const match = services.find((s) => s.label === targetServiceLabel && (!targetServiceCategory || s.category === targetServiceCategory));
-    if (!match) return;
-    setSelectedKey(serviceKey(match));
-    clearServiceTarget();
-  }, [targetServiceLabel, targetServiceCategory, services, clearServiceTarget]);
+    if (!sr.job || loading || services.length === 0) return;
+    if (!selected) {
+      // React runs an effect twice in development. One toast per reference is enough.
+      if (reportedMissing.current !== sr.job) toast.info(`${sr.job.label} is not in the job list.`);
+      reportedMissing.current = sr.job;
+      patch({ job: null });
+    } else if (!sr.job.category) {
+      // The short form `job=<label>` becomes the full reference, so the link names one job.
+      patch({ job: { label: selected.label, category: selected.category } });
+    }
+  }, [sr.job, selected, loading, services.length, patch]);
+
+  const folder = useMemo(() => (sr.folder ? ([...DEFAULT_FOLDERS, ...userFolders].find((f) => f.id === sr.folder) ?? null) : null), [sr.folder, userFolders]);
+
+  // A link to a folder that this browser does not have.
+  useEffect(() => {
+    if (sr.folder && !folder) patch({ folder: null });
+  }, [sr.folder, folder, patch]);
+
+  const folderNeeds = folder !== null && folderNeedsPlists(folder);
+  const jobPlists = useJobPlists(folderNeeds);
+  const plists = jobPlists.plists;
+  const folderPending = folderNeeds && plists === null && !jobPlists.error;
+
+  // The editor takes a complete job reference. The short form waits for the job list.
+  const editorCategory = sr.editor && sr.editor.mode !== "new" ? (sr.editor.job.category ?? findJob(services, sr.editor.job)?.category ?? null) : null;
+  const routeEditorTarget = useMemo<JobEditorTarget | null>(() => {
+    if (!sr.editor) return null;
+    if (sr.editor.mode === "new") return { mode: "new", templateId: sr.editor.templateId };
+    return editorCategory ? { mode: sr.editor.mode, job: { label: sr.editor.job.label, category: editorCategory } } : null;
+  }, [sr.editor, editorCategory]);
+  // A target that the URL cannot hold (a job built from a dropped file) comes from the store.
+  const editorTarget = transientEditor ?? routeEditorTarget;
+
+  const openJob = useCallback(
+    (key: string) => {
+      const job = parseJobRef(key);
+      if (job) patch({ job }, "push");
+    },
+    [patch]
+  );
+
+  const changeViewOptions = (next: ViewOptions) => {
+    setViewOptions(next);
+    saveViewOptions(next);
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -110,8 +184,9 @@ export function ServicesPage() {
     try {
       await backend.deleteJob({ label: service.label, category: service.category });
       toast.success(`${service.label} moved to the Trash`);
-      setSelectedKey(null);
-      setMeta(({ [serviceKey(service)]: _deleted, ...rest }) => rest);
+      // Replace: Back must not return to a job that is gone.
+      patch({ job: null });
+      removeOneMeta(serviceKey(service));
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -120,9 +195,11 @@ export function ServicesPage() {
   };
 
   const allTags = useMemo(() => [...new Set(Object.values(meta).flatMap((m) => m.tags))].sort(), [meta]);
+  // A linked tag stays visible as a chip while the notes are still loading, so the user can switch it off.
+  const tagChips = sr.tag && !allTags.includes(sr.tag) ? [...allTags, sr.tag] : allTags;
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = sr.q.trim().toLowerCase();
     const now = new Date();
     return services.filter((s) => {
       const m = meta[metaKey(s)];
@@ -135,14 +212,14 @@ export function ServicesPage() {
         !m?.tags.some((t) => t.toLowerCase().includes(q))
       )
         return false;
-      if (filterStatus === "disabled" ? !s.disabled : filterStatus !== "all" && s.status !== filterStatus) return false;
-      if (filterOwner === "apple" && !isAppleService(s)) return false;
-      if (filterOwner === "third-party" && isAppleService(s)) return false;
-      if (filterTag && !m?.tags.includes(filterTag)) return false;
-      if (folder && !matchesFolder(s, m, folder, now)) return false;
+      if (sr.status === "disabled" ? !s.disabled : sr.status !== "all" && s.status !== sr.status) return false;
+      if (sr.owner === "apple" && !isAppleService(s)) return false;
+      if (sr.owner === "third-party" && isAppleService(s)) return false;
+      if (sr.tag && !m?.tags.includes(sr.tag)) return false;
+      if (folder && !matchesFolder(s, m, folder, now, folderNeeds && plists ? (plists[metaKey(s)] ?? null) : undefined)) return false;
       return true;
     });
-  }, [services, search, filterStatus, filterOwner, filterTag, folder, meta]);
+  }, [services, sr.q, sr.status, sr.owner, sr.tag, folder, folderNeeds, plists, meta]);
 
   const grouped = useMemo(() => {
     const groups: Partial<Record<JobCategory, ServiceInfo[]>> = {};
@@ -166,6 +243,22 @@ export function ServicesPage() {
     update(next);
   };
 
+  // A link or an earlier choice can set a filter whose control is hidden. The user must see it and be able to clear it.
+  const hiddenFilters = [
+    !viewOptions.statusFilter && sr.status !== "all" && `status ${sr.status}`,
+    !viewOptions.ownerFilter && sr.owner !== "all" && `owner ${OWNER_TITLES[sr.owner]}`,
+    !viewOptions.tagFilter && sr.tag && `tag #${sr.tag}`,
+    !viewOptions.smartFolders && folder && `smart folder "${folder.name}"`,
+  ].filter((text): text is string => typeof text === "string");
+
+  const clearHiddenFilters = () =>
+    patch({
+      ...(!viewOptions.statusFilter && { status: "all" as const }),
+      ...(!viewOptions.ownerFilter && { owner: "all" as const }),
+      ...(!viewOptions.tagFilter && { tag: null }),
+      ...(!viewOptions.smartFolders && { folder: null }),
+    });
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -176,24 +269,18 @@ export function ServicesPage() {
             {services.length} launchd jobs &middot; {statusCounts.running} running &middot; {statusCounts.error} failed
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <div role="radiogroup" aria-label="View" className="inline-flex rounded-xl bg-white/[0.04] p-0.5">
-            {(
-              [
-                { id: "groups", icon: List, label: "Groups" },
-                { id: "list", icon: Table2, label: "List" },
-                { id: "timeline", icon: CalendarClock, label: "Timeline" },
-              ] as const
-            ).map((v) => (
+            {VIEWS.map((v) => (
               <button
                 key={v.id}
                 type="button"
                 role="radio"
-                aria-checked={view === v.id}
-                onClick={() => setView(v.id)}
+                aria-checked={sr.view === v.id}
+                onClick={() => patch({ view: v.id })}
                 className={cn(
-                  "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
-                  view === v.id ? "bg-white/[0.08] text-gray-100" : "text-gray-500 hover:text-gray-300"
+                  "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50",
+                  sr.view === v.id ? "bg-white/[0.08] text-gray-100" : "text-gray-500 hover:text-gray-300"
                 )}
               >
                 <v.icon className="w-3.5 h-3.5" aria-hidden />
@@ -202,9 +289,11 @@ export function ServicesPage() {
             ))}
           </div>
 
+          <ViewOptionsMenu value={viewOptions} onChange={changeViewOptions} />
+
           <button
             type="button"
-            onClick={() => setEventsOpen(true)}
+            onClick={() => patch({ panel: "changes" }, "push")}
             className="relative inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-gray-300 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06]"
           >
             <Bell className="w-3.5 h-3.5" aria-hidden />
@@ -239,7 +328,7 @@ export function ServicesPage() {
                     role="menuitem"
                     onClick={() => {
                       setTemplateMenu(false);
-                      setEditor({ mode: "new", templateId: t.id });
+                      openEditor({ mode: "new", templateId: t.id });
                     }}
                     onBlur={(e) => !e.currentTarget.parentElement?.parentElement?.contains(e.relatedTarget) && setTemplateMenu(false)}
                     className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/[0.06]"
@@ -262,39 +351,38 @@ export function ServicesPage() {
             type="search"
             aria-label="Search jobs"
             placeholder="Search label, program, notes, tags…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={sr.q}
+            maxLength={200}
+            onChange={(e) => patch({ q: e.target.value })}
             className="w-full pl-9 pr-4 py-2 rounded-xl bg-white/[0.04] border border-white/[0.06] text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20 transition-all"
           />
         </div>
 
-        <div className="flex gap-1" role="group" aria-label="Status filter">
-          {(["all", "running", "stopped", "error", "disabled"] as StatusFilter[]).map((s) => (
-            <FilterButton key={s} active={filterStatus === s} tone="cyan" onClick={() => setFilterStatus(s)}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
-              {s !== "all" && <span className="ml-1 opacity-60">{statusCounts[s]}</span>}
-            </FilterButton>
-          ))}
-        </div>
+        {viewOptions.statusFilter && (
+          <div className="flex gap-1" role="group" aria-label="Status filter">
+            {STATUS_FILTERS.map((s) => (
+              <FilterButton key={s} active={sr.status === s} tone="cyan" onClick={() => patch({ status: s })}>
+                {s.charAt(0).toUpperCase() + s.slice(1)}
+                {s !== "all" && <span className="ml-1 opacity-60">{statusCounts[s]}</span>}
+              </FilterButton>
+            ))}
+          </div>
+        )}
 
-        <div className="flex gap-1 border-l border-white/[0.06] pl-3" role="group" aria-label="Owner filter">
-          {(
-            [
-              { value: "all", label: "All" },
-              { value: "apple", label: "Apple" },
-              { value: "third-party", label: "3rd Party" },
-            ] as { value: OwnerFilter; label: string }[]
-          ).map(({ value, label }) => (
-            <FilterButton key={value} active={filterOwner === value} tone="purple" onClick={() => setFilterOwner(value)}>
-              {label}
-            </FilterButton>
-          ))}
-        </div>
+        {viewOptions.ownerFilter && (
+          <div className="flex gap-1 border-l border-white/[0.06] pl-3" role="group" aria-label="Owner filter">
+            {OWNER_FILTERS.map((value) => (
+              <FilterButton key={value} active={sr.owner === value} tone="purple" onClick={() => patch({ owner: value })}>
+                {OWNER_TITLES[value]}
+              </FilterButton>
+            ))}
+          </div>
+        )}
 
-        {allTags.length > 0 && (
+        {viewOptions.tagFilter && tagChips.length > 0 && (
           <div className="flex gap-1 border-l border-white/[0.06] pl-3 flex-wrap" role="group" aria-label="Tag filter">
-            {allTags.map((tag) => (
-              <FilterButton key={tag} active={filterTag === tag} tone="amber" onClick={() => setFilterTag(filterTag === tag ? null : tag)}>
+            {tagChips.map((tag) => (
+              <FilterButton key={tag} active={sr.tag === tag} tone="amber" onClick={() => patch({ tag: sr.tag === tag ? null : tag })}>
                 #{tag}
               </FilterButton>
             ))}
@@ -302,11 +390,51 @@ export function ServicesPage() {
         )}
       </div>
 
-      <SmartFolderBar services={services} meta={meta} active={folder} onChange={setFolder} />
+      {hiddenFilters.length > 0 && (
+        <div role="status" className="flex items-center gap-2 flex-wrap rounded-lg border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200/90">
+          <EyeOff className="w-3.5 h-3.5 flex-shrink-0 text-amber-400" aria-hidden />
+          <span className="flex-1 min-w-0">A filter without a visible control is active: {hiddenFilters.join(", ")}.</span>
+          <button
+            type="button"
+            onClick={clearHiddenFilters}
+            className="flex-shrink-0 px-2.5 py-1 rounded-lg text-xs text-gray-200 bg-white/[0.06] hover:bg-white/[0.1] focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
-      {view === "timeline" ? (
-        <JobTimeline services={filtered} onSelect={(s) => setSelectedKey(serviceKey(s))} />
-      ) : view === "list" ? (
+      {metaError && <InlineError title="Notes, tags and icons could not be read." message={metaError} onRetry={loadMeta} retrying={metaLoading} />}
+
+      {viewOptions.smartFolders ? (
+        <SmartFolderBar
+          services={services}
+          meta={meta}
+          userFolders={userFolders}
+          onUserFoldersChange={setUserFolders}
+          activeId={folder?.id ?? null}
+          onChange={(id) => patch({ folder: id })}
+        />
+      ) : (
+        // The bar shows this error itself. Without the bar the page must.
+        folderNeeds &&
+        jobPlists.error && (
+          <InlineError
+            title={plists ? "The job plists could not be read again. The smart folder uses the last copy." : "The job plists could not be read. The smart folder stays empty."}
+            message={jobPlists.error}
+            onRetry={jobPlists.retry}
+            retrying={jobPlists.loading}
+          />
+        )
+      )}
+
+      {folderPending ? (
+        <p className="text-sm text-gray-500 text-center py-10" aria-live="polite">
+          Reading the plists of the jobs…
+        </p>
+      ) : sr.view === "timeline" ? (
+        <JobTimeline services={filtered} onSelect={(s) => openJob(serviceKey(s))} />
+      ) : sr.view === "list" ? (
         <JobListView
           services={filtered}
           meta={meta}
@@ -314,9 +442,11 @@ export function ServicesPage() {
           busyKey={busy}
           isArmed={isArmed}
           onAction={requestAction}
-          onSelect={setSelectedKey}
-          onEdit={setEditor}
+          onSelect={openJob}
+          onEdit={openEditor}
         />
+      ) : sr.view === "grid" ? (
+        <JobGridView services={filtered} meta={meta} loading={loading} onSelect={openJob} />
       ) : (
         <div className="space-y-3">
           {loading && services.length === 0 && <p className="text-sm text-gray-500 text-center py-10">Reading launchd…</p>}
@@ -355,8 +485,8 @@ export function ServicesPage() {
                           busy={busy !== null && busy.endsWith(`:${key}`)}
                           armedAction={(["stop", "disable"] as const).find((a) => isArmed(`${a}:${key}`)) ?? null}
                           onAction={requestAction}
-                          onSelect={setSelectedKey}
-                          onEdit={setEditor}
+                          onSelect={openJob}
+                          onEdit={openEditor}
                         />
                       );
                     })}
@@ -377,43 +507,40 @@ export function ServicesPage() {
         </div>
       )}
 
-      {/* One instance for both job views, so an expanded card stays expanded when the view changes. */}
-      {view !== "timeline" && (
+      {/* One instance for all job views, so an expanded card stays expanded when the view changes. */}
+      {sr.view !== "timeline" && (viewOptions.startupCard || viewOptions.powerCard) && (
         <div className="space-y-3">
-          <StartupExtrasCard />
-          <PowerSchedulePanel />
+          {viewOptions.startupCard && <StartupExtrasCard />}
+          {viewOptions.powerCard && <PowerSchedulePanel />}
         </div>
       )}
 
       <JobDetailDrawer
         service={selected}
         meta={selected ? meta[serviceKey(selected)] : undefined}
-        onClose={() => setSelectedKey(null)}
-        onEdit={() => selected && setEditor({ mode: "edit", job: { label: selected.label, category: selected.category } })}
-        onDuplicate={() => selected && setEditor({ mode: "duplicate", job: { label: selected.label, category: selected.category } })}
+        onClose={() => patch({ job: null }, "push")}
+        onEdit={() => selected && openEditor({ mode: "edit", job: { label: selected.label, category: selected.category } })}
+        onDuplicate={() => selected && openEditor({ mode: "duplicate", job: { label: selected.label, category: selected.category } })}
         onDelete={() => selected && deleteJob(selected)}
-        onMetaSaved={(m) => selected && setMeta((all) => ({ ...all, [serviceKey(selected)]: m }))}
-        onNavigateToProcess={(pid) => {
-          setSelectedKey(null);
-          navigateToProcess(pid);
-        }}
+        onMetaSaved={(m) => selected && setOneMeta(serviceKey(selected), m)}
+        onNavigateToProcess={navigateToProcess}
         onViewLogs={(name) => navigateToLogs(name)}
       />
 
       <JobEventsDrawer
-        open={eventsOpen}
-        onClose={() => setEventsOpen(false)}
-        onOpenJob={(event) => {
-          setEventsOpen(false);
-          setSelectedKey(serviceKey(event));
-        }}
+        open={sr.panel === "changes"}
+        onClose={() => patch({ panel: null }, "push")}
+        onOpenJob={(event) => patch({ panel: null, job: { label: event.label, category: event.category } }, "push")}
       />
 
       <JobEditor
-        target={editor}
+        target={editorTarget}
         onClose={() => {
-          setEditor(null);
+          closeEditor();
           refresh();
+          // A saved job can have other keys now: the launchd-key folders must not wait for the cache to expire.
+          const plistsStore = useJobPlistsStore.getState();
+          if (plistsStore.plists !== null) plistsStore.ensure(services.length, { force: true });
         }}
       />
     </div>

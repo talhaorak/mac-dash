@@ -39,6 +39,11 @@ jobs:
           test -f dist/client/index.html
           echo "Build output verified"
 
+      # Starts the production server on a free port and drives one LaunchAgent of the runner's
+      # user through its whole life over HTTP and WebSocket. Needs the client build from above.
+      - name: End-to-end test
+        run: bun run test:e2e
+
   desktop-check:
     runs-on: macos-latest
     steps:

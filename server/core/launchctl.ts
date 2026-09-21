@@ -110,7 +110,12 @@ export const BACKUP_DIR = join(STATE_DIR, "backups");
 const MAX_BACKUPS_PER_JOB = 20;
 const MAX_OUTPUT_BYTES = 256 * 1024;
 
-const scopeDir = (scope: JobScope) => scope.dir.replace(/^~/, homedir());
+let testDirs: { scopes: Partial<Record<JobCategory, string>>; backups: string } | null = null;
+
+/** A scope without a test directory does not exist for that test: real job folders are never read. */
+const scopeDir = (scope: JobScope): string | null =>
+  testDirs ? testDirs.scopes[scope.category] ?? null : scope.dir.replace(/^~/, homedir());
+const backupDir = () => testDirs?.backups ?? BACKUP_DIR;
 const domainFor = (category: JobCategory) => (scopeFor(category)?.kind === "daemon" ? "system" : `gui/${UID}`);
 export const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -167,6 +172,7 @@ export function buildPrivilegedScript(steps: PrivilegedStep[]): string {
 
 /** Run shell steps as root behind the macOS administrator prompt. One prompt per call. */
 export async function runPrivileged(steps: PrivilegedStep[], prompt: string): Promise<void> {
+  if (testDirs) throw new JobError("Privileged commands are switched off while the scope directories point at test folders.");
   const result = await run([
     "osascript",
     "-e", "on run argv",
@@ -191,6 +197,17 @@ let indexLoaded = false;
 let indexReady: Promise<void> | null = null;
 let scanChain: Promise<unknown> = Promise.resolve();
 let changeListener: ((changes: JobFileChange[]) => void) | null = null;
+
+/**
+ * TESTS ONLY. Point the scopes and the backup folder at temporary directories (null restores the real ones)
+ * and forget the index. While this is set, no launchctl command runs: bootout and bootstrap are skipped.
+ */
+export function __setScopeDirsForTests(dirs: { scopes: Partial<Record<JobCategory, string>>; backups: string } | null): void {
+  testDirs = dirs;
+  index = new Map();
+  indexLoaded = false;
+  indexReady = null;
+}
 
 /** Called after every scan that found differences, whoever triggered it. The first scan is the baseline. */
 export function onJobFilesChanged(listener: (changes: JobFileChange[]) => void): void {
@@ -285,6 +302,7 @@ async function scanJobFiles(): Promise<JobFileChange[]> {
   await Promise.all(
     JOB_SCOPES.map(async (scope) => {
       const dir = scopeDir(scope);
+      if (dir === null) return;
       let names: string[];
       try {
         names = (await readdir(dir)).filter(isJobFileName);
@@ -335,6 +353,12 @@ async function scanJobFiles(): Promise<JobFileChange[]> {
 function ensureIndex(): Promise<void> {
   indexReady ??= rescanJobs().then(() => undefined);
   return indexReady;
+}
+
+/** Every indexed job file, for callers that read all plists at once. */
+export async function indexedJobFiles(): Promise<JobFile[]> {
+  await ensureIndex();
+  return [...index.values()];
 }
 
 export async function findJobFile(label: string, category: JobCategory): Promise<JobFile | null> {
@@ -639,24 +663,26 @@ export function revisionLabel(fileName: string): string | null {
 /** Every overwrite and delete keeps a copy in ~/.macdash/backups. Returns false when the copy failed. */
 async function backupJobFile(file: JobFile): Promise<boolean> {
   try {
-    await mkdir(BACKUP_DIR, { recursive: true });
+    const dir = backupDir();
+    await mkdir(dir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const name = safeFileName(file.label);
-    await copyFile(file.path, join(BACKUP_DIR, `${name}-${stamp}.plist`));
-    const mine = (await readdir(BACKUP_DIR)).filter((n) => revisionLabel(n) === name).sort();
-    for (const old of mine.slice(0, -MAX_BACKUPS_PER_JOB)) await unlink(join(BACKUP_DIR, old)).catch(() => {});
+    await copyFile(file.path, join(dir, `${name}-${stamp}.plist`));
+    const mine = (await readdir(dir)).filter((n) => revisionLabel(n) === name).sort();
+    for (const old of mine.slice(0, -MAX_BACKUPS_PER_JOB)) await unlink(join(dir, old)).catch(() => {});
     return true;
   } catch {
     return false;
   }
 }
 
-async function trashPath(fileName: string): Promise<string> {
+export async function trashPath(fileName: string): Promise<string> {
   const trash = join(homedir(), ".Trash");
   const candidate = join(trash, fileName);
   try {
     await access(candidate);
-    return join(trash, `${fileName.replace(/\.plist(\.disabled)?$/, "")} ${Date.now()}.plist`);
+    const extension = /\.plist(\.disabled)?$/.test(fileName) ? ".plist" : "";
+    return join(trash, `${fileName.replace(/\.plist(\.disabled)?$/, "")} ${Date.now()}${extension}`);
   } catch {
     return candidate;
   }
@@ -679,7 +705,7 @@ async function copyToTrash(file: JobFile, hasBackup: boolean): Promise<string | 
 }
 
 /** Run the root script. When it fails or is cancelled the original is still in place, so drop the Trash copy. */
-async function runPrivilegedAfterTrashCopy(steps: PrivilegedStep[], prompt: string, trashCopy: string | null): Promise<void> {
+export async function runPrivilegedAfterTrashCopy(steps: PrivilegedStep[], prompt: string, trashCopy: string | null): Promise<void> {
   try {
     await runPrivileged(steps, prompt);
   } catch (e) {
@@ -704,6 +730,10 @@ async function moveToTrash(file: JobFile, hasBackup: boolean): Promise<void> {
   await unlink(file.path);
 }
 
+/** launchctl for the user's own domain. A no-op while the scope directories point at test folders. */
+const launchctlUnlessTesting = (args: string[]): Promise<ExecResult> =>
+  testDirs ? Promise.resolve({ code: 0, stdout: "", stderr: "" }) : run(["launchctl", ...args]);
+
 /** A privileged save passes the plist inside the root script, so the size (in bytes, not characters) is bound by ARG_MAX. */
 export const MAX_PRIVILEGED_XML = 200 * 1024;
 
@@ -723,7 +753,9 @@ export async function saveJob(req: SaveJobRequest): Promise<Result<{ label: stri
     if (req.original && !original) throw new JobError("The job being edited no longer exists on disk.");
     if (original && !scopeFor(original.category)!.writable) throw new JobError("The original job is read-only. Duplicate it instead.");
 
-    const dest = join(scopeDir(scope), `${label}.plist`);
+    const dir = scopeDir(scope);
+    if (dir === null) throw new JobError("This scope is not available.");
+    const dest = join(dir, `${label}.plist`);
     const existing = await findJobFile(label, req.category);
     if (existing && existing.path !== original?.path) throw new JobError(`A job with the label "${label}" already exists in ${scope.title}.`);
 
@@ -768,8 +800,8 @@ export async function saveJob(req: SaveJobRequest): Promise<Result<{ label: stri
       }
     } else {
       // Target in the user's own folder: the app writes it. Root never writes where the user can plant a symlink.
-      if (bootoutOriginal && originalTarget && originalDomain !== "system") await run(["launchctl", "bootout", originalTarget]);
-      await mkdir(scopeDir(scope), { recursive: true });
+      if (bootoutOriginal && originalTarget && originalDomain !== "system") await launchctlUnlessTesting(["bootout", originalTarget]);
+      await mkdir(dir, { recursive: true });
       // Write next to the target, then rename: atomic, and a symlink at the target is replaced, not followed.
       await writeFile(staging, req.xml, { mode: 0o644, flag: "wx" }).catch(async () => {
         await unlink(staging);
@@ -788,7 +820,7 @@ export async function saveJob(req: SaveJobRequest): Promise<Result<{ label: stri
         await moveToTrash(original!, hasBackup);
       }
       if (load) {
-        const result = await run(["launchctl", "bootstrap", domain, dest]);
+        const result = await launchctlUnlessTesting(["bootstrap", domain, dest]);
         if (result.code !== 0) {
           await rescanJobs();
           return { ok: false, error: `Saved, but launchd did not load the job: ${explainLaunchctlError(result)}` };
@@ -819,7 +851,7 @@ export async function deleteJob(label: string, category: JobCategory): Promise<R
       steps.push({ cmd: ["/bin/rm", "-f", file.path] });
       await runPrivilegedAfterTrashCopy(steps, `mac-dash wants to move the job "${promptLabel(file.label)}" to the Trash.`, trashCopy);
     } else {
-      if (target) await run(["launchctl", "bootout", target]);
+      if (target) await launchctlUnlessTesting(["bootout", target]);
       await moveToTrash(file, hasBackup);
     }
     await rescanJobs();

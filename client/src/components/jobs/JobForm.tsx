@@ -1,5 +1,5 @@
-import { useEffect, useId, useMemo, useState } from "react";
-import { AppWindow, ChevronDown, ChevronRight, Loader2, Wand2 } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { AppWindow, ChevronDown, ChevronRight, Loader2, Plus, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { backend } from "@/lib/backend";
 import {
@@ -11,8 +11,10 @@ import {
   type KeyGroup,
   type KeySpec,
 } from "@shared/launchd";
-import { type PlistDict, type PlistValue } from "@shared/plist";
-import { ComplexValue, FieldRow, SchemaField, StringList, Toggle, inputClass } from "./fields";
+import { isPlistDict, type PlistDict, type PlistValue } from "@shared/plist";
+import { FieldRow, SchemaField, StringList, Toggle, inputClass } from "./fields";
+import { ChoosePathButton } from "./PathPicker";
+import { PLIST_TYPES, PLIST_TYPE_LABELS, PlistTreeEditor, defaultForType, type PlistType } from "./PlistTreeEditor";
 import { appNameProblem, buildOpenArgs, defaultAppName, parseOpenArgs } from "./scriptApp";
 
 // Form view of a launchd job. It edits the same PlistDict that Expert mode serializes,
@@ -33,7 +35,93 @@ type RunKind = "command" | "program" | "script" | "app" | "shortcut";
 const SHELLS = ["/bin/sh", "/bin/bash", "/bin/zsh"];
 const INTERPRETERS = [...SHELLS, "/usr/bin/python3", "/usr/bin/ruby", "/usr/bin/perl", "/usr/bin/osascript", "/usr/bin/swift"];
 const SEARCH_DIRS = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/opt/homebrew/sbin", "/usr/local/sbin"];
+/** Used when the backend cannot tell the default PATH of this Mac. */
 export const DEFAULT_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+
+// ── PATH ─────────────────────────────────────────────────────────────
+
+/** A PATH the job can use: absolute folders, separated by colons. */
+export function isUsablePath(path: unknown): path is string {
+  return typeof path === "string" && path.length > 0 && path.length <= 4096 && !/[\0\n\r]/.test(path) && path.split(":").every((dir) => dir.startsWith("/"));
+}
+
+/** The default PATH of this Mac, from the backend. Never fails: the built-in PATH is the fallback. */
+export async function fetchDefaultPath(): Promise<string> {
+  try {
+    const path = await backend.getDefaultPath();
+    return isUsablePath(path) ? path : DEFAULT_PATH;
+  } catch {
+    return DEFAULT_PATH;
+  }
+}
+
+/** True when PATH can be added: no PATH yet, and EnvironmentVariables is missing or a dictionary. */
+export function needsAutoPath(job: PlistDict): boolean {
+  const env = job.EnvironmentVariables;
+  if (env === undefined) return true;
+  return isPlistDict(env) && !("PATH" in env);
+}
+
+/** The job with EnvironmentVariables.PATH. A job that has a PATH, or a broken EnvironmentVariables, is returned as it is. */
+export function withAutoPath(job: PlistDict, path: string): PlistDict {
+  if (!needsAutoPath(job)) return job;
+  return { ...job, EnvironmentVariables: { ...(isPlistDict(job.EnvironmentVariables) ? job.EnvironmentVariables : {}), PATH: path } };
+}
+
+export const AUTO_PATH_STORAGE_KEY = "macdash.autoPath";
+
+/** Per-browser setting, on by default. */
+export function readAutoPath(storage: Pick<Storage, "getItem"> | null): boolean {
+  try {
+    return storage?.getItem(AUTO_PATH_STORAGE_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export function writeAutoPath(storage: Pick<Storage, "setItem"> | null, on: boolean): void {
+  try {
+    storage?.setItem(AUTO_PATH_STORAGE_KEY, on ? "1" : "0");
+  } catch {
+    // The choice lasts for this editor only.
+  }
+}
+
+// ── Add key ──────────────────────────────────────────────────────────
+
+/** First value of a key that the user adds by name. The widget of the key must be able to show it. */
+export function initialValueForSpec(spec: KeySpec): PlistValue {
+  switch (spec.type) {
+    case "string":
+      return spec.options?.[0] ?? "";
+    case "integer": {
+      const zeroFits = (spec.min === undefined || spec.min <= 0) && (spec.max === undefined || spec.max >= 0);
+      return zeroFits ? 0 : spec.min ?? spec.max ?? 0;
+    }
+    case "boolean":
+      return true;
+    case "string-array":
+      return [""];
+    case "string-dict":
+    case "bool-dict":
+    case "integer-dict":
+    case "complex":
+      return {};
+    case "keepalive":
+      return true;
+    case "calendar":
+      return [{ Hour: 9, Minute: 0 }];
+    case "session-type":
+      return spec.options?.[0] ?? "Aqua";
+  }
+}
+
+export function newKeyProblem(name: string, job: PlistDict): string | null {
+  if (name === "") return "Enter the name of the key.";
+  if (name !== name.trim()) return "Remove the spaces around the name.";
+  if (name in job) return `The job already has the key "${name}".`;
+  return null;
+}
 
 const RUN_KINDS: { kind: RunKind; title: string; hint: string }[] = [
   { kind: "command", title: "Command", hint: "A shell command line. Runs through sh -c, so pipes, && and variables work." },
@@ -75,7 +163,28 @@ function RunSection({
   const shortcutListId = useId();
   const args = argsOf(job);
   const openArgs = parseOpenArgs(args) ?? { app: "", wait: false, rest: [] };
-  const setArgs = (next: string[]) => onChange(setKey(setKey(job, "Program", undefined), "ProgramArguments", next));
+
+  // The kind is sticky while the user types here: ["/bin/sh", ""] is a script in the making, not a program.
+  // A change of the command from outside (undo, a dropped file, Expert mode) picks the kind again.
+  const runSignature = (j: PlistDict) => JSON.stringify([j.Program ?? null, j.ProgramArguments ?? null]);
+  const signature = runSignature(job);
+  const ownSignature = useRef(signature);
+  const [seenSignature, setSeenSignature] = useState(signature);
+  if (seenSignature !== signature) {
+    setSeenSignature(signature);
+    if (ownSignature.current !== signature) {
+      ownSignature.current = signature;
+      setKind(detectRunKind(job));
+      setResolveNote(null);
+      setBuiltApp(null);
+    }
+  }
+  /** Every change this section makes goes through here. */
+  const commit = (next: PlistDict) => {
+    ownSignature.current = runSignature(next);
+    onChange(next);
+  };
+  const setArgs = (next: string[]) => commit(setKey(setKey(job, "Program", undefined), "ProgramArguments", next));
 
   useEffect(() => {
     if (kind === "shortcut" && shortcuts.length === 0) backend.listShortcuts().then(setShortcuts).catch(() => {});
@@ -108,7 +217,7 @@ function RunSection({
 
   return (
     <div>
-      <FieldRow label="Run" help={RUN_KINDS.find((k) => k.kind === kind)!.hint} issue={issue}>
+      <FieldRow jobKey="ProgramArguments" label="Run" help={RUN_KINDS.find((k) => k.kind === kind)!.hint} issue={issue}>
         <div role="radiogroup" aria-label="Run kind" className="inline-flex rounded-lg bg-white/[0.04] p-0.5 mb-2">
           {RUN_KINDS.map((k) => (
             <button
@@ -157,23 +266,31 @@ function RunSection({
         {kind === "program" && (
           <div className="space-y-2">
             {typeof job.Program === "string" && (
-              <input
-                type="text"
-                aria-label="Program"
-                spellCheck={false}
-                value={job.Program}
-                disabled={disabled}
-                onChange={(e) => onChange(setKey(job, "Program", e.target.value || undefined))}
-                className={cn(inputClass, "font-mono text-xs")}
-              />
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  aria-label="Program"
+                  spellCheck={false}
+                  value={job.Program}
+                  disabled={disabled}
+                  onChange={(e) => commit(setKey(job, "Program", e.target.value || undefined))}
+                  className={cn(inputClass, "font-mono text-xs")}
+                />
+                <ChoosePathButton mode="executable" value={job.Program} disabled={disabled} fieldLabel="Program" onPick={(path) => commit(setKey(job, "Program", path))} />
+              </div>
             )}
             <StringList
               values={args}
               disabled={disabled}
               addLabel="Add argument"
               placeholder={args.length === 0 ? "/path/to/executable" : "argument"}
-              onChange={(next) => onChange(setKey(job, "ProgramArguments", next))}
+              onChange={(next) => commit(setKey(job, "ProgramArguments", next))}
+              choose={(i) => (i === 0 ? "executable" : null)}
+              chooseLabel="Program argument"
             />
+            {args.length === 0 && typeof job.Program !== "string" && (
+              <ChoosePathButton mode="executable" disabled={disabled} fieldLabel="Program" onPick={(path) => commit(setKey(job, "ProgramArguments", [path]))} />
+            )}
             {args[0] && !args[0].includes("/") && (
               <button
                 type="button"
@@ -212,6 +329,7 @@ function RunSection({
               onChange={(e) => setArgs([args[0] ?? "/bin/sh", e.target.value])}
               className={cn(inputClass, "font-mono text-xs")}
             />
+            <ChoosePathButton mode="file" value={args[1]} disabled={disabled} fieldLabel="Script path" onPick={(path) => setArgs([args[0] ?? "/bin/sh", path])} />
           </div>
         )}
         {kind === "script" && (args[1] ?? "").startsWith("/") && !disabled && (
@@ -229,19 +347,31 @@ function RunSection({
 
         {kind === "app" && (
           <div className="space-y-1.5">
-            <input
-              type="text"
-              aria-label="Application"
-              spellCheck={false}
-              value={openArgs.app}
-              disabled={disabled}
-              placeholder="Safari  or  /Applications/Safari.app"
-              onChange={(e) => {
-                setBuiltApp(null);
-                setArgs(buildOpenArgs({ ...openArgs, app: e.target.value }));
-              }}
-              className={cn(inputClass, "font-mono text-xs")}
-            />
+            <div className="flex gap-1.5">
+              <input
+                type="text"
+                aria-label="Application"
+                spellCheck={false}
+                value={openArgs.app}
+                disabled={disabled}
+                placeholder="Safari  or  /Applications/Safari.app"
+                onChange={(e) => {
+                  setBuiltApp(null);
+                  setArgs(buildOpenArgs({ ...openArgs, app: e.target.value }));
+                }}
+                className={cn(inputClass, "font-mono text-xs")}
+              />
+              <ChoosePathButton
+                mode="app"
+                value={openArgs.app}
+                disabled={disabled}
+                fieldLabel="Application"
+                onPick={(path) => {
+                  setBuiltApp(null);
+                  setArgs(buildOpenArgs({ ...openArgs, app: path }));
+                }}
+              />
+            </div>
             <label className="flex items-center gap-2 text-xs text-gray-400">
               <input
                 type="checkbox"
@@ -394,14 +524,22 @@ function Section({
   title,
   count,
   defaultOpen,
+  reveal = 0,
   children,
 }: {
   title: string;
   count: number;
   defaultOpen: boolean;
+  /** A new number opens the section: "Add key" put a key in here. */
+  reveal?: number;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen || count > 0);
+  const [revealed, setRevealed] = useState(reveal);
+  if (revealed !== reveal) {
+    setRevealed(reveal);
+    setOpen(true);
+  }
   return (
     <section className="border-t border-white/[0.06]">
       <button
@@ -419,6 +557,93 @@ function Section({
         )}
       </button>
       {open && <div className="pb-3 divide-y divide-white/[0.03]">{children}</div>}
+    </section>
+  );
+}
+
+/** "Add key…": any key by name. A documented key gets its own widget, another key gets the tree editor. */
+function AddKey({ job, onAdd }: { job: PlistDict; onAdd: (name: string, type: PlistType) => void }) {
+  const [name, setName] = useState("");
+  const [type, setType] = useState<PlistType>("string");
+  const listId = useId();
+  const nameId = useId();
+  const errorId = useId();
+  const spec = KEY_SPEC.get(name);
+  const problem = newKeyProblem(name, job);
+  const unused = useMemo(() => LAUNCHD_KEYS.filter((s) => !(s.key in job) && s.key !== "Label"), [job]);
+
+  const add = () => {
+    if (problem) return;
+    onAdd(name, type);
+    setName("");
+  };
+
+  return (
+    <section aria-label="Add a key" className="border-t border-white/[0.06] py-3 space-y-1.5">
+      <datalist id={listId}>
+        {unused.map((s) => (
+          <option key={s.key} value={s.key}>
+            {s.title}
+          </option>
+        ))}
+      </datalist>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <label htmlFor={nameId} className="text-sm font-semibold text-gray-300 pr-1">
+          Add key…
+        </label>
+        <input
+          id={nameId}
+          type="text"
+          list={listId}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          value={name}
+          placeholder="Key name, for example Sockets"
+          aria-invalid={name !== "" && problem !== null}
+          aria-describedby={errorId}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            add();
+          }}
+          className={cn(inputClass, "w-64 font-mono text-xs")}
+        />
+        <select
+          aria-label="Type of the new key"
+          value={spec ? "" : type}
+          disabled={spec !== undefined}
+          title={spec ? "launchd defines the type of this key" : undefined}
+          onChange={(e) => setType(e.target.value as PlistType)}
+          className={cn(inputClass, "w-32 text-xs")}
+        >
+          {spec && <option value="">{spec.type}</option>}
+          {PLIST_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {PLIST_TYPE_LABELS[t]}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={problem !== null}
+          onClick={add}
+          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-gray-300 bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-40"
+        >
+          <Plus className="w-3.5 h-3.5" aria-hidden />
+          Add
+        </button>
+      </div>
+      <p id={errorId} className={cn("text-[11px] leading-snug", name !== "" && problem ? "text-amber-400" : "text-gray-600")}>
+        {name !== "" && problem
+          ? problem
+          : spec
+            ? `${spec.title}: ${spec.help}`
+            : name !== ""
+              ? "Not a documented launchd key. launchd ignores keys it does not know."
+              : "The list suggests the launchd keys this job does not set. Any other name is kept as it is."}
+      </p>
     </section>
   );
 }
@@ -444,17 +669,51 @@ export function JobForm({
   }, [issues]);
 
   const unknownKeys = Object.keys(job).filter((k) => !KEY_SPEC.has(k));
-  const env = job.EnvironmentVariables;
-  const hasPath = typeof env === "object" && env !== null && !Array.isArray(env) && "PATH" in env;
+  const jobLabel = typeof job.Label === "string" ? job.Label : undefined;
 
   const visible = (spec: KeySpec) =>
     !HANDLED.has(spec.key) && (spec.key in job || (!spec.deprecated && (!spec.daemonOnly || isDaemon)));
 
+  // "Add key" and the PATH button change the job from outside a field: open the section and show the row.
+  const root = useRef<HTMLDivElement>(null);
+  const [reveal, setReveal] = useState<{ key: string; n: number } | null>(null);
+  useEffect(() => {
+    if (!reveal) return;
+    const frame = requestAnimationFrame(() => {
+      // Program has no row of its own: it is part of the Run row.
+      const wanted = reveal.key === "Program" ? "ProgramArguments" : reveal.key;
+      const row = [...(root.current?.querySelectorAll<HTMLElement>("[data-job-key]") ?? [])].find((el) => el.dataset.jobKey === wanted);
+      if (!row) return;
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+      row.querySelector<HTMLElement>("input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])")?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [reveal]);
+  const revealFor = (keys: string[]) => (reveal && keys.includes(reveal.key) ? reveal.n : 0);
+
+  const addKey = (name: string, type: PlistType) => {
+    const spec = KEY_SPEC.get(name);
+    onChange(setKey(job, name, spec ? initialValueForSpec(spec) : defaultForType(type)));
+    setReveal((r) => ({ key: name, n: (r?.n ?? 0) + 1 }));
+  };
+
+  const [pathBusy, setPathBusy] = useState(false);
+  const latestJob = useRef(job);
+  latestJob.current = job;
+  const addPath = async () => {
+    setPathBusy(true);
+    const path = await fetchDefaultPath();
+    setPathBusy(false);
+    // The job can change while the backend answers.
+    if (needsAutoPath(latestJob.current)) onChange(withAutoPath(latestJob.current, path));
+  };
+
   return (
-    <div>
+    <div ref={root}>
       <RunSection job={job} onChange={onChange} disabled={disabled} issueFor={issueFor} />
 
       <FieldRow
+        jobKey="Disabled"
         label="Disabled key"
         help="Writes Disabled=true into the plist. Prefer the Enable/Disable action: it uses launchd's own override database."
       >
@@ -471,10 +730,11 @@ export function JobForm({
         if (specs.length === 0) return null;
         const count = specs.filter((s) => s.key in job).length;
         return (
-          <Section key={group} title={title} count={count} defaultOpen={open}>
+          <Section key={group} title={title} count={count} defaultOpen={open} reveal={revealFor(specs.map((s) => s.key))}>
             {specs.map((spec) => (
               <FieldRow
                 key={spec.key}
+                jobKey={spec.key}
                 label={spec.title}
                 help={`${spec.key}${spec.deprecated ? " (deprecated)" : ""}: ${spec.help}`}
                 issue={issueFor(spec.key)}
@@ -483,17 +743,12 @@ export function JobForm({
                   spec={spec}
                   value={job[spec.key]}
                   disabled={disabled}
+                  jobLabel={jobLabel}
                   onChange={(v) => onChange(setKey(job, spec.key, v))}
                 />
-                {spec.key === "EnvironmentVariables" && !hasPath && !disabled && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onChange(setKey(job, "EnvironmentVariables", { ...(typeof env === "object" && env && !Array.isArray(env) ? (env as PlistDict) : {}), PATH: DEFAULT_PATH }))
-                    }
-                    className="text-[11px] text-cyan-400 hover:underline"
-                  >
-                    Add a PATH with Homebrew and /usr/local (launchd's default is /usr/bin:/bin:/usr/sbin:/sbin)
+                {spec.key === "EnvironmentVariables" && needsAutoPath(job) && !disabled && (
+                  <button type="button" disabled={pathBusy} onClick={addPath} className="text-left text-[11px] text-cyan-400 hover:underline disabled:opacity-50">
+                    Add the default PATH of this Mac, with Homebrew and /usr/local (launchd's own PATH is /usr/bin:/bin:/usr/sbin:/sbin)
                   </button>
                 )}
               </FieldRow>
@@ -503,14 +758,16 @@ export function JobForm({
       })}
 
       {unknownKeys.length > 0 && (
-        <Section title="Other keys" count={unknownKeys.length} defaultOpen={false}>
+        <Section title="Other keys" count={unknownKeys.length} defaultOpen={false} reveal={revealFor(unknownKeys)}>
           {unknownKeys.map((key) => (
-            <FieldRow key={key} label={key} issue={issueFor(key)}>
-              <ComplexValue value={job[key]} disabled={disabled} onRemove={() => onChange(setKey(job, key, undefined))} />
+            <FieldRow key={key} jobKey={key} label={key} issue={issueFor(key)}>
+              <PlistTreeEditor name={key} value={job[key]} disabled={disabled} defaultType="string" onChange={(v) => onChange(setKey(job, key, v))} />
             </FieldRow>
           ))}
         </Section>
       )}
+
+      {!disabled && <AddKey job={job} onAdd={addKey} />}
 
       <p className="pt-3 text-[11px] text-gray-600">
         Every field shows its launchd key. Full reference: run <span className="font-mono">man launchd.plist</span> in Terminal.

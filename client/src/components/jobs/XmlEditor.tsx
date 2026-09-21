@@ -1,7 +1,8 @@
-import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { CaseSensitive, ChevronDown, ChevronUp, X } from "lucide-react";
 import { escapeXml } from "@shared/plist";
 import { cn } from "@/lib/utils";
+import { XML_COLOR_FALLBACKS, appearanceFrom, themeVariables, type Appearance, type EditorThemeId } from "./editorThemes";
 import {
   MAX_MATCHES,
   findMatches,
@@ -29,23 +30,55 @@ const barButton =
 
 // Both mirrors are filled with dangerouslySetInnerHTML. The rule for both: escape the whole text first,
 // then add constant markup only. No part of the document reaches the HTML parser unescaped.
+// Colours are CSS variables (editorThemes.ts). The container sets them, so a theme change needs no new HTML.
+const C = XML_COLOR_FALLBACKS;
 function highlight(xml: string): string {
   return escapeXml(xml)
-    .replace(/(&lt;!--[\s\S]*?--&gt;)/g, '<span style="color:#6b7280">$1</span>')
-    .replace(/(&lt;key&gt;)([^&]*)(&lt;\/key&gt;)/g, '$1<span style="color:#67e8f9">$2</span>$3')
-    .replace(/(&lt;(?:string|integer|real|date|data)&gt;)([^<]*?)(&lt;\/)/g, '$1<span style="color:#fcd34d">$2</span>$3')
-    .replace(/(&lt;\/?(?:[A-Za-z?]|!DOCTYPE)[^&]*?&gt;)/g, '<span style="color:#a78bfa">$1</span>');
+    .replace(/(&lt;!--[\s\S]*?--&gt;)/g, `<span style="color:${C.comment}">$1</span>`)
+    .replace(/(&lt;key&gt;)([^&]*)(&lt;\/key&gt;)/g, `$1<span style="color:${C.key}">$2</span>$3`)
+    .replace(/(&lt;(?:string|integer|real|date|data)&gt;)([^<]*?)(&lt;\/)/g, `$1<span style="color:${C.value}">$2</span>$3`)
+    .replace(/(&lt;\/?(?:[A-Za-z?]|!DOCTYPE)[^&]*?&gt;)/g, `<span style="color:${C.tag}">$1</span>`);
+}
+
+function readAppearance(): Appearance {
+  if (typeof document === "undefined") return "dark";
+  const root = document.documentElement;
+  let colorScheme: string | null = null;
+  try {
+    colorScheme = getComputedStyle(root).colorScheme;
+  } catch {
+    colorScheme = null;
+  }
+  return appearanceFrom({ dataTheme: root.getAttribute("data-theme"), classNames: [...root.classList], colorScheme });
+}
+
+/** Follows the theme of the app: the root element announces it through an attribute, a class or `color-scheme`. */
+function useAppAppearance(): Appearance {
+  const [appearance, setAppearance] = useState<Appearance>(readAppearance);
+  useEffect(() => {
+    if (typeof MutationObserver === "undefined") return;
+    const observer = new MutationObserver(() => setAppearance(readAppearance()));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
+    setAppearance(readAppearance());
+    return () => observer.disconnect();
+  }, []);
+  return appearance;
 }
 
 export function XmlEditor({
   value,
   onChange,
   readOnly,
+  theme,
 }: {
   value: string;
   onChange: (next: string) => void;
   readOnly?: boolean;
+  /** Syntax colour theme. The default theme is used when it is missing. */
+  theme?: EditorThemeId;
 }) {
+  const appearance = useAppAppearance();
+  const themeStyle = useMemo(() => themeVariables(theme, appearance) as CSSProperties, [theme, appearance]);
   const area = useRef<HTMLTextAreaElement>(null);
   const mirror = useRef<HTMLPreElement>(null);
   const matchLayer = useRef<HTMLPreElement>(null);
@@ -213,11 +246,14 @@ export function XmlEditor({
 
   return (
     <div
-      className="relative h-full min-h-[320px] rounded-xl bg-black/40 border border-white/[0.08] overflow-hidden"
+      data-editor-theme={theme ?? "default"}
+      data-appearance={appearance}
+      style={{ ...themeStyle, background: C.background }}
+      className="relative h-full min-h-[320px] rounded-xl border border-white/[0.08] overflow-hidden"
       onKeyDown={onContainerKeyDown}
     >
       <pre ref={matchLayer} aria-hidden className={`${LAYER} text-transparent pointer-events-none`} dangerouslySetInnerHTML={{ __html: matchHtml }} />
-      <pre ref={mirror} aria-hidden className={`${LAYER} text-gray-300 pointer-events-none`} dangerouslySetInnerHTML={{ __html: html }} />
+      <pre ref={mirror} aria-hidden style={{ color: C.text }} className={`${LAYER} pointer-events-none`} dangerouslySetInnerHTML={{ __html: html }} />
       <textarea
         ref={area}
         aria-label="Property list XML"
@@ -238,7 +274,8 @@ export function XmlEditor({
           onChange(value.slice(0, start) + "\t" + value.slice(end));
           requestAnimationFrame(() => el.setSelectionRange(start + 1, start + 1));
         }}
-        className={`${LAYER} w-full h-full resize-none bg-transparent text-transparent caret-white selection:bg-cyan-500/30 focus:outline-none`}
+        style={{ caretColor: C.caret }}
+        className={`${LAYER} w-full h-full resize-none bg-transparent text-transparent selection:bg-cyan-500/30 focus:outline-none`}
       />
 
       {findOpen && (

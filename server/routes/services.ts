@@ -3,6 +3,7 @@ import {
   SERVICE_ACTIONS,
   checkPaths,
   deleteJob,
+  errorMessage,
   getServiceDetail,
   listServices,
   manageService,
@@ -13,8 +14,9 @@ import {
   type ServiceAction,
 } from "../core/launchctl";
 import { clearJobEvents, getJobEvents, getMonitorSettings, setMonitorSettings } from "../core/job-monitor";
-import { buildScriptApp, getJobSignature, getPowerSchedule, setPowerSchedule } from "../core/job-tools";
+import { browsePath, buildScriptApp, getDefaultPath, getJobPlists, getJobSignature, getPowerSchedule, setPowerSchedule } from "../core/job-tools";
 import {
+  deleteHelperTool,
   deleteLoginItem,
   getAllJobMeta,
   getBackgroundItems,
@@ -23,6 +25,7 @@ import {
   listRevisions,
   listShortcuts,
   readRevision,
+  resetBackgroundItems,
   setJobMeta,
 } from "../core/job-extras";
 import { refreshServices } from "../ws/hub";
@@ -115,8 +118,12 @@ app.put("/meta", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const ref = jobRef(body);
   if (!ref) return fail(c, "label and category are required");
-  await setJobMeta(ref.label, ref.category, { notes: body.notes ?? "", tags: body.tags ?? [] });
-  return c.json({ ok: true });
+  try {
+    await setJobMeta(ref.label, ref.category, { notes: body.notes ?? "", tags: body.tags ?? [], icon: body.icon });
+    return c.json({ ok: true });
+  } catch (e) {
+    return fail(c, errorMessage(e));
+  }
 });
 
 app.get("/revisions", async (c) => {
@@ -131,6 +138,11 @@ app.get("/revision", async (c) => {
 });
 
 app.get("/extras", async (c) => c.json(await getStartupExtras()));
+
+app.delete("/helper-tool", async (c) => {
+  const result = await deleteHelperTool(c.req.query("name"), c.req.query("permanent") === "true");
+  return c.json(result, result.ok ? 200 : 400);
+});
 
 app.get("/login-items", async (c) => {
   const result = await getLoginItems();
@@ -157,6 +169,23 @@ app.get("/background-items", async (c) => {
   return error === null ? c.json({ items }) : c.json({ ok: false, error, items }, 400);
 });
 
+app.post("/background-items/reset", async (c) => {
+  const result = await resetBackgroundItems();
+  return c.json(result, result.ok ? 200 : 400);
+});
+
+app.get("/browse", async (c) => {
+  try {
+    return c.json(await browsePath(c.req.query("path")));
+  } catch (e) {
+    return fail(c, errorMessage(e));
+  }
+});
+
+app.get("/default-path", async (c) => c.json({ path: await getDefaultPath() }));
+
+app.get("/plists", async (c) => c.json({ plists: await getJobPlists() }));
+
 app.post("/build-app", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const result = await buildScriptApp(body?.scriptPath, body?.name);
@@ -178,7 +207,7 @@ app.put("/monitor-settings", async (c) => {
     await setMonitorSettings(await c.req.json().catch(() => null));
     return c.json({ ok: true });
   } catch (e) {
-    return fail(c, e instanceof Error ? e.message : String(e));
+    return fail(c, errorMessage(e));
   }
 });
 

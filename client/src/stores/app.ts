@@ -1,6 +1,23 @@
+import { useEffect } from "react";
 import { create } from "zustand";
 import type { JobCategory } from "@shared/launchd";
-import type { JobEvent } from "@/lib/backend";
+import { backend, type JobEvent, type JobMeta } from "@/lib/backend";
+import type { JobEditorTarget } from "@/components/jobs/JobEditor";
+import {
+  DEFAULT_SERVICES_ROUTE,
+  DEFAULT_TEMPLATE_ID,
+  formatRoute,
+  onLocationRouteChange,
+  pageIdOf,
+  readLocationRoute,
+  routeForPage,
+  sameRoute,
+  writeLocationRoute,
+  type EditorRoute,
+  type NavigateMode,
+  type Route,
+  type ServicesRoute,
+} from "@/lib/router";
 
 // System stats store
 interface SystemStats {
@@ -176,51 +193,183 @@ export const useLogsStore = create<LogsStore>((set, get) => ({
   clear: () => set({ entries: [] }),
 }));
 
-// Navigation store
+// Notes, tags and icons of the jobs, by `metaKey`. The Services page and the quick switcher share one copy.
+interface JobMetaStore {
+  meta: Record<string, JobMeta>;
+  /** Message of the last failed load. `meta` keeps the last good value. */
+  error: string | null;
+  loading: boolean;
+  load: () => Promise<void>;
+  setOne: (key: string, meta: JobMeta) => void;
+  removeOne: (key: string) => void;
+}
+
+export const useJobMetaStore = create<JobMetaStore>((set, get) => ({
+  meta: {},
+  error: null,
+  loading: false,
+  load: async () => {
+    if (get().loading) return;
+    set({ loading: true });
+    try {
+      set({ meta: await backend.getJobMeta(), error: null, loading: false });
+    } catch (e) {
+      set({ error: (e as Error).message || "The request failed.", loading: false });
+    }
+  },
+  setOne: (key, meta) => set((s) => ({ meta: { ...s.meta, [key]: meta } })),
+  removeOne: (key) => set((s) => ({ meta: Object.fromEntries(Object.entries(s.meta).filter(([k]) => k !== key)) })),
+}));
+
+// Every job's plist as JSON, for the smart folder rules over launchd keys.
+// The answer is large, so nothing asks for it until a folder needs it.
+
+export type JobPlists = Record<string, Record<string, unknown>>;
+
+/** A cached answer older than this is read again on the next request. */
+export const JOB_PLISTS_TTL_MS = 60_000;
+
+interface JobPlistsStore {
+  /** Null until the first answer. Keyed by `metaKey`. */
+  plists: JobPlists | null;
+  /** Message of the last failed load. `plists` keeps the last good value. */
+  error: string | null;
+  loading: boolean;
+  /** Time of the last attempt, successful or not. A failed attempt is not repeated before the TTL ends. */
+  attemptedAt: number;
+  /** Size of the job list at the last attempt. Another size means that a job came or went. */
+  serviceCount: number;
+  /** Load when there is no answer, when the answer is older than the TTL, or when the job list changed size. */
+  ensure: (serviceCount: number, options?: { force?: boolean }) => void;
+}
+
+export const useJobPlistsStore = create<JobPlistsStore>((set, get) => ({
+  plists: null,
+  error: null,
+  loading: false,
+  attemptedAt: 0,
+  serviceCount: -1,
+  ensure: (serviceCount, options) => {
+    const state = get();
+    if (state.loading) return;
+    const fresh = state.attemptedAt !== 0 && Date.now() - state.attemptedAt < JOB_PLISTS_TTL_MS && state.serviceCount === serviceCount;
+    if (fresh && !options?.force) return;
+    set({ loading: true, attemptedAt: Date.now(), serviceCount });
+    backend
+      .getJobPlists()
+      .then((plists) => set({ plists, error: null, loading: false }))
+      .catch((e: Error) => set({ error: e.message || "The request failed.", loading: false }));
+  },
+}));
+
+/**
+ * The plists of all jobs, loaded only while `needed` is true.
+ * `plists` is null while the first load runs and after a failed first load.
+ */
+export function useJobPlists(needed: boolean): { plists: JobPlists | null; loading: boolean; error: string | null; retry: () => void } {
+  const services = useServicesStore((s) => s.services);
+  const plists = useJobPlistsStore((s) => s.plists);
+  const loading = useJobPlistsStore((s) => s.loading);
+  const error = useJobPlistsStore((s) => s.error);
+  const ensure = useJobPlistsStore((s) => s.ensure);
+
+  // The job list arrives again every few seconds. `ensure` answers from the cache until the TTL ends.
+  useEffect(() => {
+    if (needed && services.length > 0) ensure(services.length);
+  }, [needed, services, ensure]);
+
+  return { plists: needed ? plists : null, loading: needed && loading, error: needed ? error : null, retry: () => ensure(services.length, { force: true }) };
+}
+
+// Navigation store. The URL hash is the source of truth (lib/router.ts): every change here goes to the
+// address bar, and Back, Forward and a typed hash come back through `onLocationRouteChange`.
 interface NavStore {
+  route: Route;
+  /** Page id of `route`: "dashboard", "services", … or "plugin:<id>". */
   currentPage: string;
   sidebarCollapsed: boolean;
+  /** `process` of the logs route. */
   logProcessFilter: string | null;
+  /** `pid` of the processes route. */
   targetProcessPid: number | null;
-  targetServiceLabel: string | null;
-  /** Narrows `targetServiceLabel` when the same label exists in more than one scope. */
-  targetServiceCategory: JobCategory | null;
-  /** Counts `navigateToService` calls. A consumer can tell two requests for the same label apart. */
-  navNonce: number;
+  /** An open editor whose target a URL cannot hold, e.g. a new job built from a dropped file. A reload does not restore it. */
+  transientEditor: JobEditorTarget | null;
+  /** "push" adds a Back step. "replace" is for filter changes and typing. */
+  navigate: (route: Route, mode?: NavigateMode) => void;
+  /** Change fields of the services route. From another page it starts at the default services route. */
+  patchServices: (fields: Partial<Omit<ServicesRoute, "page">>, mode?: NavigateMode) => void;
+  /** Open a page without parameters. Does nothing when the page is already shown. */
   setPage: (page: string) => void;
   toggleSidebar: () => void;
   navigateToLogs: (processName?: string) => void;
   navigateToProcess: (pid: number) => void;
+  /** Open the detail drawer of a job. Without a category the first job with the label opens. */
   navigateToService: (label: string, category?: JobCategory) => void;
-  /** The Services page calls this after it opened the requested job. */
-  clearServiceTarget: () => void;
+  /** Open the job editor on the Services page, from any page. The target goes to the URL when the URL can hold it. */
+  openEditor: (target: JobEditorTarget) => void;
+  closeEditor: () => void;
 }
 
-export const useNavStore = create<NavStore>((set) => ({
-  currentPage: "dashboard",
+/** The URL form of an editor target. Null for a target with data that is not in the route grammar. */
+function editorRouteOf(target: JobEditorTarget): EditorRoute | null {
+  if (target.mode !== "new") return { mode: target.mode, job: target.job };
+  const hasExtraData = Object.entries(target).some(([key, value]) => key !== "mode" && key !== "templateId" && value !== undefined);
+  return hasExtraData ? null : { mode: "new", templateId: target.templateId ?? DEFAULT_TEMPLATE_ID };
+}
+
+const routeFields = (route: Route) => ({
+  route,
+  currentPage: pageIdOf(route),
+  logProcessFilter: route.page === "logs" ? route.process : null,
+  targetProcessPid: route.page === "processes" ? route.pid : null,
+});
+
+export const useNavStore = create<NavStore>((set, get) => ({
+  ...routeFields(readLocationRoute()),
   sidebarCollapsed: false,
-  logProcessFilter: null,
-  targetProcessPid: null,
-  targetServiceLabel: null,
-  targetServiceCategory: null,
-  navNonce: 0,
-  setPage: (page) =>
-    set({ currentPage: page, logProcessFilter: null, targetProcessPid: null, targetServiceLabel: null, targetServiceCategory: null }),
+  transientEditor: null,
+  navigate: (route, mode = "push") => {
+    writeLocationRoute(route, mode);
+    if (sameRoute(route, get().route)) return;
+    // The transient editor belongs to the Services page.
+    set(route.page === "services" ? routeFields(route) : { ...routeFields(route), transientEditor: null });
+  },
+  patchServices: (fields, mode = "replace") => {
+    const current = get().route;
+    get().navigate({ ...(current.page === "services" ? current : DEFAULT_SERVICES_ROUTE), ...fields }, mode);
+  },
+  setPage: (page) => {
+    if (page !== get().currentPage) get().navigate(routeForPage(page));
+  },
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-  navigateToLogs: (processName) =>
-    set({ currentPage: "logs", logProcessFilter: processName || null }),
-  navigateToProcess: (pid) =>
-    set({ currentPage: "processes", targetProcessPid: pid, targetServiceLabel: null, targetServiceCategory: null }),
-  navigateToService: (label, category) =>
-    set((s) => ({
-      currentPage: "services",
-      targetServiceLabel: label,
-      targetServiceCategory: category ?? null,
-      targetProcessPid: null,
-      navNonce: s.navNonce + 1,
-    })),
-  clearServiceTarget: () => set({ targetServiceLabel: null, targetServiceCategory: null }),
+  navigateToLogs: (processName) => get().navigate({ page: "logs", process: processName || null }),
+  navigateToProcess: (pid) => get().navigate({ page: "processes", pid }),
+  // The filters of an open Services page stay. An open editor or panel would cover the drawer, so both close.
+  navigateToService: (label, category) => {
+    set({ transientEditor: null });
+    get().patchServices({ job: { label, category: category ?? null }, editor: null, panel: null }, "push");
+  },
+  openEditor: (target) => {
+    const editor = editorRouteOf(target);
+    get().patchServices({ editor }, "push");
+    set({ transientEditor: editor ? null : target });
+  },
+  closeEditor: () => {
+    const { route, transientEditor } = get();
+    if (transientEditor) set({ transientEditor: null });
+    if (route.page === "services" && route.editor) get().patchServices({ editor: null }, "push");
+  },
 }));
+
+if (typeof window !== "undefined") {
+  // A sloppy or unknown hash becomes the canonical one, so a copied link is always clean.
+  const initial = useNavStore.getState().route;
+  if (window.location.hash !== formatRoute(initial)) writeLocationRoute(initial, "replace", { immediate: true });
+  // Back, Forward or a typed hash. An editor that is not in the URL cannot be part of that state.
+  onLocationRouteChange((route) => {
+    if (!sameRoute(route, useNavStore.getState().route)) useNavStore.setState({ ...routeFields(route), transientEditor: null });
+  });
+}
 
 // Connection / update tracking store
 interface ConnectionStore {

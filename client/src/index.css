@@ -96,3 +96,83 @@
 .log-default {
   color: #9ca3af;
 }
+
+/* ── Light theme ─────────────────────────────────────────────────────
+   The components are written with dark-theme utilities (text-gray-200, bg-white/[0.04], text-cyan-400…).
+   Tailwind 4 resolves every colour through a CSS variable, so the light theme remaps the variables
+   instead of touching each component: the gray scale is mirrored, "white" becomes ink, and the
+   400/300 accent shades (made for dark backgrounds) become their 700/800 counterparts. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-bg-primary: #f3f5fa;
+  --color-bg-secondary: #ffffff;
+  --color-bg-card: #ffffff;
+  --color-bg-card-hover: #f1f5f9;
+  --color-border-subtle: rgba(15, 23, 42, 0.08);
+
+  --color-white: #0f172a;
+  --color-black: #ffffff;
+
+  --color-gray-50: #030712;
+  --color-gray-100: #111827;
+  --color-gray-200: #1f2937;
+  --color-gray-300: #374151;
+  --color-gray-400: #4b5563;
+  --color-gray-500: #5b6472;
+  --color-gray-600: #6b7280;
+  --color-gray-700: #d1d5db;
+  --color-gray-800: #e5e7eb;
+  --color-gray-900: #f3f4f6;
+  --color-gray-950: #f9fafb;
+
+  --color-cyan-200: #164e63;
+  --color-cyan-300: #155e75;
+  --color-cyan-400: #0e7490;
+  --color-cyan-500: #0891b2;
+  --color-cyan-950: #ecfeff;
+  --color-green-300: #166534;
+  --color-green-400: #15803d;
+  --color-green-500: #16a34a;
+  --color-red-100: #7f1d1d;
+  --color-red-200: #7f1d1d;
+  --color-red-300: #991b1b;
+  --color-red-400: #b91c1c;
+  --color-red-500: #dc2626;
+  --color-amber-200: #78350f;
+  --color-amber-300: #92400e;
+  --color-amber-400: #b45309;
+  --color-amber-500: #d97706;
+  --color-amber-950: #fffbeb;
+  --color-purple-300: #6b21a8;
+  --color-purple-400: #7e22ce;
+  --color-purple-500: #9333ea;
+  --color-yellow-400: #a16207;
+  --color-yellow-500: #ca8a04;
+
+  --xml-tag: #7e22ce;
+  --xml-key: #0e7490;
+  --xml-value: #b45309;
+  --xml-comment: #6b7280;
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.18);
+}
+:root[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.3);
+}
+:root[data-theme="light"] .glass {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.04);
+}
+:root[data-theme="light"] .glass-hover:hover {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.14);
+}
+:root[data-theme="light"] .log-error { color: #b91c1c; }
+:root[data-theme="light"] .log-warning { color: #b45309; }
+:root[data-theme="light"] .log-info { color: #0e7490; }
+:root[data-theme="light"] .log-debug { color: #6b7280; }
+:root[data-theme="light"] .log-default { color: #4b5563; }

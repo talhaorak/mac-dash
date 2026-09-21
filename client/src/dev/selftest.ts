@@ -145,6 +145,10 @@ const JOB_SIGNATURE: Shape = {
   error: "string?",
 };
 
+const BROWSE_RESULT: Shape = { path: "string", parent: "string?", entries: "array", truncated: "boolean" };
+
+const BROWSE_ENTRY: Shape = { name: "string", isDirectory: "boolean", isApp: "boolean", executable: "boolean", hidden: "boolean" };
+
 const BACKGROUND_ITEM: Shape = {
   uid: "number",
   name: "string",
@@ -304,6 +308,8 @@ export async function runSelfTest(): Promise<SelfTestReport> {
     const meta = await backend.getJobMeta();
     check(isObject(meta), `expected an object, got ${show(meta)}`);
     expectEach(Object.values(meta), { notes: "string", tags: "string[]" }, "meta");
+    const badIcon = Object.values(meta).find((m) => m.icon !== undefined && typeof m.icon !== "string");
+    check(!badIcon, `icon must be a string or missing: ${show(badIcon)}`);
   });
 
   await step("getJobEvents", async () => {
@@ -350,6 +356,53 @@ export async function runSelfTest(): Promise<SelfTestReport> {
     check(facts.length === 2 && sh && nope, `expected facts for both paths, got ${show(facts)}`);
     check(sh.exists && sh.isFile && sh.executable && !sh.isDirectory, `/bin/sh: ${show(sh)}`);
     check(!nope.exists && !nope.isFile && !nope.isDirectory && !nope.executable, `/nope: ${show(nope)}`);
+  });
+
+  await step('browsePath("") lists the home folder', async () => {
+    const home = await backend.browsePath("");
+    expectShape(home, BROWSE_RESULT, "result");
+    expectEach(home.entries, BROWSE_ENTRY, "entries");
+    check(home.path.startsWith("/") && home.path !== "/", `the home folder must be an absolute path, got ${show(home.path)}`);
+    check(typeof home.parent === "string" && home.path.startsWith(home.parent), `parent is ${show(home.parent)}`);
+    const library = home.entries.find((e) => e.name === "Library");
+    check(library && library.isDirectory && !library.isApp, `no "Library" folder in ${show(home.path)}`);
+    const firstFile = home.entries.findIndex((e) => !e.isDirectory);
+    check(firstFile === -1 || home.entries.slice(firstFile).every((e) => !e.isDirectory), "folders must come before files");
+    const wrongHidden = home.entries.find((e) => e.hidden !== e.name.startsWith("."));
+    check(!wrongHidden, `hidden must mean "the name starts with a dot": ${show(wrongHidden)}`);
+    return `${home.path}, ${home.entries.length} entries`;
+  });
+
+  await step('browsePath("/bin") flags /bin/sh as executable', async () => {
+    const bin = await backend.browsePath("/bin");
+    expectShape(bin, BROWSE_RESULT, "result");
+    expectEach(bin.entries, BROWSE_ENTRY, "entries");
+    check(bin.path === "/bin" && bin.parent === "/", `path and parent are ${show(bin.path)} and ${show(bin.parent)}`);
+    check(!bin.truncated, "/bin has fewer than 1000 entries: truncated must be false");
+    const sh = bin.entries.find((e) => e.name === "sh");
+    check(sh && sh.executable && !sh.isDirectory && !sh.isApp && !sh.hidden, `/bin/sh: ${show(sh)}`);
+    return `${bin.entries.length} entries`;
+  });
+
+  await step("getDefaultPath", async () => {
+    const path = await backend.getDefaultPath();
+    check(typeof path === "string", `expected a string, got ${show(path)}`);
+    const dirs = path.split(":");
+    check(dirs.includes("/usr/bin"), `the PATH has no /usr/bin: ${show(path)}`);
+    check(dirs.every((d) => d.startsWith("/")) && new Set(dirs).size === dirs.length, `empty, relative or duplicate entries: ${show(path)}`);
+    return path;
+  });
+
+  await step("getJobPlists", async () => {
+    const plists = await backend.getJobPlists();
+    check(isObject(plists), `expected an object, got ${show(plists)}`);
+    const keys = Object.keys(plists);
+    check(keys.length > 100, `expected more than 100 plists, got ${keys.length}`);
+    const badKey = keys.find((k) => !CATEGORIES.includes(k.slice(0, k.indexOf("/"))));
+    check(!badKey, `keys must be "<category>/<label>": ${show(badKey)}`);
+    const notDict = keys.find((k) => !isObject(plists[k]));
+    check(!notDict, `every plist must be an object: ${show(notDict)}`);
+    return `${keys.length} plists`;
   });
 
   // ── Job lifecycle, user scope only ─────────────────────────────────
@@ -409,12 +462,27 @@ export async function runSelfTest(): Promise<SelfTestReport> {
       check(Array.isArray(parsed.ProgramArguments) && parsed.ProgramArguments[0] === "/usr/bin/true", "ProgramArguments did not survive");
     });
 
-    await step("setJobMeta / getJobMeta round trip", async () => {
+    await step("getJobPlists has the test job", async () => {
       needsJob();
-      const meta = { notes: "written by the mac-dash self-test", tags: ["selftest", "temporary"] };
+      const entry = (await backend.getJobPlists())[metaKey(ref)];
+      check(isObject(entry), `no plist under ${show(metaKey(ref))}`);
+      check(entry.Label === label, `Label is ${show(entry.Label)}`);
+      check(Array.isArray(entry.ProgramArguments) && entry.ProgramArguments[0] === "/usr/bin/true", `ProgramArguments is ${show(entry.ProgramArguments)}`);
+    });
+
+    await step("setJobMeta / getJobMeta round trip, with an emoji icon", async () => {
+      needsJob();
+      const meta = { notes: "written by the mac-dash self-test", tags: ["selftest", "temporary"], icon: "🚀" };
       await backend.setJobMeta(testJob(), meta);
       const stored = (await backend.getJobMeta())[metaKey(ref)];
       check(stored && stored.notes === meta.notes && JSON.stringify(stored.tags) === JSON.stringify(meta.tags), `stored meta is ${show(stored)}`);
+      check(stored.icon === meta.icon, `stored icon is ${show(stored.icon)}`);
+
+      // Saving without an icon removes it. Notes and tags stay.
+      await backend.setJobMeta(testJob(), { notes: meta.notes, tags: meta.tags });
+      const withoutIcon = (await backend.getJobMeta())[metaKey(ref)];
+      check(withoutIcon && withoutIcon.notes === meta.notes && !withoutIcon.icon, `after the icon was removed: ${show(withoutIcon)}`);
+      await backend.setJobMeta(testJob(), meta);
     });
 
     await step("saveJob (save only) with StartInterval", async () => {

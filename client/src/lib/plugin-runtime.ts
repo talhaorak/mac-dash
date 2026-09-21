@@ -16,6 +16,7 @@ import * as FramerMotion from "framer-motion";
 import * as GlowCardModule from "@/components/ui/GlowCard";
 import * as ApiModule from "@/lib/api";
 import * as UtilsModule from "@/lib/utils";
+import { authHeaders } from "@/lib/auth";
 
 export type PluginModule = {
   default: React.ComponentType<any>;
@@ -92,9 +93,8 @@ export function loadPluginModule(pluginId: string): Promise<PluginModule> {
 }
 
 async function fetchPluginModule(pluginId: string): Promise<PluginModule> {
-  const res = await fetch(
-    `/api/plugins/${encodeURIComponent(pluginId)}/client.js`
-  );
+  // Fetched (not imported by URL) so the access token of a network-facing server can travel in a header.
+  const res = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/client.js`, { headers: authHeaders() });
   if (!res.ok) {
     throw new Error(
       `Failed to load plugin "${pluginId}" client: ${res.status} ${res.statusText}`

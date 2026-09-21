@@ -1,6 +1,21 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "fs/promises";
+import { homedir, tmpdir } from "os";
+import { join } from "path";
+import { parsePlistDict } from "../../shared/plist";
 import { JobError } from "./launchctl";
-import { appleScriptString, checkScriptAppRequest, parseCodesign, parsePmsetSched, pmsetRepeatArgs } from "./job-tools";
+import {
+  appleScriptString,
+  browsePath,
+  buildDefaultPath,
+  checkBrowsePath,
+  checkScriptAppRequest,
+  parseCodesign,
+  parsePmsetSched,
+  plistToJson,
+  pmsetRepeatArgs,
+  sortBrowseEntries,
+} from "./job-tools";
 
 describe("parseCodesign", () => {
   test("reads a Developer ID signature", () => {
@@ -187,5 +202,133 @@ describe("pmsetRepeatArgs", () => {
       ["sleep"],
     ];
     for (const events of bad) expect(() => pmsetRepeatArgs(events)).toThrow(JobError);
+  });
+});
+
+describe("browsePath", () => {
+  const dirs: string[] = [];
+  afterAll(async () => {
+    for (const dir of dirs) await rm(dir, { recursive: true, force: true });
+  });
+  const tempDir = async () => {
+    const dir = await mkdtemp(join(tmpdir(), "macdash-browse-"));
+    dirs.push(dir);
+    return dir;
+  };
+
+  test("an empty path is the home folder, a relative path is refused, `..` is resolved", () => {
+    for (const empty of ["", undefined, null]) expect(checkBrowsePath(empty)).toBe(homedir());
+    expect(checkBrowsePath("/usr/local/../bin/")).toBe("/usr/bin");
+    expect(checkBrowsePath("/../..")).toBe("/");
+    for (const bad of ["bin", "~/Library", "./x", "/tmp/\u0000x", 7, {}]) expect(() => checkBrowsePath(bad)).toThrow(JobError);
+  });
+
+  test("sorts directories first, then by name without case", () => {
+    const entry = (name: string, isDirectory = false) => ({ name, isDirectory });
+    const sorted = sortBrowseEntries([entry("b.sh"), entry("Zeta", true), entry("A.txt"), entry("alpha", true), entry("a.txt"), entry(".git", true)]);
+    expect(sorted.map((e) => e.name)).toEqual([".git", "alpha", "Zeta", "A.txt", "a.txt", "b.sh"]);
+  });
+
+  test("lists names and flags", async () => {
+    const dir = await tempDir();
+    await mkdir(join(dir, "Tool.app"));
+    await mkdir(join(dir, "scripts"));
+    await writeFile(join(dir, "run.sh"), "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(join(dir, "notes.txt"), "x", { mode: 0o644 });
+    await writeFile(join(dir, ".hidden"), "x");
+    await symlink(join(dir, "scripts"), join(dir, "link-to-scripts"));
+    await symlink(join(dir, "missing"), join(dir, "dangling"));
+
+    const result = await browsePath(`${dir}/scripts/..`);
+    expect(result.path).toBe(dir);
+    expect(result.parent).toBe(join(dir, ".."));
+    expect(result.truncated).toBe(false);
+    expect(result.entries).toEqual([
+      { name: "link-to-scripts", isDirectory: true, isApp: false, executable: false, hidden: false },
+      { name: "scripts", isDirectory: true, isApp: false, executable: false, hidden: false },
+      { name: "Tool.app", isDirectory: true, isApp: true, executable: false, hidden: false },
+      { name: ".hidden", isDirectory: false, isApp: false, executable: false, hidden: true },
+      { name: "dangling", isDirectory: false, isApp: false, executable: false, hidden: false },
+      { name: "notes.txt", isDirectory: false, isApp: false, executable: false, hidden: false },
+      { name: "run.sh", isDirectory: false, isApp: false, executable: true, hidden: false },
+    ]);
+  });
+
+  test("the root folder has no parent", async () => {
+    const root = await browsePath("/");
+    expect(root.path).toBe("/");
+    expect(root.parent).toBeNull();
+    expect(root.entries.find((e) => e.name === "usr")).toMatchObject({ isDirectory: true });
+  });
+
+  test("returns at most 1000 entries and says so", async () => {
+    const dir = await tempDir();
+    await mkdir(join(dir, "zz-folder"));
+    await Promise.all(Array.from({ length: 1005 }, (_, i) => writeFile(join(dir, `f${String(i).padStart(4, "0")}`), "")));
+    const result = await browsePath(dir);
+    expect(result.entries).toHaveLength(1000);
+    expect(result.truncated).toBe(true);
+    expect(result.entries[0].name).toBe("zz-folder"); // sorted before the cut
+    expect(result.entries[999].name).toBe("f0998");
+  });
+
+  test("a folder that cannot be read gives the error of the contract", async () => {
+    const dir = await tempDir();
+    const locked = join(dir, "locked");
+    await mkdir(locked, { mode: 0o000 });
+    try {
+      for (const path of [locked, join(dir, "missing"), "/etc/hosts"]) {
+        await expect(browsePath(path)).rejects.toThrow("Cannot read this folder.");
+      }
+      await expect(browsePath(locked)).rejects.toBeInstanceOf(JobError);
+    } finally {
+      await chmod(locked, 0o700);
+    }
+  });
+});
+
+describe("buildDefaultPath", () => {
+  test("joins /etc/paths, /etc/paths.d and the Homebrew folders without duplicates and empty lines", () => {
+    const paths = "/usr/local/bin\n/System/Cryptexes/App/usr/bin\n/usr/bin\n/bin\n/usr/sbin\n/sbin\n";
+    const pathsD = ["/Library/Apple/usr/bin\n", "\n  /opt/X11/bin  \n\n/usr/bin\n", ""];
+    expect(buildDefaultPath(paths, pathsD)).toBe(
+      "/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/Apple/usr/bin:/opt/X11/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin"
+    );
+  });
+
+  test("missing files still give the Homebrew folders", () => {
+    expect(buildDefaultPath("", [])).toBe("/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin");
+  });
+});
+
+describe("plistToJson", () => {
+  test("converts date, data and real at every depth and leaves the rest alone", () => {
+    const job = parsePlistDict(`<plist version="1.0"><dict>
+      <key>Label</key><string>com.example.job</string>
+      <key>RunAtLoad</key><true/>
+      <key>StartInterval</key><integer>300</integer>
+      <key>Nice</key><real>1.5</real>
+      <key>Whole</key><real>2</real>
+      <key>Since</key><date>2026-01-02T03:04:05Z</date>
+      <key>Blob</key><data>aGVs
+        bG8=</data>
+      <key>ProgramArguments</key><array><string>/bin/sh</string><real>0.25</real><dict><key>At</key><date>2020-02-29T00:00:00Z</date></dict></array>
+      <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/><key>Seed</key><data>AA==</data></dict>
+      <key>Empty</key><dict/>
+    </dict></plist>`);
+    const json = plistToJson(job);
+    expect(json).toEqual({
+      Label: "com.example.job",
+      RunAtLoad: true,
+      StartInterval: 300,
+      Nice: 1.5,
+      Whole: 2,
+      Since: "2026-01-02T03:04:05.000Z",
+      Blob: "aGVsbG8=",
+      ProgramArguments: ["/bin/sh", 0.25, { At: "2020-02-29T00:00:00.000Z" }],
+      KeepAlive: { SuccessfulExit: false, Seed: "AA==" },
+      Empty: {},
+    });
+    expect(JSON.parse(JSON.stringify(json))).toEqual(json);
   });
 });

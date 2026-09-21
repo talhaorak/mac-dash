@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, History, Info, Loader2, X, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, History, Info, Loader2, Redo2, RotateCcw, Undo2, X, XCircle } from "lucide-react";
+import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { Dialog } from "@/components/ui/Dialog";
 import { toast } from "@/components/ui/Toast";
 import { backend, type JobRef, type JobRevision } from "@/lib/backend";
@@ -16,13 +17,33 @@ import {
   type PathFacts,
 } from "@shared/launchd";
 import { PlistParseError, parsePlistDict, serializePlist, type PlistDict } from "@shared/plist";
-import { JobForm, setKey } from "./JobForm";
+import { JobForm, fetchDefaultPath, needsAutoPath, readAutoPath, setKey, withAutoPath, writeAutoPath } from "./JobForm";
 import { XmlEditor } from "./XmlEditor";
 import { DRAFT_DEBOUNCE_MS, browserStorage, clearDraft, jobDraftKey, readDraft, writeDraft, type JobDraft } from "./drafts";
+import {
+  canRedo,
+  canUndo,
+  createHistory,
+  historyShortcut,
+  isTextEntry,
+  recordEdit,
+  redo,
+  sealHistory,
+  undo,
+  type EditorHistory,
+  type EditorSnapshot,
+} from "./editorHistory";
+import { EDITOR_THEMES, readEditorTheme, writeEditorTheme, type EditorThemeId } from "./editorThemes";
 import { inputClass } from "./fields";
 
 export type JobEditorTarget =
-  | { mode: "new"; templateId?: string; category?: JobCategory }
+  | {
+      mode: "new";
+      templateId?: string;
+      category?: JobCategory;
+      /** A prepared job (a dropped file, an import). It replaces the template. A missing Label is filled in. */
+      initialJob?: PlistDict;
+    }
   | { mode: "edit"; job: JobRef }
   | { mode: "duplicate"; job: JobRef };
 
@@ -56,8 +77,13 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
   // A new job starts from its template right away, so the form mounts with the real values.
   const [fresh] = useState<PlistDict | null>(() => {
     if (target.mode !== "new") return null;
+    const taken = new Set(services.map((s) => s.label));
+    if (target.initialJob) {
+      const hasLabel = typeof target.initialJob.Label === "string" && target.initialJob.Label !== "";
+      return hasLabel ? { ...target.initialJob } : { Label: uniqueLabel("com.example.my-job", taken), ...target.initialJob };
+    }
     const template = JOB_TEMPLATES.find((t) => t.id === target.templateId) ?? JOB_TEMPLATES[0];
-    return template.build(uniqueLabel("com.example.my-job", new Set(services.map((s) => s.label))));
+    return template.build(uniqueLabel("com.example.my-job", taken));
   });
 
   const [loading, setLoading] = useState(target.mode !== "new");
@@ -72,16 +98,27 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
   const [readOnly, setReadOnly] = useState(false);
   const [pathFacts, setPathFacts] = useState<PathFacts[]>([]);
   const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(target.mode === "new");
-  /** The user changed something. A new job is dirty from the start, but there is nothing to keep as a draft yet. */
-  const [edited, setEdited] = useState(false);
   const [revisions, setRevisions] = useState<JobRevision[] | null>(null);
   /** Expert edits keep the user's exact text (comments, order). Form edits regenerate it. */
   const xmlIsSource = useRef(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // ── History ────────────────────────────────────────────────────────
+  // `baseline` is the state the editor opened with: the file on disk, the template, or the copy.
+  const [baseline, setBaseline] = useState<EditorSnapshot | null>(() => (fresh ? { xml, category } : null));
+  const [history, setHistory] = useState<EditorHistory>(() => createHistory({ xml, category }));
+  /** The user changed something. A new job is dirty from the start, but there is nothing to keep as a draft yet. */
+  const edited = baseline !== null && (xml !== baseline.xml || category !== baseline.category);
+  const dirty = baseline !== null && (target.mode !== "edit" || edited);
+  /** True after the first change in this session. Until then a stored draft is left alone. */
+  const touched = useRef(false);
+
+  const [storage] = useState(browserStorage);
+  const [themeId, setThemeId] = useState<EditorThemeId>(() => readEditorTheme(storage));
+  const [autoPath, setAutoPath] = useState(() => readAutoPath(storage));
 
   // ── Draft ──────────────────────────────────────────────────────────
   // Unsaved work is kept in localStorage: it survives Escape, Cancel and a page reload.
-  const [storage] = useState(browserStorage);
   const draftKey = jobDraftKey(target);
   /** A stored draft the user has not restored or discarded yet. It is never overwritten while it waits. */
   const [pendingDraft, setPendingDraft] = useState<JobDraft | null>(null);
@@ -116,6 +153,11 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
     return () => clearTimeout(timer);
   }, [xml, category, draftEnabled, flushDraft]);
 
+  // Undo or "Discard changes" brought the editor back to the opened state: the stored draft is out of date.
+  useEffect(() => {
+    if (touched.current && !edited && !readOnly && pendingDraft === null) clearDraft(storage, draftKey);
+  }, [edited, readOnly, pendingDraft, storage, draftKey]);
+
   // Do not lose the last 800 ms when the page reloads or the dialog closes.
   useEffect(() => {
     window.addEventListener("pagehide", flushDraft);
@@ -143,13 +185,19 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
           parseError = e as Error;
         }
 
+        const opened = (snapshot: EditorSnapshot) => {
+          setBaseline(snapshot);
+          setHistory(createHistory(snapshot));
+        };
+
         if (target.mode === "duplicate") {
           const copy = setKey(parsed, "Label", uniqueLabel(`${doc.label}.copy`, taken));
-          setCategory(doc.writable ? doc.category : "user-agents");
+          const copyCategory = doc.writable ? doc.category : "user-agents";
+          setCategory(copyCategory);
           setJob(copy);
           setXml(serializePlist(copy));
-          setDirty(true);
-          offerDraft(serializePlist(copy), doc.writable ? doc.category : "user-agents");
+          opened({ xml: serializePlist(copy), category: copyCategory });
+          offerDraft(serializePlist(copy), copyCategory);
         } else {
           setCategory(doc.category);
           setJob(parsed);
@@ -157,6 +205,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
           setOriginal({ label: doc.label, category: doc.category });
           setFileName(doc.fileName);
           setReadOnly(!doc.writable);
+          opened({ xml: doc.xml, category: doc.category });
           xmlIsSource.current = true;
           if (parseError) {
             setXmlError(parseError);
@@ -175,21 +224,29 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
   }, []);
 
   // ── Edits ──────────────────────────────────────────────────────────
-  const editForm = (next: PlistDict) => {
-    setJob(next);
-    setXml(serializePlist(next));
-    setXmlError(null);
-    xmlIsSource.current = false;
-    setDirty(true);
-    setEdited(true);
+  /**
+   * Every change goes into the undo history. Typing merges into one step (editorHistory.ts).
+   * A `discrete` action (restore a draft, load a revision, discard) is always a step of its own.
+   */
+  const record = (snapshot: EditorSnapshot, discrete = false) => {
+    const now = Date.now();
+    touched.current = true;
+    setHistory((h) => (discrete ? sealHistory(recordEdit(sealHistory(h), snapshot, now)) : recordEdit(h, snapshot, now)));
   };
 
-  /** Returns false when the text is not a valid property list. */
-  const editXml = (text: string): boolean => {
+  const editForm = (next: PlistDict) => {
+    const text = serializePlist(next);
+    setJob(next);
+    setXml(text);
+    setXmlError(null);
+    xmlIsSource.current = false;
+    record({ xml: text, category });
+  };
+
+  /** Show `text` as the document. Returns false when it is not a valid property list. */
+  const showXml = (text: string): boolean => {
     setXml(text);
     xmlIsSource.current = true;
-    setDirty(true);
-    setEdited(true);
     try {
       setJob(parsePlistDict(text));
       setXmlError(null);
@@ -200,11 +257,63 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
     }
   };
 
+  /** Returns false when the text is not a valid property list. */
+  const editXml = (text: string, options: { category?: JobCategory; discrete?: boolean } = {}): boolean => {
+    record({ xml: text, category: options.category ?? category }, options.discrete);
+    return showXml(text);
+  };
+
+  const editCategory = (next: JobCategory) => {
+    setCategory(next);
+    record({ xml, category: next }, true);
+  };
+
+  /** Undo, redo and discard: put a snapshot on screen. An XML error can only be fixed in Expert mode. */
+  const showSnapshot = (snapshot: EditorSnapshot) => {
+    setCategory(snapshot.category);
+    if (!showXml(snapshot.xml) && tab === "form") setTab("expert");
+  };
+
+  const stepHistory = (direction: "undo" | "redo") => {
+    if (readOnly || loading) return;
+    const next = direction === "undo" ? undo(history) : redo(history);
+    if (next === history) return;
+    touched.current = true;
+    setHistory(next);
+    showSnapshot(next.present);
+  };
+
+  const discardChanges = () => {
+    if (!baseline || !edited || readOnly) return;
+    record(baseline, true);
+    showSnapshot(baseline);
+    toast.info("Changes discarded. Undo brings them back.");
+  };
+
+  // Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z. A text field keeps its own undo, so the shortcut works everywhere else in the editor.
+  const stepRef = useRef(stepHistory);
+  stepRef.current = stepHistory;
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const action = historyShortcut(e);
+      if (!action || e.defaultPrevented) return;
+      // Only inside this dialog: a dialog on top of it (the file browser) is outside the panel.
+      const panel = rootRef.current?.closest('[role="dialog"]');
+      const el = e.target instanceof HTMLElement ? e.target : null;
+      if (!panel || !el || !panel.contains(el)) return;
+      if (isTextEntry({ tagName: el.tagName, type: el.getAttribute("type"), isContentEditable: el.isContentEditable })) return;
+      e.preventDefault();
+      stepRef.current(action);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   const restoreDraft = () => {
     if (!pendingDraft) return;
     setCategory(pendingDraft.category);
     // A draft with an XML error can only be fixed in Expert mode.
-    if (!editXml(pendingDraft.xml) || tab === "revisions") setTab("expert");
+    if (!editXml(pendingDraft.xml, { category: pendingDraft.category, discrete: true }) || tab === "revisions") setTab("expert");
     setPendingDraft(null);
     toast.info("Draft restored. Save to apply it.");
   };
@@ -249,13 +358,11 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
     if (blocked || saving || readOnly) return;
     setSaving(true);
     try {
-      const result = await backend.saveJob({
-        category,
-        xml: xmlIsSource.current ? xml : serializePlist(job),
-        original,
-        load,
-      });
-      toast.success(load ? `Saved and loaded ${result.label}` : `Saved ${result.label} without loading`);
+      // Lingon adds a PATH to a new job that has none. An existing job is never changed silently.
+      const addPath = target.mode !== "edit" && autoPath && needsAutoPath(job);
+      const body = addPath ? serializePlist(withAutoPath(job, await fetchDefaultPath())) : xmlIsSource.current ? xml : serializePlist(job);
+      const result = await backend.saveJob({ category, xml: body, original, load });
+      toast.success(`${load ? `Saved and loaded ${result.label}` : `Saved ${result.label} without loading`}${addPath ? ". PATH was added." : ""}`);
       dropDraft();
       onClose();
     } catch (e) {
@@ -279,7 +386,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
 
   const restoreRevision = async (rev: JobRevision) => {
     try {
-      editXml(await backend.readJobRevision(rev.id));
+      editXml(await backend.readJobRevision(rev.id), { discrete: true });
       setTab("expert");
       toast.info("Revision loaded into the editor. Save to apply it.");
     } catch (e) {
@@ -303,8 +410,12 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
   const title =
     target.mode === "new" ? "New job" : target.mode === "duplicate" ? "Duplicate job" : readOnly ? "View job" : "Edit job";
 
+  const headerButton =
+    "inline-flex items-center gap-1 p-2 rounded-lg text-xs text-gray-400 hover:text-gray-200 hover:bg-white/[0.06] " +
+    "focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-gray-400";
+
   return (
-    <>
+    <div ref={rootRef} className="contents">
       {/* Header */}
       <div className="flex items-start gap-4 px-6 pt-5 pb-4 border-b border-white/[0.06]">
         <div className="flex-1 min-w-0 space-y-3">
@@ -328,11 +439,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
               <select
                 value={category}
                 disabled={readOnly || loading}
-                onChange={(e) => {
-                  setCategory(e.target.value as JobCategory);
-                  setDirty(true);
-                  setEdited(true);
-                }}
+                onChange={(e) => editCategory(e.target.value as JobCategory)}
                 className={inputClass}
               >
                 {(readOnly ? JOB_SCOPES : WRITABLE_SCOPES).map((s) => (
@@ -348,9 +455,48 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
             {scope.needsAdmin && !readOnly ? ". Saving asks for an administrator password." : ""}
           </p>
         </div>
-        <button type="button" aria-label="Close editor" onClick={requestClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400">
-          <X className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-0.5">
+          {!readOnly && (
+            <div role="group" aria-label="History" className="flex items-center gap-0.5 mr-2">
+              <button
+                type="button"
+                aria-label="Undo"
+                aria-keyshortcuts="Meta+Z Control+Z"
+                title="Undo (Cmd+Z). Inside a text field, Cmd+Z undoes the typing in that field."
+                disabled={loading || !canUndo(history)}
+                onClick={() => stepHistory("undo")}
+                className={headerButton}
+              >
+                <Undo2 className="w-4 h-4" aria-hidden />
+              </button>
+              <button
+                type="button"
+                aria-label="Redo"
+                aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z"
+                title="Redo (Shift+Cmd+Z)"
+                disabled={loading || !canRedo(history)}
+                onClick={() => stepHistory("redo")}
+                className={headerButton}
+              >
+                <Redo2 className="w-4 h-4" aria-hidden />
+              </button>
+              <ConfirmButton
+                onConfirm={discardChanges}
+                disabled={loading || !edited}
+                confirmLabel="Click again to discard"
+                title={target.mode === "edit" ? "Go back to the job as it is on disk" : "Go back to the job as the editor opened it"}
+                className={headerButton}
+                armedClassName="bg-red-500/25! text-red-200!"
+              >
+                <RotateCcw className="w-3.5 h-3.5" aria-hidden />
+                Discard changes
+              </ConfirmButton>
+            </div>
+          )}
+          <button type="button" aria-label="Close editor" onClick={requestClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -414,7 +560,27 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
             <JobForm job={job} onChange={editForm} category={category} issues={issues} disabled={readOnly} />
           ) : tab === "expert" ? (
             <div className="h-full flex flex-col gap-2">
-              <XmlEditor value={xml} onChange={editXml} readOnly={readOnly} />
+              <div className="flex items-center justify-end gap-2">
+                <label className="flex items-center gap-2 text-[11px] text-gray-500">
+                  Colours
+                  <select
+                    value={themeId}
+                    onChange={(e) => {
+                      const next = e.target.value as EditorThemeId;
+                      setThemeId(next);
+                      writeEditorTheme(storage, next);
+                    }}
+                    className={cn(inputClass, "w-40 py-1 text-xs")}
+                  >
+                    {EDITOR_THEMES.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <XmlEditor value={xml} onChange={(text) => editXml(text)} readOnly={readOnly} theme={themeId} />
               {xmlError && (
                 <p role="alert" className="text-xs text-red-400 font-mono">
                   {xmlError.message}
@@ -474,6 +640,23 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
         ) : counts.error > 0 ? (
           <p className="text-xs text-amber-400">There are errors. You can still save.</p>
         ) : null}
+        {!readOnly && target.mode !== "edit" && (
+          <label
+            className="flex items-center gap-1.5 text-xs text-gray-400"
+            title="When the job sets no PATH, the default PATH of this Mac is added to EnvironmentVariables before the save. launchd's own PATH is /usr/bin:/bin:/usr/sbin:/sbin. Only new and duplicated jobs."
+          >
+            <input
+              type="checkbox"
+              checked={autoPath}
+              onChange={(e) => {
+                setAutoPath(e.target.checked);
+                writeAutoPath(storage, e.target.checked);
+              }}
+              className="h-3.5 w-3.5 rounded accent-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
+            />
+            Add PATH automatically
+          </label>
+        )}
         <div className="ml-auto flex gap-2">
           <button type="button" onClick={requestClose} className="px-3 py-2 rounded-xl text-sm text-gray-400 hover:bg-white/[0.06]">
             {readOnly ? "Close" : "Cancel"}
@@ -502,7 +685,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
           )}
         </div>
       </div>
-    </>
+    </div>
   );
 }
 

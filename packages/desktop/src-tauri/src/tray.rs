@@ -34,12 +34,12 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     tray.on_menu_event(|app, event| match event.id().as_ref() {
         // Closing the window only hides it, so this is the way out besides the app menu.
         "quit" => app.exit(0),
-        "show" => crate::show_main_window(app),
+        "show" => crate::windows::show_dashboard(app),
         _ => {}
     });
     tray.on_tray_icon_event(|tray, event| {
         if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-            crate::show_main_window(tray.app_handle());
+            crate::windows::show_dashboard(tray.app_handle());
         }
     });
 

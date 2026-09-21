@@ -29,16 +29,22 @@ export type RuleField =
   | "unreadable"
   | "quarantined"
   | "writable"
-  | "lastExitStatus";
+  | "lastExitStatus"
+  | "launchdKey";
 
-export type RuleOperator = "is" | "isNot" | "contains" | "notContains" | "startsWith" | "eq" | "neq";
+export type RuleOperator = "is" | "isNot" | "contains" | "notContains" | "startsWith" | "eq" | "neq" | "exists" | "notExists";
 
 export interface SmartRule {
   field: RuleField;
   operator: RuleOperator;
-  /** Text, an enum value, "true" / "false", or a number as text. */
+  /** Text, an enum value, "true" / "false", or a number as text. Empty for "exists" and "does not exist". */
   value: string;
+  /** Only for the "launchdKey" field: the plist key, e.g. "RunAtLoad" or "KeepAlive.SuccessfulExit". */
+  key?: string;
 }
+
+/** The plist of one job as JSON, as `backend.getJobPlists()` delivers it. */
+export type JobPlist = Record<string, unknown>;
 
 export interface SmartFolder {
   id: string;
@@ -49,7 +55,7 @@ export interface SmartFolder {
   builtin?: boolean;
 }
 
-export type FieldKind = "text" | "enum" | "boolean" | "number";
+export type FieldKind = "text" | "enum" | "boolean" | "number" | "plist";
 
 export interface FieldSpec {
   field: RuleField;
@@ -104,6 +110,7 @@ export const RULE_FIELDS: FieldSpec[] = [
   { field: "quarantined", title: "Quarantined", kind: "boolean" },
   { field: "writable", title: "Writable", kind: "boolean" },
   { field: "lastExitStatus", title: "Last exit status", kind: "number" },
+  { field: "launchdKey", title: "launchd key", kind: "plist" },
 ];
 
 const FIELD_SPEC = new Map(RULE_FIELDS.map((f) => [f.field, f]));
@@ -120,6 +127,8 @@ export const OPERATOR_TITLES: Record<RuleOperator, string> = {
   startsWith: "starts with",
   eq: "=",
   neq: "≠",
+  exists: "exists",
+  notExists: "does not exist",
 };
 
 const OPERATORS: Record<FieldKind, RuleOperator[]> = {
@@ -127,17 +136,43 @@ const OPERATORS: Record<FieldKind, RuleOperator[]> = {
   enum: ["is", "isNot"],
   boolean: ["is", "isNot"],
   number: ["eq", "neq"],
+  plist: ["exists", "notExists", "is", "isNot", "contains"],
 };
 
 export function operatorsFor(field: RuleField): RuleOperator[] {
   return OPERATORS[fieldSpec(field).kind];
 }
 
+/** Title of an operator in the context of a field. A launchd key "equals" a value, a label "is" a value. */
+export function operatorTitle(field: RuleField, operator: RuleOperator): string {
+  if (fieldSpec(field).kind === "plist" && operator === "is") return "equals";
+  if (fieldSpec(field).kind === "plist" && operator === "isNot") return "does not equal";
+  return OPERATOR_TITLES[operator];
+}
+
+/** True for the operators that compare with `value`. "exists" and "does not exist" only look at the key. */
+export function operatorTakesValue(operator: RuleOperator): boolean {
+  return operator !== "exists" && operator !== "notExists";
+}
+
+export const MAX_KEY_LENGTH = 200;
+
+/** True when the rule reads the plist of the job: the caller must load the plists first. */
+export function ruleNeedsPlist(rule: Pick<SmartRule, "field">): boolean {
+  return rule.field === "launchdKey";
+}
+
+export function folderNeedsPlists(folder: Pick<SmartFolder, "rules">): boolean {
+  return folder.rules.some(ruleNeedsPlist);
+}
+
 /** A valid starting rule for a field: first operator, first choice. */
 export function defaultRule(field: RuleField): SmartRule {
   const spec = fieldSpec(field);
   const value = spec.kind === "enum" ? (spec.options?.[0]?.value ?? "") : spec.kind === "boolean" ? "true" : spec.kind === "number" ? "0" : "";
-  return { field, operator: OPERATORS[spec.kind][0], value };
+  const rule: SmartRule = { field, operator: OPERATORS[spec.kind][0], value };
+  if (spec.kind === "plist") rule.key = "";
+  return rule;
 }
 
 /** Problem with a rule as a sentence, or null when the rule can run. */
@@ -149,6 +184,12 @@ export function ruleProblem(rule: SmartRule): string | null {
   if (spec.kind === "enum" && !spec.options?.some((o) => o.value === rule.value)) return "Choose a value.";
   if (spec.kind === "boolean" && rule.value !== "true" && rule.value !== "false") return "Choose yes or no.";
   if (spec.kind === "number" && (rule.value.trim() === "" || !Number.isInteger(Number(rule.value)))) return "Enter a whole number.";
+  if (spec.kind === "plist") {
+    const key = rule.key?.trim() ?? "";
+    if (key === "") return "Enter a launchd key.";
+    if (key.length > MAX_KEY_LENGTH) return "The key is too long.";
+    if (operatorTakesValue(rule.operator) && rule.value.trim() === "") return "Enter a value.";
+  }
   return null;
 }
 
@@ -242,10 +283,79 @@ function booleanValue(field: RuleField, s: ServiceInfo, now: Date): boolean {
   }
 }
 
-/** One rule against one job. A rule that cannot run (see `ruleProblem`) matches nothing. */
-export function matchesRule(service: ServiceInfo, meta: JobMeta | undefined, rule: SmartRule, now: Date): boolean {
+// ── launchd keys ─────────────────────────────────────────────────────
+
+const isDict = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Value of a key in a plist. Order: the exact top-level key, the same key without regard to case,
+ * then a dotted path into a dictionary ("KeepAlive.SuccessfulExit", "MachServices.com.example.service").
+ */
+export function lookupPlistKey(plist: JobPlist, key: string): { found: boolean; value: unknown } {
+  if (Object.hasOwn(plist, key)) return { found: true, value: plist[key] };
+  const lower = key.toLowerCase();
+  const sameName = Object.keys(plist).find((k) => k.toLowerCase() === lower);
+  if (sameName !== undefined) return { found: true, value: plist[sameName] };
+  // Every dot can be the border, because a nested key can hold dots itself.
+  for (let dot = key.indexOf("."); dot !== -1; dot = key.indexOf(".", dot + 1)) {
+    const head = lookupPlistKey(plist, key.slice(0, dot));
+    if (head.found && isDict(head.value)) {
+      const rest = lookupPlistKey(head.value, key.slice(dot + 1));
+      if (rest.found) return rest;
+    }
+  }
+  return { found: false, value: undefined };
+}
+
+const MAX_PLIST_DEPTH = 6;
+
+/**
+ * The texts that a rule value is compared with. Booleans are "true" / "false" and numbers are decimal text.
+ * An array gives the texts of its elements. A dictionary gives its keys, the texts of its values, and "key=value" pairs.
+ */
+export function plistTexts(value: unknown, depth = 0): string[] {
+  if (typeof value === "string") return [value];
+  if (typeof value === "number" || typeof value === "boolean") return [String(value)];
+  if (depth >= MAX_PLIST_DEPTH) return [];
+  if (Array.isArray(value)) return value.flatMap((v) => plistTexts(v, depth + 1));
+  if (!isDict(value)) return [];
+  return Object.entries(value).flatMap(([k, v]) => {
+    const nested = plistTexts(v, depth + 1);
+    const scalar = typeof v === "string" || typeof v === "number" || typeof v === "boolean";
+    return scalar ? [k, ...nested, `${k}=${nested[0]}`] : [k, ...nested];
+  });
+}
+
+/**
+ * One launchd-key rule against one plist.
+ * `undefined` means that the plists are not loaded: nothing is known, so nothing matches.
+ * `null` means that the job has no readable plist: no key exists.
+ */
+function matchesPlistRule(rule: SmartRule, plist: JobPlist | null | undefined): boolean {
+  if (plist === undefined) return false;
+  const { found, value } = plist === null ? { found: false, value: undefined } : lookupPlistKey(plist, rule.key!.trim());
+  if (rule.operator === "exists") return found;
+  if (rule.operator === "notExists") return !found;
+  const needle = rule.value.trim().toLowerCase();
+  const texts = found ? plistTexts(value).map((t) => t.toLowerCase()) : [];
+  switch (rule.operator) {
+    case "is":
+      return texts.some((t) => t === needle);
+    case "isNot":
+      return !texts.some((t) => t === needle);
+    case "contains":
+      return texts.some((t) => t.includes(needle));
+    default:
+      return false;
+  }
+}
+
+/** One rule against one job. A rule that cannot run (see `ruleProblem`) matches nothing. `plist`: see `matchesFolder`. */
+export function matchesRule(service: ServiceInfo, meta: JobMeta | undefined, rule: SmartRule, now: Date, plist?: JobPlist | null): boolean {
   if (ruleProblem(rule) !== null) return false;
   const kind = fieldSpec(rule.field).kind;
+
+  if (kind === "plist") return matchesPlistRule(rule, plist);
 
   if (kind === "text") {
     const needle = rule.value.trim().toLowerCase();
@@ -285,11 +395,13 @@ export function matchesRule(service: ServiceInfo, meta: JobMeta | undefined, rul
 /**
  * True when the job belongs to the folder.
  * `meta` is the notes-and-tags record of this job. `now` anchors the "runs in the next 24 hours" field.
+ * `plist` is the plist of this job for the launchd-key rules: leave it out while the plists are not loaded
+ * (such a rule then matches nothing), pass `null` for a job without a readable plist.
  * A folder without rules matches every job.
  */
-export function matchesFolder(service: ServiceInfo, meta: JobMeta | undefined, folder: SmartFolder, now: Date): boolean {
+export function matchesFolder(service: ServiceInfo, meta: JobMeta | undefined, folder: SmartFolder, now: Date, plist?: JobPlist | null): boolean {
   if (folder.rules.length === 0) return true;
-  const test = (rule: SmartRule) => matchesRule(service, meta, rule, now);
+  const test = (rule: SmartRule) => matchesRule(service, meta, rule, now, plist);
   return folder.match === "any" ? folder.rules.some(test) : folder.rules.every(test);
 }
 
@@ -342,6 +454,7 @@ export function sanitizeFolders(input: unknown): SmartFolder[] {
       const rule = r as Record<string, unknown>;
       if (typeof rule.field !== "string" || typeof rule.operator !== "string" || typeof rule.value !== "string") continue;
       const candidate = { field: rule.field, operator: rule.operator, value: rule.value } as SmartRule;
+      if (typeof rule.key === "string" && rule.field === "launchdKey") candidate.key = rule.key;
       if (ruleProblem(candidate) === null) cleanRules.push(candidate);
     }
     seen.add(id);

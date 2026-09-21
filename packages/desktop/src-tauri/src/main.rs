@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod helper_tools;
 mod job_extras;
 mod job_monitor;
 mod launchd;
@@ -10,12 +11,12 @@ mod services;
 mod startup_tools;
 mod system_info;
 mod tray;
+mod windows;
 
 use serde::Serialize;
 use std::collections::BTreeMap;
 use tauri::Manager;
 
-const MAIN_WINDOW: &str = "main";
 const ABOUT_WINDOW: &str = "about";
 /// Custom URI scheme that serves the embedded About page.
 const ABOUT_SCHEME: &str = "macdash";
@@ -52,13 +53,13 @@ fn api<T: Serialize>(result: Result<T, String>) -> ApiResult<T> {
     }
 }
 
-/// Commands that change the system or read user data only answer the dashboard window.
-/// Other windows (About) have no business calling them.
+/// Commands that change the system or read user data only answer the dashboard windows
+/// (`main`, `main-2`, …). Other windows (About) have no business calling them.
 fn require_main(window: &tauri::Window) -> Result<(), String> {
-    if window.label() == MAIN_WINDOW {
+    if windows::is_dashboard_label(window.label()) {
         Ok(())
     } else {
-        Err("This command is only available to the main window.".to_string())
+        Err("This command is only available to the dashboard windows.".to_string())
     }
 }
 
@@ -129,7 +130,7 @@ async fn delete_job(window: tauri::Window, label: String, category: String) -> A
     let result = services::delete_job(&label, &category).await;
     if result.is_ok() {
         // No orphaned notes and tags, like DELETE /api/services/job
-        let _ = job_extras::set_job_meta(&label, &category, "", &[]).await;
+        let _ = job_extras::set_job_meta(&label, &category, "", &[], None).await;
     }
     api(result)
 }
@@ -183,9 +184,40 @@ async fn set_job_meta(
     category: String,
     notes: Option<String>,
     tags: Option<Vec<String>>,
+    icon: Option<String>,
 ) -> ApiResult<()> {
     main_window_only!(window);
-    api(job_extras::set_job_meta(&label, &category, &notes.unwrap_or_default(), &tags.unwrap_or_default()).await)
+    api(job_extras::set_job_meta(&label, &category, &notes.unwrap_or_default(), &tags.unwrap_or_default(), icon.as_deref()).await)
+}
+
+#[tauri::command]
+async fn delete_helper_tool(window: tauri::Window, name: String, permanent: Option<bool>) -> ApiResult<()> {
+    main_window_only!(window);
+    api(helper_tools::delete_helper_tool(&name, permanent.unwrap_or(false)).await)
+}
+
+#[tauri::command]
+async fn reset_background_items(window: tauri::Window) -> ApiResult<()> {
+    main_window_only!(window);
+    api(helper_tools::reset_background_items().await)
+}
+
+#[tauri::command]
+async fn browse_path(window: tauri::Window, path: Option<String>) -> ApiResult<helper_tools::BrowseResult> {
+    main_window_only!(window);
+    api(helper_tools::browse_path(path.unwrap_or_default()).await)
+}
+
+#[tauri::command]
+async fn get_default_path(window: tauri::Window) -> ApiResult<String> {
+    main_window_only!(window);
+    ok_result(helper_tools::get_default_path().await)
+}
+
+#[tauri::command]
+async fn get_job_plists(window: tauri::Window) -> ApiResult<BTreeMap<String, serde_json::Value>> {
+    main_window_only!(window);
+    ok_result(helper_tools::get_job_plists().await)
 }
 
 #[tauri::command]
@@ -387,15 +419,6 @@ fn begin_window_drag(window: tauri::Window) -> Result<(), String> {
         .map_err(|e| format!("start_dragging failed: {}", e))
 }
 
-/// Show and focus the dashboard. The window is hidden, not closed, when the user closes it.
-pub(crate) fn show_main_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
-    logs::resume_log_stream();
-}
 
 /// Open one of the known links in the default browser. Anything else is refused,
 /// so a compromised page cannot use this command to open arbitrary URLs or files.
@@ -474,8 +497,11 @@ fn setup_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::menu::*;
 
     let about = MenuItemBuilder::with_id("about", "About Mac Dash").build(app)?;
+    let new_window = MenuItemBuilder::with_id("new-window", "New Window").accelerator("CmdOrCtrl+N").build(app)?;
     let app_menu = SubmenuBuilder::new(app, "Mac Dash")
         .item(&about)
+        .separator()
+        .item(&new_window)
         .separator()
         .hide()
         .hide_others()
@@ -507,10 +533,14 @@ fn setup_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.set_menu(menu)?;
 
     // Handle about menu click
-    app.on_menu_event(move |app, event| {
-        if event.id() == "about" {
-            show_about_window(app.clone());
+    app.on_menu_event(move |app, event| match event.id().as_ref() {
+        "about" => show_about_window(app.clone()),
+        "new-window" => {
+            if let Err(e) = windows::create_dashboard_window(app) {
+                eprintln!("[windows] Could not create a dashboard window: {}", e);
+            }
         }
+        _ => {}
     });
 
     Ok(())
@@ -574,17 +604,21 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_uri_scheme_protocol(ABOUT_SCHEME, |_ctx, request| about_response(request.uri().path()))
         .on_window_event(|window, event| {
-            if window.label() != MAIN_WINDOW {
+            if !windows::is_dashboard_label(window.label()) {
                 return;
             }
             match event {
-                // Close to tray: the monitor keeps running. Quit is in the tray menu and the app menu.
+                // Close to tray: the LAST dashboard window is hidden and the monitor keeps running.
+                // Every other window just closes. Quit is in the tray menu and the app menu.
                 tauri::WindowEvent::CloseRequested { api, .. } => {
-                    api.prevent_close();
-                    let _ = window.hide();
-                    logs::pause_log_stream();
+                    if windows::hide_instead_of_close(window) {
+                        api.prevent_close();
+                    }
+                    windows::sync_log_stream(window.app_handle(), None);
                 }
-                tauri::WindowEvent::Focused(true) => logs::resume_log_stream(),
+                // A closed window does not count any more: the windows that are left may all be hidden.
+                tauri::WindowEvent::Destroyed => windows::sync_log_stream(window.app_handle(), Some(window.label())),
+                tauri::WindowEvent::Focused(true) => windows::sync_log_stream(window.app_handle(), None),
                 _ => {}
             }
         })
@@ -628,6 +662,11 @@ fn main() {
             get_startup_extras,
             get_login_items,
             list_shortcuts,
+            delete_helper_tool,
+            reset_background_items,
+            browse_path,
+            get_default_path,
+            get_job_plists,
             get_job_signature,
             get_background_items,
             delete_login_item,
@@ -658,7 +697,7 @@ fn main() {
     app.run(|app_handle, event| match event {
         // The Dock icon was clicked while the window was hidden.
         #[cfg(target_os = "macos")]
-        tauri::RunEvent::Reopen { has_visible_windows: false, .. } => show_main_window(app_handle),
+        tauri::RunEvent::Reopen { has_visible_windows: false, .. } => windows::show_dashboard(app_handle),
         // The `log stream` child must not outlive the app.
         tauri::RunEvent::Exit => logs::shutdown(),
         _ => {}
