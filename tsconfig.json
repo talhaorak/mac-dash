@@ -16,6 +16,6 @@
     "rootDir": ".",
     "types": ["bun"]
   },
-  "include": ["server/**/*.ts", "server/**/*.d.ts"],
+  "include": ["server/**/*.ts", "server/**/*.d.ts", "shared/**/*.ts"],
   "exclude": ["node_modules", "dist", "client"]
 }

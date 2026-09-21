@@ -10,6 +10,7 @@
   "files": [
     "bin/",
     "server/",
+    "shared/",
     "client/src/",
     "client/package.json",
     "client/tsconfig.json",
@@ -25,10 +26,11 @@
   "scripts": {
     "dev": "concurrently -n server,client -c cyan,magenta \"bun run dev:server\" \"bun run dev:client\"",
     "dev:server": "bun --watch server/index.ts",
-    "dev:client": "cd client && bunx --bun vite --port 5173",
+    "dev:client": "cd client && bunx vite",
     "build": "cd client && bun install && bunx --bun vite build",
     "start": "NODE_ENV=production bun server/index.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p client",
+    "test": "bun test",
     "prepublishOnly": "bun run build",
     "desktop:dev": "cd packages/desktop && cargo tauri dev",
     "desktop:build": "bun run build && cd packages/desktop && cargo tauri build"
@@ -69,11 +71,11 @@
     "darwin"
   ],
   "dependencies": {
-    "hono": "^4.7.0"
+    "hono": "^4.13.8"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.0",
-    "concurrently": "^9.1.0",
-    "typescript": "^5.7.0"
+    "@types/bun": "^1.4.2",
+    "concurrently": "^9.2.4",
+    "typescript": "^5.9.3"
   }
 }
