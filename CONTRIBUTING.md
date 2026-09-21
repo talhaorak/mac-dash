@@ -24,7 +24,7 @@ cd client && bun install && cd ..
 bun run dev
 ```
 
-The dev server runs at `http://localhost:5173` (client) with API proxy to `http://localhost:7227` (server).
+The dev server runs at `http://localhost:7228` (client, change it with `MACDASH_DEV_PORT`) with API proxy to `http://localhost:7227` (server).
 
 ## Development
 

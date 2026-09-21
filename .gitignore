@@ -50,3 +50,6 @@ TODO.md
 # Tauri / Rust
 packages/desktop/src-tauri/target/
 
+
+# Claude Code local files
+.claude/

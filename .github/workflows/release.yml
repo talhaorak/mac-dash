@@ -11,6 +11,9 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: write
+    outputs:
+      arm64_sha256: ${{ steps.checksums.outputs.arm64_sha256 }}
+      x64_sha256: ${{ steps.checksums.outputs.x64_sha256 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,15 +35,92 @@ jobs:
       - name: Build
         run: bun run build
 
+      # `bun build` inlines process.env.NODE_ENV at bundle time ("development"
+      # by default), so the runtime NODE_ENV is ignored by a compiled binary.
+      # Pin it to production or the binary never serves the built client.
       - name: Build standalone binary (Apple Silicon)
         run: |
           bun build --compile --target=bun-darwin-arm64 \
+            --define 'process.env.NODE_ENV="production"' \
             server/index.ts --outfile macdash-darwin-arm64
 
       - name: Build standalone binary (Intel)
         run: |
           bun build --compile --target=bun-darwin-x64 \
+            --define 'process.env.NODE_ENV="production"' \
             server/index.ts --outfile macdash-darwin-x64
+
+      # Catches compiled-binary regressions: paths built from import.meta.dir
+      # resolve to the virtual /$bunfs root and files read at runtime
+      # (package.json, plugins/) are not where the source tree had them.
+      - name: Smoke test compiled binary
+        run: |
+          set -euo pipefail
+
+          EXPECTED="$(node -p "require('./package.json').version")"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF#refs/tags/v}" != "$EXPECTED" ]]; then
+            echo "::warning::Tag ${GITHUB_REF#refs/tags/} does not match package.json version $EXPECTED"
+          fi
+
+          # macos-latest is Apple Silicon: test the native binary.
+          BINARY="macdash-darwin-arm64"
+          if [[ "$(uname -m)" != "arm64" ]]; then BINARY="macdash-darwin-x64"; fi
+
+          # Same layout as the release tarball, outside the checkout, so a
+          # source-relative path cannot resolve by accident.
+          SMOKE_DIR="$(mktemp -d)"
+          cp "$BINARY" "$SMOKE_DIR/macdash"
+          cp -R plugins "$SMOKE_DIR/plugins"
+          mkdir -p "$SMOKE_DIR/dist"
+          cp -R dist/client "$SMOKE_DIR/dist/client"
+
+          SMOKE_PORT=7399
+          BASE="http://127.0.0.1:$SMOKE_PORT"
+          cd "$SMOKE_DIR"
+          PORT="$SMOKE_PORT" ./macdash > smoke.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true; echo "--- server log ---"; cat "$SMOKE_DIR/smoke.log"' EXIT
+
+          for _ in $(seq 1 30); do
+            if curl -fsS "$BASE/api/health" > /dev/null 2>&1; then break; fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo "::error::Compiled binary exited during startup"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          HEALTH="$(curl -fsS "$BASE/api/health")"
+          echo "health: $HEALTH"
+          grep -q '"status":"ok"' <<< "$HEALTH"
+
+          ACTUAL="$(curl -fsS "$BASE/api/system/version" \
+            | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")"
+          echo "version: $ACTUAL (expected $EXPECTED)"
+          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+            echo "::error::Binary reports version '$ACTUAL', package.json has '$EXPECTED'"
+            exit 1
+          fi
+
+          # Plugin discovery runs asynchronously at startup: retry briefly.
+          PLUGINS=""
+          for _ in $(seq 1 10); do
+            PLUGINS="$(curl -fsS "$BASE/api/plugins")"
+            if grep -q '"id":"network-info"' <<< "$PLUGINS"; then break; fi
+            sleep 1
+          done
+          echo "plugins: $PLUGINS"
+          if ! grep -q '"id":"network-info"' <<< "$PLUGINS"; then
+            echo "::error::Compiled binary did not discover plugins/ next to the executable"
+            exit 1
+          fi
+
+          # Non-fatal until server/index.ts resolves the client directory with
+          # getClientDir() from server/plugins/paths.ts instead of import.meta.dir.
+          ROOT_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")"
+          if [[ "$ROOT_STATUS" != "200" ]]; then
+            echo "::warning::GET / returned $ROOT_STATUS: the compiled binary does not serve dist/client"
+          fi
 
       - name: Get version
         id: version
@@ -57,6 +137,22 @@ jobs:
             macdash-darwin-arm64 dist/client/ plugins/ LICENSE README.md
           tar -czf macdash-${{ steps.version.outputs.version }}-darwin-x64.tar.gz \
             macdash-darwin-x64 dist/client/ plugins/ LICENSE README.md
+
+      # The Homebrew formula pins these checksums (see homebrew/macdash.rb).
+      - name: Compute tarball SHA-256
+        id: checksums
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ARM64_SHA256="$(shasum -a 256 "macdash-${VERSION}-darwin-arm64.tar.gz" | awk '{print $1}')"
+          X64_SHA256="$(shasum -a 256 "macdash-${VERSION}-darwin-x64.tar.gz" | awk '{print $1}')"
+          echo "arm64: $ARM64_SHA256"
+          echo "x64:   $X64_SHA256"
+          {
+            echo "arm64_sha256=$ARM64_SHA256"
+            echo "x64_sha256=$X64_SHA256"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -127,5 +223,7 @@ jobs:
             {
               "version": "${{ steps.version.outputs.version }}",
               "arm64_url": "https://github.com/talhaorak/mac-dash/releases/download/v${{ steps.version.outputs.version }}/macdash-${{ steps.version.outputs.version }}-darwin-arm64.tar.gz",
-              "x64_url": "https://github.com/talhaorak/mac-dash/releases/download/v${{ steps.version.outputs.version }}/macdash-${{ steps.version.outputs.version }}-darwin-x64.tar.gz"
+              "arm64_sha256": "${{ needs.build.outputs.arm64_sha256 }}",
+              "x64_url": "https://github.com/talhaorak/mac-dash/releases/download/v${{ steps.version.outputs.version }}/macdash-${{ steps.version.outputs.version }}-darwin-x64.tar.gz",
+              "x64_sha256": "${{ needs.build.outputs.x64_sha256 }}"
             }

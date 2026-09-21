@@ -24,8 +24,12 @@ jobs:
       - name: Install client dependencies
         run: cd client && bun install
 
-      - name: TypeScript check (server)
+      - name: TypeScript check
         run: bun run typecheck
+
+      # Must stay on a macOS runner: shared/plist.test.ts shells out to `plutil`.
+      - name: Unit tests
+        run: bun test
 
       - name: Build client
         run: bun run build
@@ -34,3 +38,28 @@ jobs:
         run: |
           test -f dist/client/index.html
           echo "Build output verified"
+
+  desktop-check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/desktop/src-tauri
+
+      # tauri::generate_context!() reads `frontendDist` (../../../dist/client)
+      # at compile time and fails when it is missing. A stub is enough for
+      # `cargo check`, so this job does not depend on the client build.
+      - name: Stub frontend dist
+        run: |
+          mkdir -p dist/client
+          echo '<!doctype html><title>stub</title>' > dist/client/index.html
+
+      - name: cargo check
+        working-directory: packages/desktop/src-tauri
+        run: cargo check --locked

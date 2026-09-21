@@ -60,6 +60,16 @@ jobs:
       - name: Build Tauri app
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # TODO(signing): the app is shipped unsigned and un-notarized. `cargo tauri build`
+          # consumes these variables; add them here from repository secrets once
+          # Apple Developer credentials exist:
+          #   APPLE_CERTIFICATE         base64 .p12, imported into a temporary keychain
+          #   APPLE_SIGNING_IDENTITY    "Developer ID Application: ..." (codesign identity)
+          #   APPLE_ID                  notarization account
+          #   APPLE_PASSWORD            app-specific password for APPLE_ID
+          #   APPLE_TEAM_ID             notarization team
+          # TODO(signing): updater artifacts (latest.json + .sig) are signed with
+          #   TAURI_SIGNING_PRIVATE_KEY; tauri.conf.json `plugins.updater.pubkey` is still empty.
         run: |
           cd packages/desktop
           cargo tauri build ${{ matrix.args }}
@@ -91,6 +101,74 @@ jobs:
         id: version
         run: |
           echo "version=${GITHUB_REF#refs/tags/desktop-v}" >> $GITHUB_OUTPUT
+
+      # The cask must pin the checksum of the exact DMG that is published below.
+      - name: Locate DMG and compute SHA-256
+        id: dmg
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          DMGS=(artifacts/**/*.dmg)
+          if [[ ${#DMGS[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly one DMG in artifacts/, found ${#DMGS[@]}"
+            exit 1
+          fi
+          DMG="${DMGS[0]}"
+
+          if command -v shasum > /dev/null; then
+            SHA256="$(shasum -a 256 "$DMG" | awk '{print $1}')"
+          else
+            SHA256="$(sha256sum "$DMG" | awk '{print $1}')"
+          fi
+          if [[ ! "$SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Could not compute SHA-256 of $DMG"
+            exit 1
+          fi
+
+          # GitHub replaces spaces in release asset names with dots:
+          # "Mac Dash_1.0.9_universal.dmg" is published as "Mac.Dash_1.0.9_universal.dmg".
+          ASSET_NAME="$(basename "$DMG" | tr ' ' '.')"
+          EXPECTED_NAME="Mac.Dash_${VERSION}_universal.dmg"
+          if [[ "$ASSET_NAME" != "$EXPECTED_NAME" ]]; then
+            echo "::error::DMG is named '$ASSET_NAME' but homebrew/macdash-cask.rb downloads '$EXPECTED_NAME'. Update the cask url."
+            exit 1
+          fi
+
+          echo "DMG:     $DMG"
+          echo "SHA-256: $SHA256"
+          {
+            echo "sha256=$SHA256"
+            echo "asset_name=$ASSET_NAME"
+            echo "url=https://github.com/${GITHUB_REPOSITORY}/releases/download/desktop-v${VERSION}/${ASSET_NAME}"
+          } >> "$GITHUB_OUTPUT"
+
+      # homebrew/macdash-cask.rb is the template: only `version` and `sha256` change.
+      - name: Render Homebrew cask
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.dmg.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p rendered
+          sed -E \
+            -e "s|^  version \".*\"|  version \"${VERSION}\"|" \
+            -e "s|^  sha256 .*|  sha256 \"${SHA256}\"|" \
+            homebrew/macdash-cask.rb > rendered/macdash.rb
+          grep -q "^  version \"${VERSION}\"$" rendered/macdash.rb
+          grep -q "^  sha256 \"${SHA256}\"$" rendered/macdash.rb
+          if grep -Eq '^[[:space:]]*sha256[[:space:]]+:no_check' rendered/macdash.rb; then
+            echo "::error::Rendered cask still contains sha256 :no_check"
+            exit 1
+          fi
+          cat rendered/macdash.rb
+
+      - name: Upload rendered cask
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-cask
+          path: rendered/macdash.rb
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -126,5 +204,6 @@ jobs:
           client-payload: |
             {
               "version": "${{ steps.version.outputs.version }}",
-              "dmg_url": "https://github.com/talhaorak/mac-dash/releases/download/desktop-v${{ steps.version.outputs.version }}/Mac-Dash_${{ steps.version.outputs.version }}_universal.dmg"
+              "dmg_url": "${{ steps.dmg.outputs.url }}",
+              "sha256": "${{ steps.dmg.outputs.sha256 }}"
             }

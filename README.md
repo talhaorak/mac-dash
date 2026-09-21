@@ -96,8 +96,20 @@ bun run dev
 ### System Dashboard
 Real-time CPU, memory, and disk monitoring with animated gauges, sparkline charts, and hardware info.
 
-### Service Manager
-Browse all LaunchAgents and LaunchDaemons across user, global, and system directories. Start, stop, enable, or disable services with one click.
+### Service Manager and launchd job editor
+Browse all LaunchAgents and LaunchDaemons across user, global, and system directories, with the live state of both launchd domains. Run, stop, restart, enable, or disable a job.
+
+Create and edit jobs like in Lingon:
+
+- A form for every documented `launchd.plist` key: command, script, app or Shortcut to run, run at load, keep alive with conditions, intervals, calendar schedules, watch paths, environment, output files, user, resource limits.
+- Expert mode with the raw XML, syntax colours and parse errors with line numbers.
+- Checks before you save: missing executables, `~` in paths, keys that only apply to daemons, schedules launchd would ignore.
+- Jobs for you, for all users, or as root. Saving to `/Library` asks for an administrator password.
+- Templates, duplicate, show in Finder, delete to the Trash, revisions with revert, notes and tags, a timeline of the next runs.
+- Output tab for the job's stdout and stderr, `launchctl print`, and an explanation of the last exit status.
+- A monitor that watches the five launchd folders all the time. It notifies you and keeps a history when any app adds, changes or removes a job.
+
+[docs/lingon-parity.md](docs/lingon-parity.md) lists every Lingon feature and its status.
 
 ### Process Explorer
 View running processes sorted by CPU or memory. See detailed command arguments. Kill processes when needed.
@@ -132,6 +144,17 @@ PORT=8080 macdash
 ```
 
 Then open [http://localhost:7227](http://localhost:7227) in your browser.
+
+### Security
+
+mac-dash can kill processes and install launchd jobs, and it has no login. The server therefore listens on `127.0.0.1` only and rejects requests from other web pages (Origin check) and from rebound DNS names (Host check).
+
+| Variable | Effect |
+| --- | --- |
+| `HOST` | Listen address. Default `127.0.0.1`. `0.0.0.0` exposes the API to your network: only do this behind an authenticating reverse proxy. |
+| `MACDASH_ALLOWED_HOSTS` | Extra `Host` names to accept, comma separated. |
+| `MACDASH_ALLOWED_ORIGINS` | Extra origins to accept, comma separated, e.g. `https://dash.example.com`. |
+| `MACDASH_ROOT` | Folder that holds `plugins/` and `dist/client/` when they are not next to the binary. |
 
 ### Run as Background Service
 
