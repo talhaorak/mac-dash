@@ -155,6 +155,23 @@ export interface MonitorSettings {
 export interface JobMeta {
   notes: string;
   tags: string[];
+  /** An emoji, or a small PNG/JPEG data URL. */
+  icon?: string;
+}
+
+export interface BrowseEntry {
+  name: string;
+  isDirectory: boolean;
+  isApp: boolean;
+  executable: boolean;
+  hidden: boolean;
+}
+
+export interface BrowseResult {
+  path: string;
+  parent: string | null;
+  entries: BrowseEntry[];
+  truncated: boolean;
 }
 
 export interface JobRevision {
@@ -339,6 +356,35 @@ export const backend = {
   async setMonitorSettings(settings: MonitorSettings): Promise<void> {
     if (isTauri()) return tauriCall("set_monitor_settings", { ...settings });
     await httpRequest("/services/monitor-settings", { method: "PUT", body: JSON.stringify(settings) });
+  },
+
+  /** `permanent` skips the Trash copy. The backend asks for it when the copy is not possible. */
+  async deleteHelperTool(name: string, permanent = false): Promise<void> {
+    if (isTauri()) return tauriCall("delete_helper_tool", { name, permanent });
+    await httpRequest(`/services/helper-tool?${new URLSearchParams({ name, permanent: String(permanent) })}`, { method: "DELETE" });
+  },
+
+  /** Resets the background-item approval of every app. Asks for an administrator password. */
+  async resetBackgroundItems(): Promise<void> {
+    if (isTauri()) return tauriCall("reset_background_items");
+    await post("/services/background-items/reset");
+  },
+
+  /** Folder listing for path pickers. An empty path means the home folder. */
+  async browsePath(path: string): Promise<BrowseResult> {
+    if (isTauri()) return tauriCall("browse_path", { path });
+    return httpRequest(`/services/browse?${new URLSearchParams({ path })}`);
+  },
+
+  async getDefaultPath(): Promise<string> {
+    if (isTauri()) return tauriCall("get_default_path");
+    return (await httpRequest<{ path: string }>("/services/default-path")).path;
+  },
+
+  /** Every job's plist as JSON, keyed by "<category>/<label>". Large: fetch only when needed. */
+  async getJobPlists(): Promise<Record<string, Record<string, unknown>>> {
+    if (isTauri()) return tauriCall("get_job_plists");
+    return (await httpRequest<{ plists: Record<string, Record<string, unknown>> }>("/services/plists")).plists;
   },
 
   async getJobEvents(): Promise<JobEvent[]> {
