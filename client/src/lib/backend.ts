@@ -103,9 +103,50 @@ export interface JobOutput {
 export interface JobEvent extends JobRef {
   id: string;
   at: number;
-  kind: "added" | "modified" | "removed";
+  kind: "added" | "modified" | "removed" | "failed";
   path: string;
   program: string | null;
+  exitStatus?: number;
+}
+
+export interface JobSignature {
+  path: string | null;
+  signed: boolean;
+  identifier: string | null;
+  authorities: string[];
+  teamId: string | null;
+  apple: boolean;
+  adhoc: boolean;
+  error: string | null;
+}
+
+export interface BackgroundItem {
+  uid: number;
+  name: string;
+  developerName: string | null;
+  type: string;
+  disposition: string[];
+  identifier: string | null;
+  url: string | null;
+  executablePath: string | null;
+  parentIdentifier: string | null;
+  teamIdentifier: string | null;
+}
+
+export interface PowerEvent {
+  type: "sleep" | "wake" | "poweron" | "shutdown" | "wakeorpoweron" | "restart";
+  days: string;
+  time: string;
+}
+
+export interface PowerSchedule {
+  raw: string;
+  repeating: PowerEvent[];
+}
+
+export interface MonitorSettings {
+  notify: boolean;
+  exclude: string[];
 }
 
 export interface JobMeta {
@@ -253,6 +294,48 @@ export const backend = {
   async listShortcuts(): Promise<string[]> {
     if (isTauri()) return tauriCall("list_shortcuts");
     return (await httpRequest<{ shortcuts: string[] }>("/services/shortcuts")).shortcuts;
+  },
+
+  async getJobSignature(ref: JobRef): Promise<JobSignature> {
+    if (isTauri()) return tauriCall("get_job_signature", { ...ref });
+    return httpRequest(`/services/signature?${jobQuery(ref)}`);
+  },
+
+  async getBackgroundItems(): Promise<BackgroundItem[]> {
+    if (isTauri()) return tauriCall("get_background_items");
+    return (await httpRequest<{ items: BackgroundItem[] }>("/services/background-items")).items;
+  },
+
+  async deleteLoginItem(name: string): Promise<void> {
+    if (isTauri()) return tauriCall("delete_login_item", { name });
+    await httpRequest(`/services/login-items?${new URLSearchParams({ name })}`, { method: "DELETE" });
+  },
+
+  /** Wrap a script in ~/Applications/<name>.app so macOS can grant it privacy permissions. */
+  async buildScriptApp(scriptPath: string, name: string): Promise<{ path: string }> {
+    if (isTauri()) return tauriCall("build_script_app", { scriptPath, name });
+    return post("/services/build-app", { scriptPath, name });
+  },
+
+  async getPowerSchedule(): Promise<PowerSchedule> {
+    if (isTauri()) return tauriCall("get_power_schedule");
+    return httpRequest("/services/power-schedule");
+  },
+
+  /** Asks for an administrator password. An empty list cancels the repeating schedule. */
+  async setPowerSchedule(events: PowerEvent[]): Promise<void> {
+    if (isTauri()) return tauriCall("set_power_schedule", { events });
+    await httpRequest("/services/power-schedule", { method: "PUT", body: JSON.stringify({ events }) });
+  },
+
+  async getMonitorSettings(): Promise<MonitorSettings> {
+    if (isTauri()) return tauriCall("get_monitor_settings");
+    return httpRequest("/services/monitor-settings");
+  },
+
+  async setMonitorSettings(settings: MonitorSettings): Promise<void> {
+    if (isTauri()) return tauriCall("set_monitor_settings", { ...settings });
+    await httpRequest("/services/monitor-settings", { method: "PUT", body: JSON.stringify(settings) });
   },
 
   async getJobEvents(): Promise<JobEvent[]> {

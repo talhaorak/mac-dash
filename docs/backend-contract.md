@@ -93,12 +93,46 @@ interface LoginItem { name: string; path: string; hidden: boolean }
 interface JobEvent {
   id: string;
   at: number;                       // ms since epoch
-  kind: "added" | "modified" | "removed";
+  kind: "added" | "modified" | "removed" | "failed";
   label: string;
   category: JobCategory;
   path: string;
   program: string | null;
+  exitStatus?: number;              // only for "failed"
 }
+
+interface JobSignature {
+  path: string | null;              // the job's executable (Program, else ProgramArguments[0])
+  signed: boolean;
+  identifier: string | null;
+  authorities: string[];            // certificate chain, leaf first
+  teamId: string | null;            // null for "not set"
+  apple: boolean;                   // leaf authority is "Software Signing" or "Apple Mac OS Application Signing"
+  adhoc: boolean;
+  error: string | null;             // e.g. "Executable not found"
+}
+
+interface BackgroundItem {          // one record of `sfltool dumpbtm`
+  uid: number;
+  name: string;
+  developerName: string | null;
+  type: string;                     // text before " (0x..)", e.g. "developer", "legacy daemon", "login item", "app"
+  disposition: string[];            // e.g. ["enabled", "allowed", "notified"]
+  identifier: string | null;
+  url: string | null;               // null for "(null)"
+  executablePath: string | null;
+  parentIdentifier: string | null;
+  teamIdentifier: string | null;
+}
+
+interface PowerEvent {              // one half of `pmset repeat`
+  type: "sleep" | "wake" | "poweron" | "shutdown" | "wakeorpoweron" | "restart";
+  days: string;                     // subset of "MTWRFSU", in that order
+  time: string;                     // "HH:MM:SS"
+}
+interface PowerSchedule { raw: string; repeating: PowerEvent[] }
+
+interface MonitorSettings { notify: boolean; exclude: string[] }  // ~/.macdash/settings.json, shared by both backends
 ```
 
 ## Operations
@@ -121,6 +155,14 @@ interface JobEvent {
 | Other startup items | `GET /api/services/extras` → `StartupExtras` | `get_startup_extras()` |
 | Login items | `GET /api/services/login-items` → `{ ok, items }` or `{ ok: false, error }` | `get_login_items()` → `LoginItem[]` |
 | Shortcuts | `GET /api/services/shortcuts` → `{ shortcuts: string[] }` | `list_shortcuts()` → `string[]` |
+| Code signature | `GET /api/services/signature?label=&category=` → `JobSignature` | `get_job_signature(label, category)` |
+| Background items | `GET /api/services/background-items` → `{ items }` | `get_background_items()` → `BackgroundItem[]` |
+| Delete login item | `DELETE /api/services/login-items?name=` → `{ ok }` | `delete_login_item(name)` |
+| Build app from script | `POST /api/services/build-app` `{ scriptPath, name }` → `{ ok, path }` | `build_script_app(scriptPath, name)` → `{ path }` |
+| Power schedule | `GET /api/services/power-schedule` → `PowerSchedule` | `get_power_schedule()` |
+| Set power schedule | `PUT /api/services/power-schedule` `{ events: PowerEvent[] }` → `{ ok }` | `set_power_schedule(events)` |
+| Monitor settings | `GET /api/services/monitor-settings` → `MonitorSettings` | `get_monitor_settings()` |
+| Set monitor settings | `PUT /api/services/monitor-settings` `MonitorSettings` → `{ ok }` | `set_monitor_settings(notify, exclude)` |
 | Change history | `GET /api/services/events` → `{ events }` | `get_job_events()` → `JobEvent[]` |
 | Clear history | `DELETE /api/services/events` → `{ ok }` | `clear_job_events()` |
 | Live changes | WebSocket topic `job-events`, one `JobEvent` per `update` message | Tauri event `job-event` with a `JobEvent` payload |
@@ -165,8 +207,19 @@ Root never writes into a folder the user controls, because a same-user process c
 `bootout`, then move the file to `~/.Trash` (root-owned files: see above). Delete the job's notes and tags afterwards.
 When the Trash is not reachable (another volume, macOS privacy protection), unlink only if the backup copy in `~/.macdash/backups` succeeded. Root-owned files are moved with administrator privileges and handed to the user.
 
+## Signature, background items, apps, power
+
+- **Signature**: run `codesign -dv --verbose=2 <executable>` and parse stderr (`Identifier=`, `Authority=` lines in order, `TeamIdentifier=`, `Signature=adhoc`). The executable path comes from the plist, never from the client. `code object is not signed at all` means `signed: false`. A relative or missing executable gives `error`.
+- **Background items**: parse `sfltool dumpbtm` (works without root on macOS 13+; when it fails return an empty list and the stderr text as the error). Records start with ` #<n>:` under a `Records for UID <uid>` header. Return the records of the current uid, of uid 0 and of uid -2. Skip the `Embedded Item Identifiers` sub-lists. Read-only: never call `resetbtm`.
+- **Delete login item**: System Events through `osascript`, the name as an `argv` item: `tell application "System Events" to delete login item (item 1 of argv)`. Same Automation-permission error text as for reading.
+- **Build app**: wrap a script in an applet so macOS can grant it privacy permissions. `name` must match `^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`. `scriptPath` must be absolute, exist, be a regular file and contain no control characters. Create `~/Applications` when missing. Refuse to overwrite an existing `.app`. Run `osacompile -o <app> -e 'do shell script quoted form of "<path>"'` with `\` and `"` escaped for the AppleScript string literal.
+- **Power schedule**: read with `pmset -g sched` (the "Repeating power events" block: lines like `  wakepoweron at 7:00AM weekdays only`, `  sleep at 11:30PM every day`, `  shutdown at 9:00PM Some days: Mon Wed`). Set with one administrator prompt: `pmset repeat <type> <days> <time> [<type> <days> <time>]`, or `pmset repeat cancel` for an empty list. At most two events: one of `sleep|shutdown|restart` and one of `wake|poweron|wakeorpoweron`. Validate `days` against `^M?T?W?R?F?S?U?$` (not empty) and `time` against `^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$` before anything reaches the shell.
+- **Monitor settings**: `notify: false` stops native notifications. A label that starts with one of the `exclude` prefixes never notifies. Events are still recorded. Limits: 50 prefixes of 100 characters.
+
 ## Monitor
 
 The backend watches the five scope directories all the time, not only while a client is connected.
 It diffs `(path, mtime, size)` snapshots, appends `JobEvent`s to `~/.macdash/job-events.json` (newest 500) and publishes them.
+Every 30 seconds the monitor also compares the last exit status of the jobs that have a plist in a writable scope. When the status of a loaded job changes to a value other than 0, it records a `failed` event with `exitStatus`. The first pass is the baseline.
+Native notifications honour `MonitorSettings`.
 The desktop shell posts a native notification per event. The server posts one through `osascript` only when no WebSocket client is connected; otherwise the web client shows a browser notification.

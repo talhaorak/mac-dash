@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from "react";
-import { Bell, BellOff, FilePlus2, FileX2, FilePen, Trash2, X } from "lucide-react";
+import { AlertOctagon, Bell, BellOff, FilePlus2, FileX2, FilePen, Trash2, X } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
 import { GlowCard } from "@/components/ui/GlowCard";
 import { toast } from "@/components/ui/Toast";
@@ -32,6 +32,7 @@ const KIND = {
   added: { icon: FilePlus2, text: "Added", tone: "text-green-400" },
   modified: { icon: FilePen, text: "Changed", tone: "text-amber-400" },
   removed: { icon: FileX2, text: "Removed", tone: "text-red-400" },
+  failed: { icon: AlertOctagon, text: "Failed", tone: "text-red-400" },
 } as const;
 
 /** Browser notification for a job change. Only fires while the dashboard is not in front. */

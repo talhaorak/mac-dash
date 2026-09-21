@@ -74,7 +74,7 @@ export default function App() {
       addJobEvent(event);
       notifyJobEvent(event);
       if (!document.hidden) {
-        const verb = { added: "added", modified: "changed", removed: "removed" }[event.kind];
+        const verb = { added: "added", modified: "changed", removed: "removed", failed: "failed" }[event.kind];
         toast.info(`launchd job ${verb}: ${event.label}`);
       }
     },
