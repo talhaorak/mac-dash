@@ -9,6 +9,14 @@ const request = (path: string, extra: Partial<RequestLike> = {}): RequestLike =>
 const withBearer = (path: string, token: string, method = "GET") => request(path, { method, authorization: `Bearer ${token}` });
 
 describe("isAuthorized", () => {
+  test("outside /api only reads are open: a plugin route there cannot skip the token", () => {
+    expect(isAuthorized(request("/", { method: "GET" }), "secret", true)).toBe(true);
+    expect(isAuthorized(request("/assets/index.js", { method: "HEAD" }), "secret", true)).toBe(true);
+    expect(isAuthorized(request("/status", { method: "POST" }), "secret", true)).toBe(false);
+    expect(isAuthorized(request("/status", { method: "DELETE" }), "secret", true)).toBe(false);
+    expect(isAuthorized(request("/status", { method: "POST", authorization: "Bearer secret" }), "secret", true)).toBe(true);
+  });
+
   test("a loopback server asks for nothing", () => {
     for (const path of ["/api/services", "/ws", "/", "/api/plugins/x/run"]) expect(isAuthorized(request(path, { method: "POST" }), "", false)).toBe(true);
   });

@@ -52,7 +52,9 @@ const OPEN_API_PATHS = new Set(["/api/auth/status", "/api/health"]);
 export function isAuthorized(req: RequestLike, token: string, required: boolean): boolean {
   if (!required) return true;
   if (req.path === "/ws") return tokensMatch(req.queryToken, token);
-  if (req.path !== "/api" && !req.path.startsWith("/api/")) return true;
+  // Static files and the single-page fallback are read-only. Anything else outside /api needs the token too.
+  const isApi = req.path === "/api" || req.path.startsWith("/api/");
+  if (!isApi && (req.method === "GET" || req.method === "HEAD")) return true;
   if (req.method === "GET" && OPEN_API_PATHS.has(req.path)) return true;
   return tokensMatch(bearerToken(req.authorization), token);
 }

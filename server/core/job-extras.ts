@@ -1,5 +1,5 @@
 import { constants } from "fs";
-import { copyFile, lstat, mkdir, readdir, readFile, stat, writeFile } from "fs/promises";
+import { chmod, copyFile, lstat, mkdir, readFile, readdir, stat, writeFile } from "fs/promises";
 import { join } from "path";
 import { scopeFor, type JobCategory } from "../../shared/launchd";
 import {
@@ -65,6 +65,8 @@ export async function getAllJobMeta(): Promise<Record<string, JobMeta>> {
 
 export async function setJobMeta(label: string, category: JobCategory, meta: JobMeta): Promise<void> {
   if (!scopeFor(category)) throw new JobError(`Unknown category: ${category}`);
+  // The label becomes a key of job-meta.json. Same limits as the desktop backend.
+  if (!label || label.length > 512 || /[\u0000-\u001f\u007f-\u009f]/.test(label)) throw new JobError("Invalid label.");
   const icon = checkJobIcon(meta.icon);
   const all = await getAllJobMeta();
   const notes = String(meta.notes ?? "").slice(0, 20_000);
@@ -247,6 +249,9 @@ export async function deleteHelperTool(name: unknown, permanent: boolean): Promi
       await copyFile(path, trashCopy, constants.COPYFILE_EXCL).catch(() => {
         throw new JobError(TRASH_COPY_FAILED);
       });
+      // Keep the execute bits, drop setuid and setgid: the copy in the Trash must not stay privileged.
+      const mode = (await stat(trashCopy)).mode & 0o755;
+      await chmod(trashCopy, mode).catch(() => {});
     }
     await runPrivilegedAfterTrashCopy(helperToolDeleteSteps(tool), `mac-dash wants to delete the helper tool "${promptLabel(tool)}".`, trashCopy);
     return { ok: true };

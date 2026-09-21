@@ -64,7 +64,7 @@ export function DashboardPage() {
           <Gauge value={cpuUsed} label={t("pages.dashboard.cpu")} sublabel={stats?.cpu.model?.split(" ").slice(0, 2).join(" ")} color="#06b6d4" />
           <div className="flex-1 space-y-2">
             <MiniChart data={history.map((h) => ({ value: h.cpu }))} color="#06b6d4" label={t("pages.dashboard.cpuHistoryLabel")} />
-            <div className="grid grid-cols-2 gap-x-4 text-xs">
+            <div className="grid grid-cols-[auto_1fr] gap-x-3 text-xs">
               <div className="text-gray-500">{t("pages.dashboard.cpuUser")}</div>
               <div className="text-right text-cyan-400 font-mono">{stats?.cpu.user.toFixed(1)}%</div>
               <div className="text-gray-500">{t("pages.dashboard.cpuSystem")}</div>
@@ -79,7 +79,7 @@ export function DashboardPage() {
           <Gauge value={memPercent} label={t("pages.dashboard.memory")} sublabel={stats ? formatBytes(stats.memory.total) : ""} color={memPercent > 85 ? "#ef4444" : "#8b5cf6"} />
           <div className="flex-1 space-y-2">
             <MiniChart data={history.map((h) => ({ value: h.mem }))} color="#8b5cf6" label={t("pages.dashboard.memoryHistoryLabel")} />
-            <div className="grid grid-cols-2 gap-x-4 text-xs">
+            <div className="grid grid-cols-[auto_1fr] gap-x-3 text-xs">
               <div className="text-gray-500">{t("pages.dashboard.memoryUsed")}</div>
               <div className="text-right text-purple-400 font-mono">{stats ? formatBytes(stats.memory.used) : "-"}</div>
               <div className="text-gray-500">{t("pages.dashboard.memoryWired")}</div>
@@ -104,7 +104,7 @@ export function DashboardPage() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-x-4 text-xs">
+            <div className="grid grid-cols-[auto_1fr] gap-x-3 text-xs">
               <div className="text-gray-500">{t("pages.dashboard.diskUsed")}</div>
               <div className="text-right text-green-400 font-mono whitespace-nowrap">{stats ? formatBytes(stats.disk.used) : "-"}</div>
               <div className="text-gray-500">{t("pages.dashboard.diskFree")}</div>

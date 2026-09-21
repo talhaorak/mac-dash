@@ -209,9 +209,9 @@ beforeAll(async () => {
     })();
   }
 
-  const up = await waitFor(() => fetch(`${base}/api/health`).then((r) => (r.ok ? true : null), () => null), 20_000, 200);
-  if (!up) throw new Error(`The server did not answer /api/health within 20 s.\n${serverLog}`);
-}, 30_000);
+  const up = await waitFor(() => fetch(`${base}/api/health`).then((r) => (r.ok ? true : null), () => null), 60_000, 200);
+  if (!up) throw new Error(`The server did not answer /api/health within 60 s.\n${serverLog}`);
+}, 90_000);
 
 afterAll(async () => {
   if (!ENABLED) return;

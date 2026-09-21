@@ -86,7 +86,7 @@ app.delete("/job", async (c) => {
   const ref = jobRef(c.req.query());
   if (!ref) return fail(c, "label and category are required");
   const result = await deleteJob(ref.label, ref.category);
-  if (result.ok) await setJobMeta(ref.label, ref.category, { notes: "", tags: [] }); // no orphaned notes
+  if (result.ok) await setJobMeta(ref.label, ref.category, { notes: "", tags: [] }).catch(() => {}); // no orphaned notes
   refreshServices();
   return c.json(result, result.ok ? 200 : 400);
 });

@@ -62,7 +62,17 @@ export async function loadPluginServer(
   try {
     if (await Bun.file(serverPath).exists()) {
       const mod: ServerPlugin = await import(serverPath);
-      await mod.register(app);
+      // A plugin registers on a scratch app first. Its routes are mounted only when every one of them
+      // lives under /api/plugins/<id>/: a route outside /api would skip the access token and the
+      // Origin checks that protect the API.
+      const scratch = new Hono();
+      await mod.register(scratch);
+      const prefix = `/api/plugins/${pluginId}`;
+      const outside = scratch.routes.filter((r) => r.path !== prefix && !r.path.startsWith(`${prefix}/`));
+      if (outside.length > 0) {
+        throw new Error(`routes must start with ${prefix}/ (found: ${[...new Set(outside.map((r) => r.path))].join(", ")})`);
+      }
+      app.route("/", scratch);
       plugin.serverModule = mod;
       return true;
     }
