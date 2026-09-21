@@ -107,7 +107,10 @@ Create and edit jobs like in Lingon:
 - Jobs for you, for all users, or as root. Saving to `/Library` asks for an administrator password.
 - Templates, duplicate, show in Finder, delete to the Trash, revisions with revert, notes and tags, a timeline of the next runs.
 - Output tab for the job's stdout and stderr, `launchctl print`, and an explanation of the last exit status.
-- A monitor that watches the five launchd folders all the time. It notifies you and keeps a history when any app adds, changes or removes a job.
+- A monitor that watches the five launchd folders all the time. It notifies you and keeps a history when any app adds, changes or removes a job, and when a job starts to fail.
+- The verified code signature of every job's executable: Apple, Developer ID with team, ad-hoc or unsigned.
+- Smart folders, a sortable list view, and a quick switcher (Cmd+K).
+- Login items, the macOS background-items database, crontab, privileged helper tools, and the repeating wake and sleep schedule in the same place.
 
 [docs/lingon-parity.md](docs/lingon-parity.md) lists every Lingon feature and its status.
 

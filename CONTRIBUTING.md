@@ -26,6 +26,27 @@ bun run dev
 
 The dev server runs at `http://localhost:7228` (client, change it with `MACDASH_DEV_PORT`) with API proxy to `http://localhost:7227` (server).
 
+### Tests
+
+```bash
+bun run typecheck                         # server, shared and client
+bun test                                  # unit tests, including every plist on your Mac
+cd packages/desktop/src-tauri && cargo test
+```
+
+End-to-end self-test. It calls every backend operation and runs one job through its whole life cycle (create, save, run, disable, enable, delete) in your user scope, with the label `com.macdash.selftest-<timestamp>`. It only exists in development builds.
+
+```bash
+# Web backend: with `bun run dev` running, open
+open "http://localhost:7228/?selftest=1"
+
+# Desktop backend: the app starts, prints SELFTEST_REPORT and exits with 0 on success
+cd packages/desktop && cargo tauri dev --no-watch \
+  --config '{"build":{"devUrl":"http://localhost:7228/?selftest=1","beforeDevCommand":""}}'
+```
+
+Both backends must follow [docs/backend-contract.md](docs/backend-contract.md). Change the contract first, then both implementations.
+
 ## Development
 
 ### Project Structure
