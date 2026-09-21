@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { CaseSensitive, ChevronDown, ChevronUp, X } from "lucide-react";
 import { escapeXml } from "@shared/plist";
 import { cn } from "@/lib/utils";
+import { t } from "@/i18n";
 import { XML_COLOR_FALLBACKS, appearanceFrom, themeVariables, type Appearance, type EditorThemeId } from "./editorThemes";
 import {
   MAX_MATCHES,
@@ -212,7 +213,7 @@ export function XmlEditor({
     const result = replaceAllMatches(value, query, replacement, caseSensitive);
     if (result.count === 0) return;
     applyEdit(0, value.length, result.text, result.text);
-    setStatus(`Replaced ${result.count}`);
+    setStatus(t("fields.xmlEditor.replacedCount", { count: result.count }));
   };
 
   const onBarKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -241,8 +242,11 @@ export function XmlEditor({
     query === ""
       ? ""
       : matches.length === 0
-        ? "No results"
-        : `${current + 1} of ${matches.length}${matches.length >= MAX_MATCHES ? "+" : ""}`;
+        ? t("fields.xmlEditor.noResults")
+        : t("fields.xmlEditor.matchCount", {
+            current: current + 1,
+            total: matches.length >= MAX_MATCHES ? `${matches.length}+` : matches.length,
+          });
 
   return (
     <div
@@ -256,7 +260,7 @@ export function XmlEditor({
       <pre ref={mirror} aria-hidden style={{ color: C.text }} className={`${LAYER} pointer-events-none`} dangerouslySetInnerHTML={{ __html: html }} />
       <textarea
         ref={area}
-        aria-label="Property list XML"
+        aria-label={t("fields.xmlEditor.textareaLabel")}
         aria-keyshortcuts="Meta+F Control+F"
         value={value}
         readOnly={readOnly}
@@ -281,7 +285,7 @@ export function XmlEditor({
       {findOpen && (
         <div
           role="search"
-          aria-label="Find and replace"
+          aria-label={t("fields.xmlEditor.findReplaceLabel")}
           onKeyDown={onBarKeyDown}
           className="absolute top-2 right-4 z-10 space-y-1.5 rounded-lg border border-white/[0.1] bg-gray-900/95 p-2 shadow-xl backdrop-blur"
         >
@@ -289,8 +293,8 @@ export function XmlEditor({
             <input
               ref={findInput}
               type="text"
-              aria-label="Find"
-              placeholder="Find"
+              aria-label={t("fields.xmlEditor.find")}
+              placeholder={t("fields.xmlEditor.find")}
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
@@ -311,21 +315,41 @@ export function XmlEditor({
             </span>
             <button
               type="button"
-              aria-label="Match case"
+              aria-label={t("fields.xmlEditor.matchCase")}
               aria-pressed={caseSensitive}
-              title="Match case"
+              title={t("fields.xmlEditor.matchCase")}
               onClick={() => setCaseSensitive((v) => !v)}
               className={cn(barButton, caseSensitive && "bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/25 hover:text-cyan-200")}
             >
               <CaseSensitive className="w-4 h-4" aria-hidden />
             </button>
-            <button type="button" aria-label="Previous match" title="Previous match (Shift+Enter)" disabled={matches.length === 0} onClick={() => step(-1)} className={barButton}>
+            <button
+              type="button"
+              aria-label={t("fields.xmlEditor.previousMatch")}
+              title={t("fields.xmlEditor.actionShortcut", { action: t("fields.xmlEditor.previousMatch"), shortcut: "Shift+Enter" })}
+              disabled={matches.length === 0}
+              onClick={() => step(-1)}
+              className={barButton}
+            >
               <ChevronUp className="w-4 h-4" aria-hidden />
             </button>
-            <button type="button" aria-label="Next match" title="Next match (Enter)" disabled={matches.length === 0} onClick={() => step(1)} className={barButton}>
+            <button
+              type="button"
+              aria-label={t("fields.xmlEditor.nextMatch")}
+              title={t("fields.xmlEditor.actionShortcut", { action: t("fields.xmlEditor.nextMatch"), shortcut: "Enter" })}
+              disabled={matches.length === 0}
+              onClick={() => step(1)}
+              className={barButton}
+            >
               <ChevronDown className="w-4 h-4" aria-hidden />
             </button>
-            <button type="button" aria-label="Close find and replace" title="Close (Escape)" onClick={closeFind} className={barButton}>
+            <button
+              type="button"
+              aria-label={t("fields.xmlEditor.closeFindReplace")}
+              title={t("fields.xmlEditor.actionShortcut", { action: t("common.close"), shortcut: "Escape" })}
+              onClick={closeFind}
+              className={barButton}
+            >
               <X className="w-4 h-4" aria-hidden />
             </button>
           </div>
@@ -334,8 +358,8 @@ export function XmlEditor({
             <div className="flex items-center gap-1">
               <input
                 type="text"
-                aria-label="Replace with"
-                placeholder="Replace with"
+                aria-label={t("fields.xmlEditor.replaceWith")}
+                placeholder={t("fields.xmlEditor.replaceWith")}
                 spellCheck={false}
                 autoCapitalize="off"
                 autoCorrect="off"
@@ -349,10 +373,10 @@ export function XmlEditor({
                 className={barInput}
               />
               <button type="button" disabled={current < 0} onClick={replaceCurrent} className={barButton}>
-                Replace
+                {t("fields.xmlEditor.replace")}
               </button>
               <button type="button" disabled={matches.length === 0} onClick={replaceEverything} className={barButton}>
-                Replace all
+                {t("fields.xmlEditor.replaceAll")}
               </button>
               <span role="status" className="px-1 text-[11px] text-gray-500">
                 {status}

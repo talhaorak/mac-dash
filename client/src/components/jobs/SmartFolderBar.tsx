@@ -4,8 +4,9 @@ import { toast } from "@/components/ui/Toast";
 import { metaKey, type JobMeta } from "@/lib/backend";
 import { useJobPlists, type ServiceInfo } from "@/stores/app";
 import { cn } from "@/lib/utils";
+import { formatNumber, useT } from "@/i18n";
 import { SmartFolderEditor } from "./SmartFolderEditor";
-import { DEFAULT_FOLDERS, folderNeedsPlists, matchesFolder, saveUserFolders, type SmartFolder } from "./SmartFolders";
+import { DEFAULT_FOLDERS, folderNeedsPlists, folderTitle, matchesFolder, saveUserFolders, type SmartFolder } from "./SmartFolders";
 import { InlineError } from "./StartupPanels";
 
 export interface SmartFolderBarProps {
@@ -29,6 +30,7 @@ export interface SmartFolderBarProps {
  * The plists of the jobs are loaded only when a folder has a rule over a launchd key.
  */
 export function SmartFolderBar({ services, meta, userFolders, onUserFoldersChange, activeId, onChange }: SmartFolderBarProps) {
+  const { t, tn } = useT();
   const [editing, setEditing] = useState<{ folder: SmartFolder | null } | null>(null);
 
   const folders = useMemo(() => [...DEFAULT_FOLDERS, ...userFolders], [userFolders]);
@@ -60,7 +62,7 @@ export function SmartFolderBar({ services, meta, userFolders, onUserFoldersChang
     // A new folder becomes the selection, so the user sees its content at once.
     if (!exists) onChange(folder.id);
     setEditing(null);
-    toast.success(`Smart folder "${folder.name}" saved`);
+    toast.success(t("list.smartFolders.savedToast", { name: folder.name }));
   };
 
   const remove = (id: string) => {
@@ -68,15 +70,15 @@ export function SmartFolderBar({ services, meta, userFolders, onUserFoldersChang
     store(userFolders.filter((f) => f.id !== id));
     if (activeId === id) onChange(null);
     setEditing(null);
-    if (folder) toast.success(`Smart folder "${folder.name}" deleted`);
+    if (folder) toast.success(t("list.smartFolders.deletedToast", { name: folder.name }));
   };
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Smart folders">
+      <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label={t("list.smartFolders.groupLabel")}>
         <span className="inline-flex items-center gap-1.5 pr-1 text-[11px] font-medium uppercase tracking-wide text-gray-600">
           <FolderSearch className="w-3.5 h-3.5" aria-hidden />
-          Smart folders
+          {t("list.smartFolders.groupLabel")}
         </span>
 
         {folders.map((folder) => {
@@ -96,17 +98,17 @@ export function SmartFolderBar({ services, meta, userFolders, onUserFoldersChang
                 onClick={() => onChange(selected ? null : folder.id)}
                 className="px-3 py-1.5 rounded-lg text-xs font-medium focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
               >
-                {folder.name}
+                {folderTitle(folder)}
                 <span className="ml-1 opacity-60">
                   {count !== null ? (
                     <>
-                      {count}
-                      <span className="sr-only"> jobs</span>
+                      <span aria-hidden>{formatNumber(count)}</span>
+                      <span className="sr-only">{tn("list.count.jobs", count)}</span>
                     </>
                   ) : (
                     <>
                       <span aria-hidden>{jobPlists.error ? "–" : "…"}</span>
-                      <span className="sr-only">{jobPlists.error ? ", count unknown" : ", counting"}</span>
+                      <span className="sr-only">{jobPlists.error ? t("list.smartFolders.countUnknown") : t("list.smartFolders.counting")}</span>
                     </>
                   )}
                 </span>
@@ -115,8 +117,8 @@ export function SmartFolderBar({ services, meta, userFolders, onUserFoldersChang
                 <button
                   type="button"
                   onClick={() => setEditing({ folder })}
-                  aria-label={`Edit smart folder ${folder.name}`}
-                  title="Edit or delete"
+                  aria-label={t("list.smartFolders.editAria", { name: folderTitle(folder) })}
+                  title={t("list.smartFolders.editOrDelete")}
                   className="p-1.5 -ml-1.5 rounded-lg opacity-60 hover:opacity-100 focus:outline-none focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-cyan-500/50"
                 >
                   <Pencil className="w-3 h-3" aria-hidden />
@@ -132,7 +134,7 @@ export function SmartFolderBar({ services, meta, userFolders, onUserFoldersChang
           className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-gray-500 hover:text-gray-300 hover:bg-white/[0.04] border border-dashed border-white/[0.08] focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
         >
           <Plus className="w-3 h-3" aria-hidden />
-          New smart folder…
+          {t("list.smartFolders.newFolder")}
         </button>
 
         <SmartFolderEditor
@@ -148,7 +150,7 @@ export function SmartFolderBar({ services, meta, userFolders, onUserFoldersChang
       </div>
       {jobPlists.error && (
         <InlineError
-          title={plists ? "The job plists could not be read again. The launchd-key folders use the last copy." : "The job plists could not be read. Folders with a launchd-key rule stay empty."}
+          title={plists ? t("list.errors.plistsRereadFailedKeyFolders") : t("list.errors.plistsReadFailedKeyFolders")}
           message={jobPlists.error}
           onRetry={jobPlists.retry}
           retrying={jobPlists.loading}

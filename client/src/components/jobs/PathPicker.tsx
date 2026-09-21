@@ -3,6 +3,7 @@ import { AppWindow, CornerLeftUp, File, FileTerminal, Folder, FolderOpen, Loader
 import { Dialog } from "@/components/ui/Dialog";
 import { backend, type BrowseEntry, type BrowseResult } from "@/lib/backend";
 import { cn } from "@/lib/utils";
+import { t, useT, type TKey } from "@/i18n";
 
 // Folder browser for the path fields of the job form. A browser cannot return real file paths, and the desktop
 // shell has no dialog plugin, so both builds list folders through `backend.browsePath`.
@@ -22,7 +23,12 @@ export function entryKind(entry: BrowseEntry): EntryKind {
   return entry.executable ? "executable" : "file";
 }
 
-export const ENTRY_KIND_LABELS: Record<EntryKind, string> = { folder: "Folder", app: "App", executable: "Executable", file: "File" };
+export const ENTRY_KIND_LABELS: Record<EntryKind, TKey> = {
+  folder: "editor.picker.kind.folder",
+  app: "editor.picker.kind.app",
+  executable: "editor.picker.kind.executable",
+  file: "editor.picker.kind.file",
+};
 
 /** Enter opens this entry as a folder. An app bundle is a folder too, except when the picker returns apps. */
 export function canOpen(entry: BrowseEntry, mode: PathPickerMode): boolean {
@@ -93,7 +99,7 @@ export function visibleEntries(entries: BrowseEntry[], filter: string, showHidde
 export function normalizeBrowseResult(raw: unknown): BrowseResult {
   const r = raw as Partial<BrowseResult> | null;
   if (!r || typeof r !== "object" || typeof r.path !== "string" || !r.path.startsWith("/") || !Array.isArray(r.entries)) {
-    throw new Error("The backend returned an unexpected folder listing.");
+    throw new Error(t("editor.picker.badListing"));
   }
   const entries = r.entries
     .filter((e): e is BrowseEntry => !!e && typeof e === "object" && typeof (e as BrowseEntry).name === "string" && (e as BrowseEntry).name !== "")
@@ -102,35 +108,35 @@ export function normalizeBrowseResult(raw: unknown): BrowseResult {
 }
 
 export function fileNameProblem(name: string): string | null {
-  if (name.trim() === "") return "Enter a file name.";
-  if (name.includes("/") || name.includes("\0")) return "A file name cannot contain a slash.";
-  if (name === "." || name === "..") return "This is not a file name.";
+  if (name.trim() === "") return t("editor.picker.emptyFileName");
+  if (name.includes("/") || name.includes("\0")) return t("editor.picker.slashInFileName");
+  if (name === "." || name === "..") return t("editor.picker.invalidFileName");
   return null;
 }
 
-/** `path` is absolute, or relative to the home folder when `home` is true. */
-export const PICKER_SHORTCUTS: { label: string; path: string; home?: boolean }[] = [
-  { label: "Home", path: "", home: true },
-  { label: "Applications", path: "/Applications" },
+/** `path` is absolute, or relative to the home folder when `home` is true. `labelKey` translates `label`; a raw path (technical) has none. */
+export const PICKER_SHORTCUTS: { label: string; labelKey?: TKey; path: string; home?: boolean }[] = [
+  { label: "Home", labelKey: "editor.picker.shortcut.home", path: "", home: true },
+  { label: "Applications", labelKey: "editor.picker.shortcut.applications", path: "/Applications" },
   { label: "/usr/local/bin", path: "/usr/local/bin" },
   { label: "/opt/homebrew/bin", path: "/opt/homebrew/bin" },
   { label: "LaunchAgents", path: "Library/LaunchAgents", home: true },
 ];
 
-const MODE_TITLES: Record<PathPickerMode, string> = {
-  file: "Choose a file",
-  folder: "Choose a folder",
-  executable: "Choose an executable",
-  app: "Choose an app",
-  any: "Choose a file or a folder",
+const MODE_TITLES: Record<PathPickerMode, TKey> = {
+  file: "editor.picker.mode.file.title",
+  folder: "editor.picker.mode.folder.title",
+  executable: "editor.picker.mode.executable.title",
+  app: "editor.picker.mode.app.title",
+  any: "editor.picker.mode.any.title",
 };
 
-const MODE_HINTS: Record<PathPickerMode, string> = {
-  file: "Enter opens a folder or chooses a file.",
-  folder: "Open the folder, then press “Choose this folder”.",
-  executable: "Only files with an execute permission can be chosen.",
-  app: "Enter opens a folder or chooses an app.",
-  any: "Enter chooses a file. For a folder: open it, then press “Choose this folder”.",
+const MODE_HINTS: Record<PathPickerMode, TKey> = {
+  file: "editor.picker.mode.file.hint",
+  folder: "editor.picker.mode.folder.hint",
+  executable: "editor.picker.mode.executable.hint",
+  app: "editor.picker.mode.app.hint",
+  any: "editor.picker.mode.any.hint",
 };
 
 // ── Component ────────────────────────────────────────────────────────
@@ -200,6 +206,7 @@ function PickerBody({
   titleId,
   filterRef,
 }: PathPickerProps & { titleId: string; filterRef: React.RefObject<HTMLInputElement | null> }) {
+  const { t } = useT();
   const listId = useId();
   const nameId = useId();
   const [listing, setListing] = useState<BrowseResult | null>(null);
@@ -233,8 +240,9 @@ function PickerBody({
       }
     }
     if (token !== request.current) return;
-    setError({ message: lastError?.message || "The folder could not be read.", path });
+    setError({ message: lastError?.message || t("editor.picker.readError"), path });
     setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Open the folder of the current value. A value that points nowhere falls back to its parent, then to home.
@@ -270,7 +278,7 @@ function PickerBody({
       knownHome = home;
       load(joinPath(home, shortcut.path));
     } catch (e) {
-      setError({ message: (e as Error).message || "The home folder could not be read.", path: "" });
+      setError({ message: (e as Error).message || t("editor.picker.homeReadError"), path: "" });
     }
   };
 
@@ -314,25 +322,27 @@ function PickerBody({
       <div className="flex items-start gap-3 px-5 pt-4 pb-3 border-b border-white/[0.06]">
         <div className="flex-1 min-w-0">
           <h2 id={titleId} className="text-base font-bold text-white">
-            {title ?? MODE_TITLES[mode]}
+            {title ?? t(MODE_TITLES[mode])}
           </h2>
-          <p className="text-[11px] text-gray-500">{MODE_HINTS[mode]} Backspace opens the parent folder.</p>
+          <p className="text-[11px] text-gray-500">
+            {t(MODE_HINTS[mode])} {t("editor.picker.backspaceHint")}
+          </p>
         </div>
-        <button type="button" aria-label="Close the file browser" onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-white/[0.06]">
+        <button type="button" aria-label={t("editor.picker.closeAria")} onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-white/[0.06]">
           <X className="w-4 h-4" aria-hidden />
         </button>
       </div>
 
       <div className="px-5 pt-3 space-y-2">
-        <div role="group" aria-label="Places" className="flex flex-wrap gap-1">
+        <div role="group" aria-label={t("editor.picker.placesAria")} className="flex flex-wrap gap-1">
           {PICKER_SHORTCUTS.map((s) => (
             <button key={s.label} type="button" onClick={() => goShortcut(s)} className={cn(pickerButton, "py-1", s.label.startsWith("/") && "font-mono")}>
-              {s.label}
+              {s.labelKey ? t(s.labelKey) : s.label}
             </button>
           ))}
         </div>
 
-        <nav aria-label="Folder path">
+        <nav aria-label={t("editor.picker.pathAria")}>
           <ol className="flex flex-wrap items-center gap-x-0.5 text-xs font-mono text-gray-400">
             {(listing ? breadcrumbs(listing.path) : []).map((crumb, i, all) => (
               <li key={crumb.path} className="flex items-center gap-0.5">
@@ -354,7 +364,14 @@ function PickerBody({
         </nav>
 
         <div className="flex items-center gap-2">
-          <button type="button" aria-label="Open the parent folder" title="Parent folder (Backspace)" disabled={!listing?.parent} onClick={goUp} className={pickerButton}>
+          <button
+            type="button"
+            aria-label={t("editor.picker.parentAria")}
+            title={t("editor.picker.parentTitle")}
+            disabled={!listing?.parent}
+            onClick={goUp}
+            className={pickerButton}
+          >
             <CornerLeftUp className="w-3.5 h-3.5" aria-hidden />
           </button>
           <div className="relative flex-1">
@@ -363,12 +380,12 @@ function PickerBody({
               ref={filterRef}
               type="text"
               role="combobox"
-              aria-label="Filter this folder"
+              aria-label={t("editor.picker.filterAria")}
               aria-expanded
               aria-controls={listId}
               aria-activedescendant={activeIndex >= 0 ? optionId(activeIndex) : undefined}
               aria-autocomplete="list"
-              placeholder="Filter this folder"
+              placeholder={t("editor.picker.filterAria")}
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
@@ -396,7 +413,7 @@ function PickerBody({
               }}
               className="h-3.5 w-3.5 rounded accent-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
             />
-            Show hidden
+            {t("editor.picker.showHidden")}
           </label>
         </div>
       </div>
@@ -408,7 +425,7 @@ function PickerBody({
             {error.path !== "" && <p className="text-[11px] font-mono text-gray-600 break-all">{error.path}</p>}
             <button type="button" onClick={() => load(error.path)} className={pickerButton}>
               <RefreshCw className="w-3.5 h-3.5" aria-hidden />
-              Retry
+              {t("common.retry")}
             </button>
           </div>
         ) : (
@@ -416,7 +433,7 @@ function PickerBody({
             id={listId}
             role="listbox"
             tabIndex={0}
-            aria-label={listing ? `Contents of ${listing.path}` : "Folder contents"}
+            aria-label={listing ? t("editor.picker.contentsOf", { path: listing.path }) : t("editor.picker.folderContents")}
             aria-busy={loading}
             aria-activedescendant={activeIndex >= 0 ? optionId(activeIndex) : undefined}
             onKeyDown={onKeyDown}
@@ -424,11 +441,11 @@ function PickerBody({
           >
             {loading && !listing ? (
               <li role="presentation" className="flex items-center justify-center gap-2 py-10 text-sm text-gray-500">
-                <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> Reading the folder…
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> {t("editor.picker.reading")}
               </li>
             ) : entries.length === 0 ? (
               <li role="presentation" className="py-10 text-center text-sm text-gray-500">
-                {listing && listing.entries.length > 0 ? "Nothing matches. Clear the filter, or show hidden files." : "This folder is empty."}
+                {listing && listing.entries.length > 0 ? t("editor.picker.noMatches") : t("editor.picker.emptyFolder")}
               </li>
             ) : (
               entries.map((entry, i) => {
@@ -454,8 +471,8 @@ function PickerBody({
                     <Icon className={cn("w-4 h-4 flex-shrink-0", kind === "folder" ? "text-cyan-400/80" : kind === "app" ? "text-purple-400" : kind === "executable" ? "text-green-400/80" : "text-gray-500")} aria-hidden />
                     <span className={cn("flex-1 min-w-0 truncate font-mono", entry.hidden && "italic")}>{entry.name}</span>
                     <span className="flex-shrink-0 text-[10px] text-gray-500">
-                      {ENTRY_KIND_LABELS[kind]}
-                      {entry.hidden ? ", hidden" : ""}
+                      {t(ENTRY_KIND_LABELS[kind])}
+                      {entry.hidden ? `, ${t("editor.picker.hiddenSuffix")}` : ""}
                     </span>
                   </li>
                 );
@@ -465,21 +482,19 @@ function PickerBody({
         )}
       </div>
 
-      {listing?.truncated && !error && (
-        <p className="px-5 pb-1 text-[11px] text-amber-400">This folder has more entries than the list can show. Type the path by hand when the entry is missing.</p>
-      )}
+      {listing?.truncated && !error && <p className="px-5 pb-1 text-[11px] text-amber-400">{t("editor.picker.truncated")}</p>}
 
       <div className="flex flex-wrap items-end gap-2 px-5 py-3 border-t border-white/[0.06]">
         {allowNewFile && (
           <div className="flex items-end gap-2 mr-auto">
             <label htmlFor={nameId} className="space-y-1">
-              <span className="block text-[11px] text-gray-500">New file in this folder</span>
+              <span className="block text-[11px] text-gray-500">{t("editor.picker.newFileLabel")}</span>
               <input
                 id={nameId}
                 type="text"
                 spellCheck={false}
                 value={fileName}
-                placeholder="job.log"
+                placeholder={t("editor.picker.newFilePlaceholder")}
                 aria-invalid={fileName !== "" && nameProblem !== null}
                 onChange={(e) => setFileName(e.target.value)}
                 onKeyDown={(e) => {
@@ -497,22 +512,23 @@ function PickerBody({
               onClick={() => listing && onPick(joinPath(listing.path, fileName.trim()))}
               className={pickerButton}
             >
-              Use this folder + file name
+              {t("editor.picker.useFolderAndName")}
             </button>
           </div>
         )}
         <div className="ml-auto flex gap-2">
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:bg-white/[0.06]">
-            Cancel
+            {t("common.cancel")}
           </button>
           {picksOpenFolder(mode) && (
             <button type="button" disabled={!listing || error !== null} onClick={() => listing && onPick(listing.path)} className={mode === "folder" ? primaryButton : pickerButton}>
-              Choose this folder
+              {t("editor.picker.chooseFolder")}
             </button>
           )}
           {mode !== "folder" && (
             <button type="button" disabled={!canChooseCurrent || error !== null} onClick={() => activate(current)} className={primaryButton}>
-              Choose{canChooseCurrent ? ` “${current!.name}”` : ""}
+              {t("editor.picker.choose")}
+              {canChooseCurrent ? ` “${current!.name}”` : ""}
             </button>
           )}
         </div>
@@ -544,6 +560,7 @@ export function ChoosePathButton({
   suggestedName?: string;
   className?: string;
 }) {
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   return (
@@ -552,7 +569,7 @@ export function ChoosePathButton({
         type="button"
         disabled={disabled}
         aria-haspopup="dialog"
-        aria-label={`Choose: ${fieldLabel}`}
+        aria-label={t("editor.picker.chooseFieldAria", { field: fieldLabel })}
         onClick={() => {
           setMounted(true);
           setOpen(true);
@@ -563,14 +580,14 @@ export function ChoosePathButton({
           className
         )}
       >
-        Choose…
+        {t("editor.picker.chooseEllipsis")}
       </button>
       {mounted && (
         <PathPicker
           open={open}
           mode={mode}
           value={value}
-          title={`${MODE_TITLES[mode]}: ${fieldLabel}`}
+          title={`${t(MODE_TITLES[mode])}: ${fieldLabel}`}
           allowNewFile={allowNewFile}
           suggestedName={suggestedName}
           onClose={() => setOpen(false)}

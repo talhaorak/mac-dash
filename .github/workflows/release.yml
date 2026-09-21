@@ -154,9 +154,13 @@ jobs:
             echo "x64_sha256=$X64_SHA256"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Release notes from CHANGELOG.md
+        run: scripts/release-notes.sh "${{ steps.version.outputs.version }}" > release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release-notes.md
           generate_release_notes: true
           files: |
             macdash-${{ steps.version.outputs.version }}-darwin-arm64.tar.gz

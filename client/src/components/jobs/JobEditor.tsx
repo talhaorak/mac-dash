@@ -17,6 +17,8 @@ import {
   type PathFacts,
 } from "@shared/launchd";
 import { PlistParseError, parsePlistDict, serializePlist, type PlistDict } from "@shared/plist";
+import { formatDateTime, tDynamic, useT, type TKey } from "@/i18n";
+import { localizeIssue, scopeDescription, scopeTitle } from "@/i18n/launchd";
 import { JobForm, fetchDefaultPath, needsAutoPath, readAutoPath, setKey, withAutoPath, writeAutoPath } from "./JobForm";
 import { XmlEditor } from "./XmlEditor";
 import { DRAFT_DEBOUNCE_MS, browserStorage, clearDraft, jobDraftKey, readDraft, writeDraft, type JobDraft } from "./drafts";
@@ -57,12 +59,13 @@ function uniqueLabel(base: string, taken: Set<string>): string {
 }
 
 export function JobEditor({ target, onClose }: { target: JobEditorTarget | null; onClose: () => void }) {
+  const { t } = useT();
   return (
     <Dialog
       open={target !== null}
       onClose={onClose}
       closeOnBackdrop={false}
-      ariaLabel="launchd job editor"
+      ariaLabel={t("editor.dialog.ariaLabel")}
       className="max-w-5xl! h-[88vh] flex flex-col overflow-hidden p-0"
     >
       {target && <EditorBody key={JSON.stringify(target)} target={target} onClose={onClose} />}
@@ -71,6 +74,7 @@ export function JobEditor({ target, onClose }: { target: JobEditorTarget | null;
 }
 
 function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () => void }) {
+  const { t, tn } = useT();
   const titleId = useId();
   const services = useServicesStore((s) => s.services);
 
@@ -82,7 +86,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
       const hasLabel = typeof target.initialJob.Label === "string" && target.initialJob.Label !== "";
       return hasLabel ? { ...target.initialJob } : { Label: uniqueLabel("com.example.my-job", taken), ...target.initialJob };
     }
-    const template = JOB_TEMPLATES.find((t) => t.id === target.templateId) ?? JOB_TEMPLATES[0];
+    const template = JOB_TEMPLATES.find((tpl) => tpl.id === target.templateId) ?? JOB_TEMPLATES[0];
     return template.build(uniqueLabel("com.example.my-job", taken));
   });
 
@@ -287,7 +291,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
     if (!baseline || !edited || readOnly) return;
     record(baseline, true);
     showSnapshot(baseline);
-    toast.info("Changes discarded. Undo brings them back.");
+    toast.info(t("editor.toast.discarded"));
   };
 
   // Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z. A text field keeps its own undo, so the shortcut works everywhere else in the editor.
@@ -315,7 +319,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
     // A draft with an XML error can only be fixed in Expert mode.
     if (!editXml(pendingDraft.xml, { category: pendingDraft.category, discrete: true }) || tab === "revisions") setTab("expert");
     setPendingDraft(null);
-    toast.info("Draft restored. Save to apply it.");
+    toast.info(t("editor.toast.draftRestored"));
   };
 
   const discardDraft = () => {
@@ -362,7 +366,8 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
       const addPath = target.mode !== "edit" && autoPath && needsAutoPath(job);
       const body = addPath ? serializePlist(withAutoPath(job, await fetchDefaultPath())) : xmlIsSource.current ? xml : serializePlist(job);
       const result = await backend.saveJob({ category, xml: body, original, load });
-      toast.success(`${load ? `Saved and loaded ${result.label}` : `Saved ${result.label} without loading`}${addPath ? ". PATH was added." : ""}`);
+      const savedText = t(load ? "editor.toast.savedAndLoaded" : "editor.toast.savedOnly", { label: result.label });
+      toast.success(`${savedText}${addPath ? ` ${t("editor.toast.pathAdded")}` : ""}`);
       dropDraft();
       onClose();
     } catch (e) {
@@ -388,7 +393,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
     try {
       editXml(await backend.readJobRevision(rev.id), { discrete: true });
       setTab("expert");
-      toast.info("Revision loaded into the editor. Save to apply it.");
+      toast.info(t("editor.toast.revisionLoaded"));
     } catch (e) {
       toast.error((e as Error).message);
     }
@@ -398,17 +403,23 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
     if (!dirty || readOnly) return onClose();
     // Write the draft first, so the question tells the truth about what happens to the changes.
     const message = flushDraft()
-      ? "Close the editor without saving?\n\nYour changes stay on this Mac as a draft. The editor offers to restore them the next time you open this job."
+      ? t("editor.confirm.closeWithDraft")
       : !edited
-        ? "Close the editor? You did not change this job, so no draft is kept."
+        ? t("editor.confirm.closeNoChanges")
         : pendingDraft
-          ? `Close the editor? These changes are lost.\n\nThe earlier draft from ${new Date(pendingDraft.savedAt).toLocaleString()} stays.`
-          : "Discard the changes to this job?\n\nThey cannot be kept as a draft (over 200 KB, or the browser storage is not available).";
+          ? t("editor.confirm.closeDraftLost", { when: formatDateTime(pendingDraft.savedAt) })
+          : t("editor.confirm.discardNoDraft");
     if (window.confirm(message)) onClose();
   };
 
   const title =
-    target.mode === "new" ? "New job" : target.mode === "duplicate" ? "Duplicate job" : readOnly ? "View job" : "Edit job";
+    target.mode === "new"
+      ? t("editor.title.new")
+      : target.mode === "duplicate"
+        ? t("editor.title.duplicate")
+        : readOnly
+          ? t("editor.title.view")
+          : t("editor.title.edit");
 
   const headerButton =
     "inline-flex items-center gap-1 p-2 rounded-lg text-xs text-gray-400 hover:text-gray-200 hover:bg-white/[0.06] " +
@@ -424,7 +435,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
           </h2>
           <div className="grid grid-cols-[1fr_220px] gap-3">
             <label className="space-y-1">
-              <span className="text-[11px] font-medium text-gray-500">Label (name)</span>
+              <span className="text-[11px] font-medium text-gray-500">{t("editor.field.labelName")}</span>
               <input
                 type="text"
                 spellCheck={false}
@@ -435,7 +446,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
               />
             </label>
             <label className="space-y-1">
-              <span className="text-[11px] font-medium text-gray-500">Runs for</span>
+              <span className="text-[11px] font-medium text-gray-500">{t("editor.field.runsFor")}</span>
               <select
                 value={category}
                 disabled={readOnly || loading}
@@ -444,25 +455,34 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
               >
                 {(readOnly ? JOB_SCOPES : WRITABLE_SCOPES).map((s) => (
                   <option key={s.category} value={s.category}>
-                    {s.category === "user-agents" ? "Me" : s.category === "global-agents" ? "All users" : s.category === "global-daemons" ? "root (daemon)" : s.title}
+                    {s.category === "user-agents"
+                      ? t("editor.scope.me")
+                      : s.category === "global-agents"
+                        ? t("editor.scope.allUsers")
+                        : s.category === "global-daemons"
+                          ? t("editor.scope.rootDaemon")
+                          : scopeTitle(s.category)}
                   </option>
                 ))}
               </select>
             </label>
           </div>
           <p className="text-[11px] text-gray-600">
-            {scope.description} File: <span className="font-mono">{scope.dir}/{typeof job.Label === "string" && job.Label ? job.Label : "<label>"}.plist</span>
-            {scope.needsAdmin && !readOnly ? ". Saving asks for an administrator password." : ""}
+            {scopeDescription(category)} {t("editor.field.file")}{" "}
+            <span className="font-mono">
+              {scope.dir}/{typeof job.Label === "string" && job.Label ? job.Label : "<label>"}.plist
+            </span>
+            {scope.needsAdmin && !readOnly ? ` ${t("editor.field.adminPasswordNote")}` : ""}
           </p>
         </div>
         <div className="flex items-center gap-0.5">
           {!readOnly && (
-            <div role="group" aria-label="History" className="flex items-center gap-0.5 mr-2">
+            <div role="group" aria-label={t("editor.history.groupAria")} className="flex items-center gap-0.5 mr-2">
               <button
                 type="button"
-                aria-label="Undo"
+                aria-label={t("common.undo")}
                 aria-keyshortcuts="Meta+Z Control+Z"
-                title="Undo (Cmd+Z). Inside a text field, Cmd+Z undoes the typing in that field."
+                title={t("editor.history.undoTitle")}
                 disabled={loading || !canUndo(history)}
                 onClick={() => stepHistory("undo")}
                 className={headerButton}
@@ -471,9 +491,9 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
               </button>
               <button
                 type="button"
-                aria-label="Redo"
+                aria-label={t("common.redo")}
                 aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z"
-                title="Redo (Shift+Cmd+Z)"
+                title={t("editor.history.redoTitle")}
                 disabled={loading || !canRedo(history)}
                 onClick={() => stepHistory("redo")}
                 className={headerButton}
@@ -483,46 +503,46 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
               <ConfirmButton
                 onConfirm={discardChanges}
                 disabled={loading || !edited}
-                confirmLabel="Click again to discard"
-                title={target.mode === "edit" ? "Go back to the job as it is on disk" : "Go back to the job as the editor opened it"}
+                confirmLabel={t("editor.history.confirmDiscard")}
+                title={target.mode === "edit" ? t("editor.history.discardTitleEdit") : t("editor.history.discardTitleNew")}
                 className={headerButton}
                 armedClassName="bg-red-500/25! text-red-200!"
               >
                 <RotateCcw className="w-3.5 h-3.5" aria-hidden />
-                Discard changes
+                {t("editor.history.discardChanges")}
               </ConfirmButton>
             </div>
           )}
-          <button type="button" aria-label="Close editor" onClick={requestClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400">
+          <button type="button" aria-label={t("editor.dialog.closeAria")} onClick={requestClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400">
             <X className="w-4 h-4" />
           </button>
         </div>
       </div>
 
       {/* Tabs */}
-      <div role="tablist" aria-label="Editor mode" className="flex gap-1 px-6 pt-3">
+      <div role="tablist" aria-label={t("editor.tabs.groupAria")} className="flex gap-1 px-6 pt-3">
         {(
           [
-            { id: "form", label: "Form" },
-            { id: "expert", label: "Expert (XML)" },
-            ...(target.mode === "edit" ? [{ id: "revisions", label: "Revisions" }] : []),
-          ] as { id: Tab; label: string }[]
-        ).map((t) => (
+            { id: "form", labelKey: "editor.tabs.form" },
+            { id: "expert", labelKey: "editor.tabs.expert" },
+            ...(target.mode === "edit" ? [{ id: "revisions", labelKey: "editor.tabs.revisions" }] : []),
+          ] as { id: Tab; labelKey: TKey }[]
+        ).map((tabDef) => (
           <button
-            key={t.id}
+            key={tabDef.id}
             type="button"
             role="tab"
-            aria-selected={tab === t.id}
-            disabled={t.id === "form" && xmlError !== null}
-            title={t.id === "form" && xmlError ? "Fix the XML error first" : undefined}
-            onClick={() => (t.id === "revisions" ? openRevisions() : setTab(t.id))}
+            aria-selected={tab === tabDef.id}
+            disabled={tabDef.id === "form" && xmlError !== null}
+            title={tabDef.id === "form" && xmlError ? t("editor.tabs.fixXmlFirst") : undefined}
+            onClick={() => (tabDef.id === "revisions" ? openRevisions() : setTab(tabDef.id))}
             className={cn(
               "px-3 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-40",
-              tab === t.id ? "bg-cyan-500/15 text-cyan-400 ring-1 ring-cyan-500/30" : "text-gray-500 hover:text-gray-300 hover:bg-white/[0.04]"
+              tab === tabDef.id ? "bg-cyan-500/15 text-cyan-400 ring-1 ring-cyan-500/30" : "text-gray-500 hover:text-gray-300 hover:bg-white/[0.04]"
             )}
           >
-            {t.id === "revisions" && <History className="w-3 h-3 inline mr-1" />}
-            {t.label}
+            {tabDef.id === "revisions" && <History className="w-3 h-3 inline mr-1" />}
+            {t(tabDef.labelKey)}
           </button>
         ))}
       </div>
@@ -531,15 +551,15 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
         <div role="status" className="mx-6 mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200/90">
           <History className="w-3.5 h-3.5 flex-shrink-0 text-amber-400" aria-hidden />
           <span>
-            Unsaved draft from <time dateTime={new Date(pendingDraft.savedAt).toISOString()}>{new Date(pendingDraft.savedAt).toLocaleString()}</time>.{" "}
-            <span className="text-amber-200/60">New edits are not kept as a draft until you restore or discard it.</span>
+            {t("editor.draft.bannerPrefix")} <time dateTime={new Date(pendingDraft.savedAt).toISOString()}>{formatDateTime(pendingDraft.savedAt)}</time>.{" "}
+            <span className="text-amber-200/60">{t("editor.draft.bannerNote")}</span>
           </span>
           <span className="ml-auto flex gap-1">
             <button type="button" onClick={restoreDraft} className="px-2.5 py-1 rounded-lg font-medium text-cyan-950 bg-cyan-400 hover:bg-cyan-300">
-              Restore
+              {t("editor.draft.restore")}
             </button>
             <button type="button" onClick={discardDraft} className="px-2.5 py-1 rounded-lg text-amber-200/90 hover:bg-white/[0.08]">
-              Discard
+              {t("editor.draft.discard")}
             </button>
           </span>
         </div>
@@ -550,7 +570,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
         <div className="min-h-0 overflow-y-auto pr-2">
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-gray-500 py-10 justify-center">
-              <Loader2 className="w-4 h-4 animate-spin" /> Reading the job…
+              <Loader2 className="w-4 h-4 animate-spin" /> {t("editor.body.readingJob")}
             </div>
           ) : loadError ? (
             <p role="alert" className="text-sm text-red-400 py-10 text-center">
@@ -562,7 +582,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
             <div className="h-full flex flex-col gap-2">
               <div className="flex items-center justify-end gap-2">
                 <label className="flex items-center gap-2 text-[11px] text-gray-500">
-                  Colours
+                  {t("editor.body.coloursLabel")}
                   <select
                     value={themeId}
                     onChange={(e) => {
@@ -572,9 +592,9 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
                     }}
                     className={cn(inputClass, "w-40 py-1 text-xs")}
                   >
-                    {EDITOR_THEMES.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
+                    {EDITOR_THEMES.map((theme) => (
+                      <option key={theme.id} value={theme.id}>
+                        {tDynamic(`editor.theme.${theme.id}.name`, theme.name)}
                       </option>
                     ))}
                   </select>
@@ -590,14 +610,14 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
           ) : (
             <div className="space-y-1">
               {revisions === null ? (
-                <p className="text-sm text-gray-500">Loading…</p>
+                <p className="text-sm text-gray-500">{t("common.loading")}</p>
               ) : revisions.length === 0 ? (
-                <p className="text-sm text-gray-500">No earlier versions. mac-dash keeps a copy every time it overwrites or deletes this job.</p>
+                <p className="text-sm text-gray-500">{t("editor.revisions.empty")}</p>
               ) : (
                 revisions.map((rev) => (
                   <div key={rev.id} className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/[0.03]">
                     <History className="w-3.5 h-3.5 text-gray-600" />
-                    <span className="text-sm text-gray-300">{new Date(rev.at).toLocaleString()}</span>
+                    <span className="text-sm text-gray-300">{formatDateTime(rev.at)}</span>
                     <span className="text-xs text-gray-600 font-mono">{rev.size} B</span>
                     <button
                       type="button"
@@ -605,7 +625,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
                       onClick={() => restoreRevision(rev)}
                       className="ml-auto px-2.5 py-1 rounded-lg text-xs text-cyan-400 hover:bg-cyan-500/10 disabled:opacity-40"
                     >
-                      Load into editor
+                      {t("editor.revisions.loadButton")}
                     </button>
                   </div>
                 ))
@@ -615,16 +635,16 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
         </div>
 
         {/* Checks */}
-        <aside aria-label="Checks" className="min-h-0 overflow-y-auto rounded-xl bg-black/20 border border-white/[0.06] p-3 space-y-2">
+        <aside aria-label={t("editor.checks.title")} className="min-h-0 overflow-y-auto rounded-xl bg-black/20 border border-white/[0.06] p-3 space-y-2">
           <h3 className="text-xs font-semibold text-gray-400 flex items-center gap-2">
-            Checks
-            {counts.error > 0 && <span className="text-red-400">{counts.error} errors</span>}
-            {counts.warning > 0 && <span className="text-amber-400">{counts.warning} warnings</span>}
+            {t("editor.checks.title")}
+            {counts.error > 0 && <span className="text-red-400">{tn("editor.checks.errorCount", counts.error)}</span>}
+            {counts.warning > 0 && <span className="text-amber-400">{tn("editor.checks.warningCount", counts.warning)}</span>}
           </h3>
           {xmlError && <IssueLine issue={{ severity: "error", key: "XML", message: xmlError.message, blocking: true }} />}
           {!xmlError && issues.length === 0 && (
             <p className="flex items-center gap-1.5 text-xs text-green-400">
-              <CheckCircle2 className="w-3.5 h-3.5" /> No problems found.
+              <CheckCircle2 className="w-3.5 h-3.5" /> {t("editor.checks.noProblems")}
             </p>
           )}
           {!xmlError && issues.map((issue, i) => <IssueLine key={i} issue={issue} />)}
@@ -634,17 +654,14 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
       {/* Footer */}
       <div className="flex items-center gap-2 px-6 py-4 border-t border-white/[0.06]">
         {readOnly ? (
-          <p className="text-xs text-gray-500">This job is part of macOS and is read-only. Duplicate it to make your own version.</p>
+          <p className="text-xs text-gray-500">{t("editor.footer.readOnly")}</p>
         ) : blocked ? (
-          <p className="text-xs text-red-400">Fix the blocking errors to save.</p>
+          <p className="text-xs text-red-400">{t("editor.footer.blocked")}</p>
         ) : counts.error > 0 ? (
-          <p className="text-xs text-amber-400">There are errors. You can still save.</p>
+          <p className="text-xs text-amber-400">{t("editor.footer.hasErrors")}</p>
         ) : null}
         {!readOnly && target.mode !== "edit" && (
-          <label
-            className="flex items-center gap-1.5 text-xs text-gray-400"
-            title="When the job sets no PATH, the default PATH of this Mac is added to EnvironmentVariables before the save. launchd's own PATH is /usr/bin:/bin:/usr/sbin:/sbin. Only new and duplicated jobs."
-          >
+          <label className="flex items-center gap-1.5 text-xs text-gray-400" title={t("editor.footer.autoPathTitle")}>
             <input
               type="checkbox"
               checked={autoPath}
@@ -654,12 +671,12 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
               }}
               className="h-3.5 w-3.5 rounded accent-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
             />
-            Add PATH automatically
+            {t("editor.footer.autoPathLabel")}
           </label>
         )}
         <div className="ml-auto flex gap-2">
           <button type="button" onClick={requestClose} className="px-3 py-2 rounded-xl text-sm text-gray-400 hover:bg-white/[0.06]">
-            {readOnly ? "Close" : "Cancel"}
+            {readOnly ? t("common.close") : t("common.cancel")}
           </button>
           {!readOnly && (
             <>
@@ -667,10 +684,10 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
                 type="button"
                 disabled={blocked || saving}
                 onClick={() => save(false)}
-                title="Write the file but do not load it into launchd"
+                title={t("editor.footer.saveOnlyTitle")}
                 className="px-3 py-2 rounded-xl text-sm text-gray-300 bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-40"
               >
-                Save only
+                {t("editor.footer.saveOnly")}
               </button>
               <button
                 type="button"
@@ -679,7 +696,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
                 className="px-4 py-2 rounded-xl text-sm font-medium text-cyan-950 bg-cyan-400 hover:bg-cyan-300 disabled:opacity-40 inline-flex items-center gap-2"
               >
                 {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                Save and load
+                {t("editor.footer.saveAndLoad")}
               </button>
             </>
           )}
@@ -690,15 +707,17 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
 }
 
 function IssueLine({ issue }: { issue: JobIssue }) {
+  const { t } = useT();
   const Icon = issue.severity === "error" ? XCircle : issue.severity === "warning" ? AlertTriangle : Info;
   const tone = issue.severity === "error" ? "text-red-400" : issue.severity === "warning" ? "text-amber-400" : "text-gray-500";
+  const severityKey: TKey = issue.severity === "error" ? "common.error" : issue.severity === "warning" ? "common.warning" : "common.info";
   return (
     <div className="flex gap-2 text-[11px] leading-snug">
       <Icon className={cn("w-3.5 h-3.5 flex-shrink-0 mt-0.5", tone)} aria-hidden />
       <p className="text-gray-400">
-        <span className="sr-only">{issue.severity}: </span>
+        <span className="sr-only">{t(severityKey)}: </span>
         {issue.key && <span className={cn("font-mono mr-1", tone)}>{issue.key}</span>}
-        {issue.message}
+        {localizeIssue(issue)}
       </p>
     </div>
   );

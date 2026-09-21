@@ -1,375 +1,499 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>mac-dash — macOS System Dashboard</title>
-  <meta name="description" content="Beautiful real-time macOS system dashboard. Monitor services, processes, CPU, memory, disk and logs — all from your browser." />
-  <meta name="keywords" content="macos, dashboard, system monitor, launchctl, process manager, bun, hono, react, open-source" />
-  <meta property="og:title" content="mac-dash — macOS System Dashboard" />
-  <meta property="og:description" content="Beautiful real-time macOS system dashboard." />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://talhaorak.github.io/mac-dash" />
-  <meta name="author" content="Talha Orak" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖥️</text></svg>" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>mac-dash — manage every launchd job on your Mac</title>
+<meta name="description" content="mac-dash creates and edits every launchd job on your Mac, with process, log and system-load monitoring. Open source, as a desktop app or a local web server." />
+<link rel="canonical" href="https://talhaorak.github.io/mac-dash/" />
+
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="mac-dash" />
+<meta property="og:title" content="mac-dash — manage every launchd job on your Mac" />
+<meta property="og:description" content="Create and edit every LaunchAgent and LaunchDaemon, plus processes, logs and system load. Open source, as a desktop app or a local web server." />
+<meta property="og:url" content="https://talhaorak.github.io/mac-dash/" />
+<meta property="og:image" content="https://talhaorak.github.io/mac-dash/media/dashboard.png" />
+<meta property="og:image:width" content="1600" />
+<meta property="og:image:height" content="1000" />
+
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="mac-dash — manage every launchd job on your Mac" />
+<meta name="twitter:description" content="Create and edit every LaunchAgent and LaunchDaemon, plus processes, logs and system load. Open source, as a desktop app or a local web server." />
+<meta name="twitter:image" content="https://talhaorak.github.io/mac-dash/media/dashboard.png" />
+
+<meta name="theme-color" content="#050810" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#f6f8fb" media="(prefers-color-scheme: light)" />
+
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+<link rel="icon" type="image/png" sizes="128x128" href="favicon-128.png" />
+<link rel="apple-touch-icon" href="favicon-128.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "mac-dash",
+  "operatingSystem": "macOS",
+  "applicationCategory": "UtilitiesApplication",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "license": "https://github.com/talhaorak/mac-dash/blob/master/LICENSE",
+  "url": "https://talhaorak.github.io/mac-dash/",
+  "downloadUrl": "https://github.com/talhaorak/mac-dash/releases",
+  "softwareVersion": "1.2.0"
+}
+</script>
 </head>
 <body>
-  <!-- Nav -->
-  <nav class="nav">
-    <div class="container nav-inner">
-      <a href="#" class="logo">
-        <span class="logo-icon">🖥️</span>
-        <span class="logo-text">mac-dash</span>
-      </a>
-      <div class="nav-links">
-        <a href="#features">Features</a>
-        <a href="#install">Install</a>
-        <a href="https://github.com/talhaorak/mac-dash" target="_blank" rel="noopener noreferrer">GitHub</a>
-        <a href="https://github.com/talhaorak/mac-dash" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-          Star
-        </a>
-      </div>
-    </div>
-  </nav>
+<a class="skip-link" href="#main-content">Skip to content</a>
+
+<header class="nav">
+  <div class="container nav-inner">
+    <a href="#top" class="logo">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="15" x2="22" y2="15"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="15" x2="4" y2="15"/></svg>
+      <span>mac-dash</span>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#features">Features</a>
+      <a href="#lingon">Lingon</a>
+      <a href="#security">Security</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/talhaorak/mac-dash" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="#install" class="btn btn-sm btn-primary">Install</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main-content">
 
   <!-- Hero -->
-  <section class="hero">
-    <div class="hero-glow"></div>
+  <section id="top" class="hero" aria-labelledby="hero-heading">
+    <div class="hero-glow" aria-hidden="true"></div>
     <div class="container hero-content">
-      <div class="badge">Open Source &middot; MIT License &middot; by <a href="https://github.com/talhaorak" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: underline; text-underline-offset: 2px;">Talha Orak</a></div>
-      <h1>Your Mac.<br /><span class="gradient-text">At a Glance.</span></h1>
+      <p class="eyebrow">Open source &middot; MIT licence</p>
+      <h1 id="hero-heading">See, create and edit every launchd job on your Mac</h1>
       <p class="hero-sub">
-        Beautiful real-time macOS system dashboard. Monitor services, processes, 
-        CPU, memory, disk and logs — all from your browser.
+        Plus processes, logs and system load, in one tool. mac-dash is open source.
+        Run it as a native desktop app or as a local web server you open in your browser.
       </p>
-      <div class="hero-actions">
-        <div class="install-cmd" onclick="copyCmd(this)">
-          <code>npx mac-dash</code>
-          <span class="copy-hint">Click to copy</span>
-        </div>
-        <a href="#install" class="btn btn-primary">Get Started</a>
-        <a href="https://github.com/talhaorak/mac-dash" class="btn btn-ghost" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+
+      <div class="hero-media">
+        <video
+          id="demo-video"
+          class="demo-video"
+          autoplay muted loop playsinline
+          poster="media/demo-poster.webp"
+          width="1280" height="800"
+        >
+          <source src="media/demo.webm" type="video/webm" />
+          <source src="media/demo.mp4" type="video/mp4" />
+        </video>
+        <button id="demo-toggle" type="button" class="demo-toggle" aria-pressed="false" aria-label="Pause demo video">
+          <svg class="icon-pause" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          <svg class="icon-play is-hidden" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6,4 20,12 6,20"/></svg>
+        </button>
+        <p class="demo-caption">22-second demo, no audio. Fictional data.</p>
       </div>
-      <div class="hero-stats">
-        <div class="stat">
-          <span class="stat-value">~50ms</span>
-          <span class="stat-label">Polling overhead</span>
-        </div>
-        <div class="stat-divider"></div>
-        <div class="stat">
-          <span class="stat-value">Real-time</span>
-          <span class="stat-label">WebSocket updates</span>
-        </div>
-        <div class="stat-divider"></div>
-        <div class="stat">
-          <span class="stat-value">Plugin</span>
-          <span class="stat-label">Extensible</span>
-        </div>
-      </div>
-    </div>
-    <!-- Screenshot mockup -->
-    <div class="container">
-      <div class="screenshot-wrapper">
-        <div class="screenshot-chrome">
-          <div class="chrome-dots">
-            <span class="dot red"></span>
-            <span class="dot yellow"></span>
-            <span class="dot green"></span>
-          </div>
-          <span class="chrome-url">localhost:7227</span>
-        </div>
-        <div class="screenshot-body">
-          <div class="mock-sidebar">
-            <div class="mock-logo">🖥️</div>
-            <div class="mock-nav-item active"></div>
-            <div class="mock-nav-item"></div>
-            <div class="mock-nav-item"></div>
-            <div class="mock-nav-item"></div>
-            <div class="mock-nav-item"></div>
-          </div>
-          <div class="mock-main">
-            <div class="mock-header">
-              <div class="mock-title"></div>
-              <div class="mock-subtitle"></div>
+
+      <div id="install" class="install-block">
+        <h2 class="install-heading">Install</h2>
+        <div class="install-grid">
+          <div class="install-card">
+            <h3>Desktop app</h3>
+            <p class="install-note-inline">Homebrew cask, native macOS app</p>
+            <div class="code-block">
+              <pre><code>brew install --cask talhaorak/tap/macdash</code></pre>
+              <button type="button" class="copy-btn" aria-label="Copy command">Copy</button>
             </div>
-            <div class="mock-gauges">
-              <div class="mock-gauge-card">
-                <div class="mock-gauge cpu">
-                  <svg viewBox="0 0 36 36" class="gauge-svg">
-                    <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="3"/>
-                    <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#06b6d4" stroke-width="3" stroke-dasharray="42, 100" stroke-linecap="round"/>
-                  </svg>
-                  <span class="gauge-label">42%</span>
-                </div>
-                <div class="mock-label">CPU</div>
-              </div>
-              <div class="mock-gauge-card">
-                <div class="mock-gauge mem">
-                  <svg viewBox="0 0 36 36" class="gauge-svg">
-                    <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="3"/>
-                    <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#8b5cf6" stroke-width="3" stroke-dasharray="67, 100" stroke-linecap="round"/>
-                  </svg>
-                  <span class="gauge-label">67%</span>
-                </div>
-                <div class="mock-label">Memory</div>
-              </div>
-              <div class="mock-gauge-card">
-                <div class="mock-gauge disk">
-                  <svg viewBox="0 0 36 36" class="gauge-svg">
-                    <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="3"/>
-                    <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#22c55e" stroke-width="3" stroke-dasharray="35, 100" stroke-linecap="round"/>
-                  </svg>
-                  <span class="gauge-label">35%</span>
-                </div>
-                <div class="mock-label">Disk</div>
-              </div>
+          </div>
+          <div class="install-card">
+            <h3>Web server</h3>
+            <p class="install-note-inline">Quickest way to try it, via npx</p>
+            <div class="code-block">
+              <pre><code>npx macdash</code></pre>
+              <button type="button" class="copy-btn" aria-label="Copy command">Copy</button>
             </div>
-            <div class="mock-cards">
-              <div class="mock-card"></div>
-              <div class="mock-card"></div>
-              <div class="mock-card"></div>
-              <div class="mock-card"></div>
+          </div>
+          <div class="install-card">
+            <h3>Web server</h3>
+            <p class="install-note-inline">Global npm install</p>
+            <div class="code-block">
+              <pre><code>npm install -g @talhaorak/mac-dash
+macdash</code></pre>
+              <button type="button" class="copy-btn" aria-label="Copy command">Copy</button>
             </div>
           </div>
         </div>
+        <div class="hero-actions">
+          <a href="https://github.com/talhaorak/mac-dash" class="btn btn-ghost" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+          <a href="https://github.com/talhaorak/mac-dash/releases" class="btn btn-ghost" target="_blank" rel="noopener noreferrer">Latest release</a>
+        </div>
+        <p class="version-label">Current version v1.2.0 &middot; see the <a href="https://github.com/talhaorak/mac-dash/blob/master/CHANGELOG.md" target="_blank" rel="noopener noreferrer">changelog</a>.</p>
       </div>
     </div>
   </section>
 
   <!-- Features -->
-  <section id="features" class="features">
+  <section id="features" class="features" aria-labelledby="features-heading">
     <div class="container">
       <div class="section-header">
-        <div class="badge">Features</div>
-        <h2>Everything you need to<br /><span class="gradient-text">manage your Mac</span></h2>
-        <p>A single dashboard for all your macOS monitoring needs.</p>
+        <h2 id="features-heading">Everything mac-dash does</h2>
       </div>
-      <div class="features-grid">
-        <div class="feature-card">
-          <div class="feature-icon" style="--accent: #06b6d4">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="15" x2="22" y2="15"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="15" x2="4" y2="15"/></svg>
-          </div>
-          <h3>System Monitoring</h3>
-          <p>Real-time CPU, memory, and disk usage with beautiful gauges, mini charts, and history tracking.</p>
+
+      <article id="job-editor" class="feature">
+        <div class="feature-text">
+          <h3>Job editor</h3>
+          <p>A form for every documented <code>launchd.plist</code> key, with an Expert mode when you need the raw XML.</p>
+          <ul>
+            <li>A field for every documented <code>launchd.plist</code> key: command, script, app or Shortcut to run, run-at-load and keep-alive conditions, interval and calendar schedules, watch paths, environment, output files, user and resource limits.</li>
+            <li>Expert mode shows the raw XML with syntax colours, four editor themes, parse errors with line numbers, and find and replace.</li>
+            <li>Checks run before you save: missing executables, a tilde in a path, keys that only apply to daemons, and schedules launchd would ignore.</li>
+            <li>Templates, duplicate, delete to the Trash with a backup, and show in Finder.</li>
+            <li>Revisions keep the newest 20 backups per job, with revert.</li>
+            <li>Drafts save your unsaved edits and survive closing the editor.</li>
+            <li>Undo and redo cover the whole editor, plus a one-click "Discard changes."</li>
+          </ul>
         </div>
-        <div class="feature-card">
-          <div class="feature-icon" style="--accent: #8b5cf6">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-          </div>
-          <h3>Service Manager</h3>
-          <p>Browse, start, stop, enable and disable macOS LaunchAgents and LaunchDaemons with one click.</p>
+        <div class="feature-media media-grid-2">
+          <picture>
+            <source srcset="media/job-editor.webp" type="image/webp" />
+            <img src="media/job-editor.png" alt="Job editor form with run kind, triggers and checks" width="1600" height="1000" loading="lazy" decoding="async" />
+          </picture>
+          <picture>
+            <source srcset="media/job-editor-xml.webp" type="image/webp" />
+            <img src="media/job-editor-xml.png" alt="Job editor in Expert mode, showing the plist as XML with syntax colours" width="1600" height="1000" loading="lazy" decoding="async" />
+          </picture>
         </div>
-        <div class="feature-card">
-          <div class="feature-icon" style="--accent: #22c55e">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          </div>
-          <h3>Process Explorer</h3>
-          <p>View all running processes sorted by CPU or memory usage. Kill runaway processes instantly.</p>
+      </article>
+
+      <article id="monitor" class="feature feature-reverse">
+        <div class="feature-text">
+          <h3>Monitor</h3>
+          <p>mac-dash watches the five launchd folders all the time, on both the server and the desktop app.</p>
+          <ul>
+            <li>Keeps a change history when any app adds, changes or removes a job.</li>
+            <li>Notices when a job's exit status changes to a failure, and notifies you.</li>
+            <li>Notifications support prefix excludes and an on/off switch.</li>
+            <li>A click on a browser notification opens the job. A click on the desktop notification cannot yet — macOS only reports clicks to signed apps.</li>
+          </ul>
         </div>
-        <div class="feature-card">
-          <div class="feature-icon" style="--accent: #f59e0b">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          </div>
-          <h3>Log Viewer</h3>
-          <p>Stream macOS unified logs in real-time. Filter by level, process, or message content.</p>
+        <div class="feature-media">
+          <picture>
+            <source srcset="media/job-changes.webp" type="image/webp" />
+            <img src="media/job-changes.png" alt="Change history of the launchd folders" width="1600" height="1000" loading="lazy" decoding="async" />
+          </picture>
         </div>
-        <div class="feature-card">
-          <div class="feature-icon" style="--accent: #ec4899">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.32 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          </div>
-          <h3>Plugin System</h3>
-          <p>Extend mac-dash with custom plugins. Add new pages, widgets, and API endpoints.</p>
+      </article>
+
+      <article id="know-what-runs" class="feature">
+        <div class="feature-text">
+          <h3>Know what runs</h3>
+          <p>Every job's executable, and everything else that starts automatically on your Mac, in one place.</p>
+          <ul>
+            <li>Verified code signature: checked against Apple's root (<code>anchor apple</code>, <code>anchor apple generic</code>). Displayed certificate names are never trusted blindly.</li>
+            <li>Background items: the macOS Background Task Management database, as a searchable list. Reset asks you to type RESET, then for an administrator password.</li>
+            <li>Login items from System Settings, listed and deletable with a two-step confirm.</li>
+            <li>Privileged helper tools in <code>/Library/PrivilegedHelperTools</code>, listed and deletable with a two-step confirm and an administrator prompt.</li>
+            <li>The user's crontab, listed alongside legacy StartupItems.</li>
+            <li>A quarantine warning on a job, cleared on save.</li>
+          </ul>
         </div>
-        <div class="feature-card">
-          <div class="feature-icon" style="--accent: #06b6d4">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-          </div>
-          <h3>Blazing Fast</h3>
-          <p>Built on Bun + Hono. ~50ms polling overhead. WebSocket for instant updates. No Electron bloat.</p>
+        <div class="feature-media">
+          <picture>
+            <source srcset="media/job-details.webp" type="image/webp" />
+            <img src="media/job-details.png" alt="Job details panel showing the verified code signature" width="1600" height="1000" loading="lazy" decoding="async" />
+          </picture>
         </div>
-      </div>
+      </article>
+
+      <article id="organise" class="feature feature-reverse">
+        <div class="feature-text">
+          <h3>Organise</h3>
+          <p>Find any job fast, and keep notes on why it exists.</p>
+          <ul>
+            <li>Smart folders: saved rules over status, scope, owner, tags, triggers, schedule, exit status, or any launchd key.</li>
+            <li>Tags with a filter, and notes on every job, including read-only ones.</li>
+            <li>A custom icon per job: an emoji, or a pasted or dropped image.</li>
+            <li>Four ways to browse: groups with counts, a sortable list, a grid with three tile sizes, and a timeline of upcoming runs.</li>
+            <li>Cmd+K opens a quick switcher to jump to any job.</li>
+            <li>Deep links: every view, filter, job and editor has its own URL. Browser tabs and reloads restore their state; the desktop app opens new windows with Cmd+N.</li>
+          </ul>
+        </div>
+        <div class="feature-media media-grid-3">
+          <picture>
+            <source srcset="media/services.webp" type="image/webp" />
+            <img src="media/services.png" alt="Services grouped by scope, with smart folders and filters" width="1600" height="1000" loading="lazy" decoding="async" />
+          </picture>
+          <picture>
+            <source srcset="media/services-list.webp" type="image/webp" />
+            <img src="media/services-list.png" alt="Job list view with sortable columns and tag filters" width="1600" height="1000" loading="lazy" decoding="async" />
+          </picture>
+          <picture>
+            <source srcset="media/timeline.webp" type="image/webp" />
+            <img src="media/timeline.png" alt="Timeline view of upcoming scheduled job runs" width="1600" height="1000" loading="lazy" decoding="async" />
+          </picture>
+        </div>
+      </article>
+
+      <article id="power-tools" class="feature">
+        <div class="feature-text">
+          <h3>Power tools</h3>
+          <p>For the jobs that need more than a user agent.</p>
+          <ul>
+            <li>Jobs for you, for all users, or as root. Saving to <code>/Library</code> or acting in the system domain asks for one macOS administrator password; there is no persistent helper.</li>
+            <li>View and set the Mac's repeating wake, start-up, sleep and shut-down schedule (<code>pmset repeat</code>); setting it asks for an administrator password.</li>
+            <li>Wrap a script in an app, so macOS can grant it privacy permissions.</li>
+            <li>Pick a Shortcut to run, from the same list as <code>shortcuts list</code>.</li>
+            <li>A folder browser for every path field, in the browser and in the desktop app.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article id="dashboard-processes-logs" class="feature feature-reverse">
+        <div class="feature-text">
+          <h3>Dashboard, processes and logs</h3>
+          <p>mac-dash is also a general system monitor, not only a launchd editor.</p>
+          <ul>
+            <li>Real-time CPU, memory and disk gauges with sparkline history.</li>
+            <li>Process explorer: sort by CPU or memory, see full command arguments, kill a process.</li>
+            <li>Log viewer: stream the macOS unified log over WebSocket, filter by level or process name. Every job also has its own Log tab with a time span, level and text filter.</li>
+          </ul>
+        </div>
+        <div class="feature-media media-grid-3">
+          <picture>
+            <source srcset="media/dashboard.webp" type="image/webp" />
+            <img src="media/dashboard.png" alt="Dashboard showing CPU, memory and disk gauges with sparkline charts" width="1600" height="1000" loading="lazy" decoding="async" />
+          </picture>
+          <picture>
+            <source srcset="media/processes.webp" type="image/webp" />
+            <img src="media/processes.png" alt="Process explorer sorted by CPU usage" width="1600" height="1000" loading="lazy" decoding="async" />
+          </picture>
+          <picture>
+            <source srcset="media/logs.webp" type="image/webp" />
+            <img src="media/logs.png" alt="Log viewer streaming the unified log with level filters" width="1600" height="1000" loading="lazy" decoding="async" />
+          </picture>
+        </div>
+      </article>
+
+      <article id="plugins" class="feature">
+        <div class="feature-text">
+          <h3>Plugins</h3>
+          <p>Extend mac-dash with custom plugins: new pages, API endpoints and dashboard widgets.</p>
+          <ul>
+            <li>A plugin is a folder with a <code>manifest.json</code>, an optional <code>server.ts</code> for backend routes, and an optional <code>client.tsx</code> for the UI.</li>
+            <li>Plugins need the web server's HTTP API; the desktop app shows a message instead, since it has no HTTP server.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article id="appearance-language" class="feature feature-reverse">
+        <div class="feature-text">
+          <h3>Appearance and language</h3>
+          <ul>
+            <li>Light, dark and system appearance.</li>
+            <li>English and Turkish, with a language switch in the interface.</li>
+          </ul>
+        </div>
+        <div class="feature-media">
+          <picture>
+            <source srcset="media/services-light.webp" type="image/webp" />
+            <img src="media/services-light.png" alt="Services page in light appearance" width="1600" height="1000" loading="lazy" decoding="async" />
+          </picture>
+        </div>
+      </article>
+
+      <article id="desktop-or-web" class="feature">
+        <div class="feature-text">
+          <h3>Desktop app or web server</h3>
+          <ul>
+            <li>The desktop app uses Tauri and native macOS APIs directly: no HTTP server, no Node.js, and minimal overhead.</li>
+            <li>The web server runs on Bun and Hono. Start it with npx, a global npm install, Homebrew, or from source, then open it in a browser.</li>
+            <li>Both back ends implement the same contract and cover the same launchd features, except that plugins with a UI need the web server.</li>
+          </ul>
+        </div>
+      </article>
     </div>
   </section>
 
-  <!-- Tech Stack -->
-  <section class="tech-section">
+  <!-- Coming from Lingon? -->
+  <section id="lingon" class="lingon" aria-labelledby="lingon-heading">
     <div class="container">
       <div class="section-header">
-        <div class="badge">Tech Stack</div>
-        <h2>Built with <span class="gradient-text">modern tools</span></h2>
+        <h2 id="lingon-heading">Coming from Lingon?</h2>
+        <p>mac-dash tracks feature parity with Lingon Pro 10.3, the commercial launchd editor for macOS. The full comparison, 67 capabilities in total, is in <a href="https://github.com/talhaorak/mac-dash/blob/master/docs/lingon-parity.md" target="_blank" rel="noopener noreferrer"><code>docs/lingon-parity.md</code></a> on GitHub.</p>
       </div>
-      <div class="tech-grid">
-        <div class="tech-item">
-          <strong>Bun</strong>
-          <span>Runtime</span>
+      <div class="lingon-grid">
+        <div class="lingon-card">
+          <h3>What matches</h3>
+          <ul>
+            <li>Scopes and listing: user and global agents, global and read-only system daemons, login items, background items, privileged helper tools, crontab, legacy StartupItems, unparseable and symlinked plists.</li>
+            <li>Create and edit: a field for every launchd key, Expert XML mode, validating checks, templates, revisions, drafts, undo and redo, discard changes.</li>
+            <li>Organise: smart folders over any launchd key, tags, per-job notes, custom icons, four browsing views, a quick switcher.</li>
+            <li>Inspect and monitor: <code>launchctl print</code> per job, live state from both launchd domains, a per-job log tab, a background-items dump with reset, the quarantine warning, and the background monitor.</li>
+            <li>Windows and appearance: deep links standing in for tabs, and the wake and sleep schedule.</li>
+          </ul>
         </div>
-        <div class="tech-item">
-          <strong>Hono</strong>
-          <span>Server</span>
+        <div class="lingon-card">
+          <h3>What mac-dash adds</h3>
+          <ul>
+            <li>A change history of the launchd folders — Lingon only notifies.</li>
+            <li>Failed-job events.</li>
+            <li>A verified code signature for every job's executable.</li>
+            <li>Exit status explained in words, including signal names and <code>EX_CONFIG</code> hints.</li>
+            <li>Validation for more than 20 mistakes: a tilde in a path, an app bundle used as an executable, agent-only or daemon-only keys, and more.</li>
+            <li>Job templates.</li>
+            <li>Web access from the same Mac, plus processes, logs and system load in one tool.</li>
+          </ul>
         </div>
-        <div class="tech-item">
-          <strong>React 19</strong>
-          <span>UI</span>
-        </div>
-        <div class="tech-item">
-          <strong>Tailwind 4</strong>
-          <span>Styling</span>
-        </div>
-        <div class="tech-item">
-          <strong>Vite</strong>
-          <span>Bundler</span>
-        </div>
-        <div class="tech-item">
-          <strong>WebSocket</strong>
-          <span>Real-time</span>
+        <div class="lingon-card">
+          <h3>What's still open</h3>
+          <ul>
+            <li>Creating a job by dropping a file works in the desktop app; a browser cannot read a dropped file's path.</li>
+            <li>A click on a desktop notification cannot open the job yet — macOS only reports clicks to signed apps. It works from a browser notification.</li>
+            <li>The toolbar is not reorderable yet; "View options" only shows and hides rows and cards.</li>
+            <li>The interface ships in English and Turkish. Lingon ships about 20 languages, and right-to-left layout is still open.</li>
+          </ul>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Install -->
-  <section id="install" class="install-section">
+  <!-- Security -->
+  <section id="security" class="security" aria-labelledby="security-heading">
     <div class="container">
       <div class="section-header">
-        <div class="badge">Get Started</div>
-        <h2>Up and running in <span class="gradient-text">seconds</span></h2>
+        <h2 id="security-heading">Security</h2>
       </div>
-      <!-- Desktop App Download -->
-      <div class="install-card" style="background: linear-gradient(135deg, rgba(6,182,212,0.08), rgba(139,92,246,0.08)); border: 1px solid rgba(6,182,212,0.2); margin-bottom: 2rem; padding: 2rem; text-align: center;">
-        <div style="display: flex; align-items: center; justify-content: center; gap: 0.75rem; margin-bottom: 1rem;">
-          <span style="font-size: 2rem;">🖥️</span>
-          <div style="text-align: left;">
-            <h3 style="margin: 0; font-size: 1.25rem;">Desktop App <span class="muted" id="desktop-version">v1.0.6</span></h3>
-            <p style="margin: 0; font-size: 0.8rem; color: #9ca3af;">Native macOS app · No server needed · ~5MB</p>
-          </div>
-        </div>
-        <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
-          <a id="desktop-download-btn" href="https://github.com/talhaorak/mac-dash/releases/latest" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="font-size: 0.9rem;">
-            ⬇ Download DMG
-          </a>
-          <div class="code-block" onclick="copyCmd(this)" style="margin: 0;">
-            <code>brew install --cask talhaorak/tap/macdash</code>
-            <span class="copy-hint">Copy</span>
-          </div>
-        </div>
-      </div>
-
-      <div style="text-align: center; margin-bottom: 1.5rem;">
-        <span class="badge">CLI / Web Version</span>
-      </div>
-      <div class="install-grid">
-        <div class="install-card">
-          <h3>npx <span class="muted">(quickest)</span></h3>
-          <div class="code-block" onclick="copyCmd(this)">
-            <code>npx mac-dash</code>
-            <span class="copy-hint">Copy</span>
-          </div>
-        </div>
-        <div class="install-card">
-          <h3>npm <span class="muted">(global install)</span></h3>
-          <div class="code-block" onclick="copyCmd(this)">
-            <code>npm install -g mac-dash</code>
-            <span class="copy-hint">Copy</span>
-          </div>
-          <div class="code-block" onclick="copyCmd(this)">
-            <code>mac-dash</code>
-            <span class="copy-hint">Copy</span>
-          </div>
-        </div>
-        <div class="install-card">
-          <h3>Homebrew</h3>
-          <div class="code-block" onclick="copyCmd(this)">
-            <code>brew install talhaorak/tap/mac-dash</code>
-            <span class="copy-hint">Copy</span>
-          </div>
-        </div>
-        <div class="install-card">
-          <h3>From Source</h3>
-          <div class="code-block" onclick="copyCmd(this)">
-            <code>git clone https://github.com/talhaorak/mac-dash.git</code>
-            <span class="copy-hint">Copy</span>
-          </div>
-          <div class="code-block" onclick="copyCmd(this)">
-            <code>cd mac-dash && bun install && bun run dev</code>
-            <span class="copy-hint">Copy</span>
-          </div>
-        </div>
-      </div>
-      <p class="install-note">Requires macOS and <a href="https://bun.sh" target="_blank" rel="noopener noreferrer">Bun</a> runtime.</p>
+      <ul class="security-list">
+        <li>The server listens on <code>127.0.0.1</code> only, not on every interface.</li>
+        <li>Requests need a matching Origin and Host. A foreign Origin or a non-loopback Host gets rejected with 403, for HTTP and for the WebSocket upgrade.</li>
+        <li>Opening the server to your network (<code>HOST=0.0.0.0</code>) turns on an access token: a login screen, with the token stored at <code>~/.macdash/token</code>.</li>
+        <li>Jobs are addressed by label and scope. The API does not take a file path from the client.</li>
+        <li>Privileged saves write only to <code>/Library</code> or act in the system launchd domain, through one macOS administrator prompt. Root does not write into folders you control.</li>
+      </ul>
+      <p><a href="https://github.com/talhaorak/mac-dash/blob/master/SECURITY.md" target="_blank" rel="noopener noreferrer">Read the full security policy on GitHub</a>.</p>
     </div>
   </section>
 
-  <!-- CTA -->
-  <section class="cta-section">
-    <div class="container cta-inner">
-      <h2>Ready to take control of your Mac?</h2>
-      <p>Open source, free forever. Star us on GitHub.</p>
-      <div class="cta-actions">
-        <a href="https://github.com/talhaorak/mac-dash" class="btn btn-primary btn-lg" target="_blank" rel="noopener noreferrer">
-          <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-          Star on GitHub
-        </a>
-        <a href="https://buymeacoffee.com/talhao" class="btn btn-ghost btn-lg" target="_blank" rel="noopener noreferrer">Buy me a coffee</a>
-      </div>
-    </div>
-  </section>
-
-  <!-- Footer -->
-  <footer class="footer">
+  <!-- FAQ -->
+  <section id="faq" class="faq" aria-labelledby="faq-heading">
     <div class="container">
-      <div class="footer-author">
-        Made with care by <a href="https://github.com/talhaorak" target="_blank" rel="noopener noreferrer">Talha Orak</a>
+      <div class="section-header">
+        <h2 id="faq-heading">Frequently asked questions</h2>
       </div>
-      <div class="footer-inner">
-        <div class="footer-left">
-          <span class="logo-icon">🖥️</span>
-          <span>mac-dash</span>
-          <span class="muted">&middot; MIT License</span>
-        </div>
-        <div class="footer-right">
-          <a href="https://github.com/talhaorak/mac-dash" target="_blank" rel="noopener noreferrer">GitHub</a>
-          <a href="https://github.com/talhaorak/mac-dash/issues" target="_blank" rel="noopener noreferrer">Issues</a>
-          <a href="https://github.com/talhaorak" target="_blank" rel="noopener noreferrer">@talhaorak</a>
-          <a href="https://buymeacoffee.com/talhao" target="_blank" rel="noopener noreferrer">Buy me a coffee</a>
-        </div>
+      <div class="faq-list">
+        <details class="faq-item">
+          <summary>Which macOS versions does mac-dash support?</summary>
+          <p>The desktop app requires macOS 13 (Ventura) or later (<code>packages/desktop/src-tauri/tauri.conf.json</code>, <code>minimumSystemVersion</code>). The web server needs macOS and the <a href="https://bun.sh" target="_blank" rel="noopener noreferrer">Bun</a> runtime.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Does mac-dash need root?</summary>
+          <p>No, not for your own agents. mac-dash asks for one macOS administrator password only when you save a job to <code>/Library</code> or the system domain, set the wake and sleep schedule, or delete a background item or a privileged helper tool.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Where does mac-dash store its data?</summary>
+          <p>In <code>~/.macdash</code>: job revisions in <code>~/.macdash/backups</code>, the change history in <code>~/.macdash/job-events.json</code>, monitor settings in <code>~/.macdash/settings.json</code>, and the access token in <code>~/.macdash/token</code> when the server listens beyond loopback.</p>
+        </details>
+        <details class="faq-item">
+          <summary>How do I uninstall mac-dash?</summary>
+          <p>Remove it the way you installed it: <code>brew uninstall --cask talhaorak/tap/macdash</code> for the desktop app, <code>npm uninstall -g @talhaorak/mac-dash</code> for a global npm install, or <code>brew uninstall talhaorak/tap/macdash</code> for the Homebrew formula. Delete <code>~/.macdash</code> afterwards to remove your job revisions, history and settings too.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Why does Gatekeeper warn when I open the desktop app?</summary>
+          <p>The desktop app is not notarized yet, so macOS Gatekeeper warns before it opens. Download it only from the <a href="https://github.com/talhaorak/mac-dash/releases" target="_blank" rel="noopener noreferrer">releases page</a> on GitHub.</p>
+        </details>
+        <details class="faq-item">
+          <summary>What's the difference between the desktop app and the web server?</summary>
+          <p>The desktop app (Tauri) uses native macOS APIs directly: no HTTP server, no Node.js, and a smaller footprint. The web server (Bun and Hono) opens in your browser and is the only way to use plugins with a UI, since the desktop app has no HTTP server for plugin routes.</p>
+        </details>
+        <details class="faq-item">
+          <summary>How do I run the self-test?</summary>
+          <p>It is a development-only, end-to-end check of every backend operation, running one job through its whole life cycle. Web: run <code>bun run dev</code>, then open <code>http://localhost:7228/?selftest=1</code>. Desktop:</p>
+          <div class="code-block">
+            <pre><code>cd packages/desktop && cargo tauri dev --no-watch \
+  --config '{"build":{"devUrl":"http://localhost:7228/?selftest=1","beforeDevCommand":""}}'</code></pre>
+            <button type="button" class="copy-btn" aria-label="Copy command">Copy</button>
+          </div>
+          <p>The desktop app starts, prints <code>SELFTEST_REPORT</code>, and exits with 0 on success.</p>
+        </details>
       </div>
     </div>
-  </footer>
+  </section>
 
-  <script>
-    function copyCmd(el) {
-      const code = el.querySelector('code');
-      if (!code) return;
-      navigator.clipboard.writeText(code.textContent.trim());
-      const hint = el.querySelector('.copy-hint');
-      if (hint) {
-        hint.textContent = 'Copied!';
-        setTimeout(() => { hint.textContent = 'Copy'; }, 2000);
-      }
+</main>
+
+<footer class="footer">
+  <div class="container footer-inner">
+    <div class="footer-left">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>
+      <span>mac-dash</span>
+      <span class="muted">&middot; MIT licence</span>
+    </div>
+    <nav class="footer-right" aria-label="Footer">
+      <a href="https://github.com/talhaorak/mac-dash" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://www.npmjs.com/package/@talhaorak/mac-dash" target="_blank" rel="noopener noreferrer">npm</a>
+      <a href="https://github.com/talhaorak/mac-dash/blob/master/CHANGELOG.md" target="_blank" rel="noopener noreferrer">Changelog</a>
+      <a href="https://github.com/talhaorak/mac-dash/blob/master/LICENSE" target="_blank" rel="noopener noreferrer">Licence</a>
+      <a href="https://buymeacoffee.com/talhao" target="_blank" rel="noopener noreferrer">Sponsor</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var video = document.getElementById('demo-video');
+    var btn = document.getElementById('demo-toggle');
+    if (!video || !btn) return;
+    var iconPause = btn.querySelector('.icon-pause');
+    var iconPlay = btn.querySelector('.icon-play');
+    var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function setPlayingUI(isPlaying) {
+      if (iconPause) iconPause.classList.toggle('is-hidden', !isPlaying);
+      if (iconPlay) iconPlay.classList.toggle('is-hidden', isPlaying);
+      btn.setAttribute('aria-pressed', isPlaying ? 'true' : 'false');
+      btn.setAttribute('aria-label', isPlaying ? 'Pause demo video' : 'Play demo video');
     }
-  </script>
-  <!-- Fetch latest desktop release version from GitHub -->
-  <script>
-    (async () => {
-      try {
-        const res = await fetch('https://api.github.com/repos/talhaorak/mac-dash/releases');
-        const releases = await res.json();
-        const desktop = releases.find(r => r.tag_name && r.tag_name.startsWith('desktop-v'));
-        if (desktop) {
-          const ver = desktop.tag_name.replace('desktop-', '');
-          const el = document.getElementById('desktop-version');
-          if (el) el.textContent = ver;
-          const dmg = desktop.assets && desktop.assets.find(a => a.name.endsWith('.dmg'));
-          const btn = document.getElementById('desktop-download-btn');
-          if (dmg && btn) btn.href = dmg.browser_download_url;
-        }
-      } catch (e) { /* fallback to static version */ }
-    })();
-  </script>
+
+    if (reduceMotion) {
+      video.removeAttribute('autoplay');
+      video.pause();
+      setPlayingUI(false);
+    } else {
+      setPlayingUI(true);
+    }
+
+    btn.addEventListener('click', function () {
+      if (video.paused) { video.play(); } else { video.pause(); }
+    });
+    video.addEventListener('play', function () { setPlayingUI(true); });
+    video.addEventListener('pause', function () { setPlayingUI(false); });
+  })();
+
+  (function () {
+    var buttons = document.querySelectorAll('.copy-btn');
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].addEventListener('click', function (e) {
+        var btn = e.currentTarget;
+        var block = btn.closest('.code-block');
+        var codeEl = block && block.querySelector('code');
+        if (!codeEl || !navigator.clipboard || !navigator.clipboard.writeText) return;
+        navigator.clipboard.writeText(codeEl.textContent).then(function () {
+          var original = btn.textContent;
+          btn.textContent = 'Copied';
+          setTimeout(function () { btn.textContent = original; }, 2000);
+        });
+      });
+    }
+  })();
+</script>
 </body>
 </html>

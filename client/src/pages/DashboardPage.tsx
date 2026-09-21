@@ -16,8 +16,10 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { useNavStore } from "@/stores/app";
+import { useT } from "@/i18n";
 
 export function DashboardPage() {
+  const { t, tn } = useT();
   const stats = useSystemStore((s) => s.stats);
   const history = useSystemStore((s) => s.history);
   const services = useServicesStore((s) => s.services);
@@ -41,51 +43,55 @@ export function DashboardPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+          <h1 className="text-2xl font-bold text-white">{t("pages.dashboard.title")}</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {stats?.hostname ?? "..."} &middot; macOS {stats?.osVersion ?? "..."} &middot; up {stats?.uptime ?? "..."}
+            {t("pages.dashboard.subtitle", {
+              hostname: stats?.hostname ?? "...",
+              osVersion: stats?.osVersion ?? "...",
+              uptime: stats?.uptime ?? "...",
+            })}
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs text-gray-500">
           <div className="w-1.5 h-1.5 rounded-full bg-green-500 status-pulse" />
-          Live
+          {t("pages.dashboard.live")}
         </div>
       </div>
 
       {/* Gauges row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <GlowCard glow="accent" className="flex items-center gap-6">
-          <Gauge value={cpuUsed} label="CPU" sublabel={stats?.cpu.model?.split(" ").slice(0, 2).join(" ")} color="#06b6d4" />
+          <Gauge value={cpuUsed} label={t("pages.dashboard.cpu")} sublabel={stats?.cpu.model?.split(" ").slice(0, 2).join(" ")} color="#06b6d4" />
           <div className="flex-1 space-y-2">
-            <MiniChart data={history.map((h) => ({ value: h.cpu }))} color="#06b6d4" label="CPU usage history" />
+            <MiniChart data={history.map((h) => ({ value: h.cpu }))} color="#06b6d4" label={t("pages.dashboard.cpuHistoryLabel")} />
             <div className="grid grid-cols-2 gap-x-4 text-xs">
-              <div className="text-gray-500">User</div>
+              <div className="text-gray-500">{t("pages.dashboard.cpuUser")}</div>
               <div className="text-right text-cyan-400 font-mono">{stats?.cpu.user.toFixed(1)}%</div>
-              <div className="text-gray-500">System</div>
+              <div className="text-gray-500">{t("pages.dashboard.cpuSystem")}</div>
               <div className="text-right text-cyan-400 font-mono">{stats?.cpu.sys.toFixed(1)}%</div>
-              <div className="text-gray-500">Cores</div>
+              <div className="text-gray-500">{t("pages.dashboard.cpuCores")}</div>
               <div className="text-right text-gray-300 font-mono">{stats?.cpu.cores}</div>
             </div>
           </div>
         </GlowCard>
 
         <GlowCard glow={memPercent > 85 ? "danger" : "none"} className="flex items-center gap-6">
-          <Gauge value={memPercent} label="Memory" sublabel={stats ? formatBytes(stats.memory.total) : ""} color={memPercent > 85 ? "#ef4444" : "#8b5cf6"} />
+          <Gauge value={memPercent} label={t("pages.dashboard.memory")} sublabel={stats ? formatBytes(stats.memory.total) : ""} color={memPercent > 85 ? "#ef4444" : "#8b5cf6"} />
           <div className="flex-1 space-y-2">
-            <MiniChart data={history.map((h) => ({ value: h.mem }))} color="#8b5cf6" label="Memory usage history" />
+            <MiniChart data={history.map((h) => ({ value: h.mem }))} color="#8b5cf6" label={t("pages.dashboard.memoryHistoryLabel")} />
             <div className="grid grid-cols-2 gap-x-4 text-xs">
-              <div className="text-gray-500">Used</div>
+              <div className="text-gray-500">{t("pages.dashboard.memoryUsed")}</div>
               <div className="text-right text-purple-400 font-mono">{stats ? formatBytes(stats.memory.used) : "-"}</div>
-              <div className="text-gray-500">Wired</div>
+              <div className="text-gray-500">{t("pages.dashboard.memoryWired")}</div>
               <div className="text-right text-purple-400 font-mono">{stats ? formatBytes(stats.memory.wired) : "-"}</div>
-              <div className="text-gray-500">Compressed</div>
+              <div className="text-gray-500">{t("pages.dashboard.memoryCompressed")}</div>
               <div className="text-right text-gray-300 font-mono">{stats ? formatBytes(stats.memory.compressed) : "-"}</div>
             </div>
           </div>
         </GlowCard>
 
         <GlowCard glow={diskPercent > 90 ? "danger" : "none"} className="flex items-center gap-6">
-          <Gauge value={diskPercent} label="Disk" sublabel={stats ? formatBytes(stats.disk.total) : ""} color={diskPercent > 90 ? "#ef4444" : "#22c55e"} />
+          <Gauge value={diskPercent} label={t("pages.dashboard.disk")} sublabel={stats ? formatBytes(stats.disk.total) : ""} color={diskPercent > 90 ? "#ef4444" : "#22c55e"} />
           <div className="flex-1 space-y-3">
             {/* Disk bar */}
             <div className="space-y-1">
@@ -99,11 +105,11 @@ export function DashboardPage() {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-x-4 text-xs">
-              <div className="text-gray-500">Used</div>
+              <div className="text-gray-500">{t("pages.dashboard.diskUsed")}</div>
               <div className="text-right text-green-400 font-mono whitespace-nowrap">{stats ? formatBytes(stats.disk.used) : "-"}</div>
-              <div className="text-gray-500">Free</div>
+              <div className="text-gray-500">{t("pages.dashboard.diskFree")}</div>
               <div className="text-right text-green-400 font-mono whitespace-nowrap">{stats ? formatBytes(stats.disk.free) : "-"}</div>
-              <div className="text-gray-500">Mount</div>
+              <div className="text-gray-500">{t("pages.dashboard.diskMount")}</div>
               <div className="text-right text-gray-300 font-mono">/</div>
             </div>
           </div>
@@ -119,13 +125,13 @@ export function DashboardPage() {
             </div>
             <div>
               <div className="text-2xl font-bold text-white font-mono">{services.length}</div>
-              <div className="text-xs text-gray-500">Services</div>
+              <div className="text-xs text-gray-500">{t("pages.dashboard.services")}</div>
             </div>
           </div>
           <div className="flex gap-3 mt-3 text-xs">
-            <span className="text-green-400">{runningServices} running</span>
-            <span className="text-gray-500">{stoppedServices} stopped</span>
-            {errorServices > 0 && <span className="text-red-400">{errorServices} error</span>}
+            <span className="text-green-400">{tn("pages.dashboard.runningCount", runningServices)}</span>
+            <span className="text-gray-500">{tn("pages.dashboard.stoppedCount", stoppedServices)}</span>
+            {errorServices > 0 && <span className="text-red-400">{tn("pages.dashboard.errorCount", errorServices)}</span>}
           </div>
         </GlowCard>
 
@@ -136,11 +142,11 @@ export function DashboardPage() {
             </div>
             <div>
               <div className="text-2xl font-bold text-white font-mono">{processes.length || stats?.processCount || 0}</div>
-              <div className="text-xs text-gray-500">Processes</div>
+              <div className="text-xs text-gray-500">{t("pages.dashboard.processesLabel")}</div>
             </div>
           </div>
           <div className="flex gap-3 mt-3 text-xs">
-            <span className="text-purple-400">sorted by CPU</span>
+            <span className="text-purple-400">{t("pages.dashboard.sortedByCpu")}</span>
           </div>
         </GlowCard>
 
@@ -153,7 +159,7 @@ export function DashboardPage() {
               <div className="text-2xl font-bold text-white font-mono">
                 {stats?.cpu.loadAvg[0].toFixed(1) ?? "-"}
               </div>
-              <div className="text-xs text-gray-500">Load Avg</div>
+              <div className="text-xs text-gray-500">{t("pages.dashboard.loadAvg")}</div>
             </div>
           </div>
           <div className="flex gap-3 mt-3 text-xs text-gray-500 font-mono">
@@ -170,12 +176,12 @@ export function DashboardPage() {
             </div>
             <div>
               <div className="text-2xl font-bold text-white font-mono">{logEntries.length}</div>
-              <div className="text-xs text-gray-500">Log Entries</div>
+              <div className="text-xs text-gray-500">{t("pages.dashboard.logEntriesLabel")}</div>
             </div>
           </div>
           <div className="flex gap-3 mt-3 text-xs">
-            <span className="text-red-400">{logEntries.filter(l => l.level === "error").length} errors</span>
-            <span className="text-amber-400">{logEntries.filter(l => l.level === "warning").length} warns</span>
+            <span className="text-red-400">{tn("pages.dashboard.logErrorsCount", logEntries.filter(l => l.level === "error").length)}</span>
+            <span className="text-amber-400">{tn("pages.dashboard.logWarningsCount", logEntries.filter(l => l.level === "warning").length)}</span>
           </div>
         </GlowCard>
       </div>
@@ -185,12 +191,12 @@ export function DashboardPage() {
         {/* Top Processes */}
         <GlowCard>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-gray-300">Top Processes by CPU</h3>
+            <h3 className="text-sm font-semibold text-gray-300">{t("pages.dashboard.topProcessesTitle")}</h3>
             <button
               onClick={() => setPage("processes")}
               className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
             >
-              View all
+              {t("pages.dashboard.viewAll")}
             </button>
           </div>
           <div className="space-y-2">
@@ -215,7 +221,7 @@ export function DashboardPage() {
               </div>
             ))}
             {topProcesses.length === 0 && (
-              <div className="text-center text-gray-600 text-xs py-4">Waiting for data...</div>
+              <div className="text-center text-gray-600 text-xs py-4">{t("pages.dashboard.waitingForData")}</div>
             )}
           </div>
         </GlowCard>
@@ -223,12 +229,12 @@ export function DashboardPage() {
         {/* Recent Logs */}
         <GlowCard>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-gray-300">Recent Logs</h3>
+            <h3 className="text-sm font-semibold text-gray-300">{t("pages.dashboard.recentLogsTitle")}</h3>
             <button
               onClick={() => setPage("logs")}
               className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
             >
-              View all
+              {t("pages.dashboard.viewAll")}
             </button>
           </div>
           <div className="space-y-1 font-mono text-[11px]">
@@ -255,7 +261,7 @@ export function DashboardPage() {
               </div>
             ))}
             {recentLogs.length === 0 && (
-              <div className="text-center text-gray-600 text-xs py-4">Waiting for logs...</div>
+              <div className="text-center text-gray-600 text-xs py-4">{t("pages.dashboard.waitingForLogs")}</div>
             )}
           </div>
         </GlowCard>

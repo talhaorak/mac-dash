@@ -7,6 +7,7 @@ import { RefreshCw, Clock, Search } from "lucide-react";
 import { backend } from "@/lib/backend";
 import { useWindowDrag } from "@/lib/window-drag";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { LANGUAGES, formatAgo, t, useLanguageChoice, setLocale, type LanguageChoice } from "@/i18n";
 
 interface ShellProps {
   children: ReactNode;
@@ -15,15 +16,15 @@ interface ShellProps {
 }
 
 function formatLastUpdate(ts: number | null): string {
-  if (!ts) return "never";
+  if (!ts) return t("time.never");
   const diff = Math.floor((Date.now() - ts) / 1000);
-  if (diff < 3) return "just now";
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  return new Date(ts).toLocaleTimeString();
+  if (diff < 3) return t("time.justNow");
+  return formatAgo(ts);
 }
 
 export function Shell({ children, version, onRefresh }: ShellProps) {
+  // Subscribes to language changes, so every t() call below re-renders with the new language.
+  const languageChoice = useLanguageChoice();
   const sidebarCollapsed = useNavStore((s) => s.sidebarCollapsed);
   const lastDataAt = useConnectionStore((s) => s.lastDataAt);
   const [, setTick] = useState(0);
@@ -80,28 +81,41 @@ export function Shell({ children, version, onRefresh }: ShellProps) {
             onClick={() => setSwitcherOpen(true)}
             aria-haspopup="dialog"
             aria-keyshortcuts="Meta+K Control+K"
-            title="Go to a page or a launchd job"
+            title={t("shell.goToTitle")}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-gray-400 bg-white/[0.04] border border-white/[0.06] hover:text-cyan-400 hover:bg-cyan-500/5 transition-all no-drag focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
           >
             <Search className="w-3 h-3" aria-hidden="true" />
-            Go to…
+            {t("shell.goTo")}
             <kbd className="ml-1 font-sans text-[10px] text-gray-600">{quickSwitcherShortcut()}</kbd>
           </button>
           {isDesktop && <div data-tauri-drag-region className="h-6 flex-1" />}
           <div className="flex items-center gap-1.5 text-xs text-gray-500 select-none">
             <Clock className="w-3 h-3" aria-hidden="true" />
-            <span>Updated {formatLastUpdate(lastDataAt)}</span>
+            <span>{t("shell.updated", { when: formatLastUpdate(lastDataAt) })}</span>
           </div>
           <button
             type="button"
             onClick={onRefresh}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-gray-400 hover:text-cyan-400 hover:bg-cyan-500/5 transition-all no-drag focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
-            title="Refresh now"
+            title={t("shell.refreshNow")}
           >
             <RefreshCw className="w-3 h-3" aria-hidden="true" />
-            Refresh
+            {t("common.refresh")}
           </button>
-          <div className="no-drag">
+          <div className="no-drag flex items-center gap-1.5">
+            <select
+              aria-label={t("lang.label")}
+              value={languageChoice}
+              onChange={(e) => setLocale(e.target.value as LanguageChoice)}
+              className="text-xs rounded-lg bg-white/[0.04] border border-white/[0.06] text-gray-400 px-2 py-1.5 hover:text-gray-200 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+            >
+              <option value="system">{t("lang.system")}</option>
+              {LANGUAGES.map((language) => (
+                <option key={language.id} value={language.id}>
+                  {language.name}
+                </option>
+              ))}
+            </select>
             <ThemeToggle />
           </div>
           {isDesktop && <div data-tauri-drag-region className="h-6 w-10" />}

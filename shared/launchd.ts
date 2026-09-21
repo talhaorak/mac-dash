@@ -304,6 +304,10 @@ export interface JobIssue {
   severity: IssueSeverity;
   key: string | null;
   message: string;
+  /** Stable snake_case identifier for this message, for client-side localisation. Every issue sets one. */
+  code?: string;
+  /** Values interpolated into the message, keyed by the placeholder name used in the translation. */
+  params?: Record<string, string | number>;
   /** The job cannot be saved until this is fixed. Other errors are strong warnings (e.g. a path on an unmounted volume). */
   blocking?: boolean;
 }
@@ -386,60 +390,87 @@ export function collectPaths(job: PlistDict): string[] {
 
 export function validateJob(job: PlistDict, opts: ValidateOptions): JobIssue[] {
   const issues: JobIssue[] = [];
-  const push = (severity: IssueSeverity, key: string | null, message: string, blocking = false) =>
-    issues.push({ severity, key, message, ...(blocking ? { blocking } : {}) });
+  const push = (
+    severity: IssueSeverity,
+    key: string | null,
+    message: string,
+    extra?: { code?: string; params?: Record<string, string | number>; blocking?: boolean }
+  ) =>
+    issues.push({
+      severity,
+      key,
+      message,
+      ...(extra?.code ? { code: extra.code } : {}),
+      ...(extra?.params ? { params: extra.params } : {}),
+      ...(extra?.blocking ? { blocking: true } : {}),
+    });
   const scope = scopeFor(opts.category);
   const facts = new Map((opts.pathFacts ?? []).map((f) => [f.path, f]));
 
   // Label
   const label = job.Label;
   if (typeof label !== "string" || label.trim() === "") {
-    push("error", "Label", "Label is required.", true);
+    push("error", "Label", "Label is required.", { code: "label_required", blocking: true });
   } else {
     if (!LABEL_PATTERN.test(label)) {
-      push("error", "Label", "Label may only contain letters, digits, dots, dashes and underscores.", true);
+      push("error", "Label", "Label may only contain letters, digits, dots, dashes and underscores.", { code: "label_pattern", blocking: true });
     }
     if (opts.fileName && opts.fileName !== `${label}.plist`) {
-      push("warning", "Label", `File name "${opts.fileName}" does not match the label. launchd convention is "${label}.plist".`);
+      push("warning", "Label", `File name "${opts.fileName}" does not match the label. launchd convention is "${label}.plist".`, {
+        code: "file_name_mismatch",
+        params: { fileName: opts.fileName, label },
+      });
     }
     if (opts.otherLabels) {
       for (const other of opts.otherLabels) {
         if (other === label) {
-          push("error", "Label", "Another job in this scope already uses this label.", true);
+          push("error", "Label", "Another job in this scope already uses this label.", { code: "label_duplicate", blocking: true });
           break;
         }
       }
     }
     if (label.startsWith("com.apple.")) {
-      push("warning", "Label", 'The "com.apple." prefix is reserved for macOS jobs.');
+      push("warning", "Label", 'The "com.apple." prefix is reserved for macOS jobs.', { code: "label_apple_prefix" });
     }
   }
 
   // Program
   const exe = jobExecutable(job);
   if (!exe && typeof job.BundleProgram !== "string" && !isPlistDict(job.MachServices)) {
-    push("error", "ProgramArguments", "The job has nothing to run. Set Program or ProgramArguments.", true);
+    push("error", "ProgramArguments", "The job has nothing to run. Set Program or ProgramArguments.", { code: "nothing_to_run", blocking: true });
   }
   if (Array.isArray(job.ProgramArguments) && job.ProgramArguments.length === 0) {
-    push("error", "ProgramArguments", "ProgramArguments is empty.");
+    push("error", "ProgramArguments", "ProgramArguments is empty.", { code: "program_arguments_empty" });
   }
   if (exe) {
     if (exe.startsWith("~")) {
-      push("error", "Program", "launchd does not expand ~. Use the full path.");
+      push("error", "Program", "launchd does not expand ~. Use the full path.", { code: "tilde_not_expanded" });
     } else if (!exe.startsWith("/")) {
-      push("warning", "Program", `"${exe}" is not an absolute path. launchd searches a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin).`);
+      push("warning", "Program", `"${exe}" is not an absolute path. launchd searches a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin).`, {
+        code: "program_not_absolute",
+        params: { exe },
+      });
     } else {
       const f = facts.get(exe);
-      if (f && !f.exists) push("error", "Program", `Executable not found: ${exe}`);
+      if (f && !f.exists) push("error", "Program", `Executable not found: ${exe}`, { code: "executable_missing", params: { exe } });
       else if (f && f.isDirectory) {
-        push("error", "Program", exe.endsWith(".app") ? `${exe} is an app bundle. Run it with /usr/bin/open -a, or point to Contents/MacOS/<binary>.` : `${exe} is a directory.`);
-      } else if (f && !f.executable) push("error", "Program", `File is not executable: ${exe} (chmod +x).`);
+        if (exe.endsWith(".app")) {
+          push("error", "Program", `${exe} is an app bundle. Run it with /usr/bin/open -a, or point to Contents/MacOS/<binary>.`, {
+            code: "executable_is_app",
+            params: { exe },
+          });
+        } else {
+          push("error", "Program", `${exe} is a directory.`, { code: "executable_is_directory", params: { exe } });
+        }
+      } else if (f && !f.executable) {
+        push("error", "Program", `File is not executable: ${exe} (chmod +x).`, { code: "executable_not_executable", params: { exe } });
+      }
     }
   }
   for (const key of ["WorkingDirectory", "StandardOutPath", "StandardErrorPath", "StandardInPath"] as const) {
     const v = job[key];
     if (typeof v === "string" && v.startsWith("~")) {
-      push("error", key, "launchd does not expand ~. Use the full path.");
+      push("error", key, "launchd does not expand ~. Use the full path.", { code: "tilde_not_expanded" });
     }
   }
 
@@ -457,28 +488,41 @@ export function validateJob(job: PlistDict, opts: ValidateOptions): JobIssue[] {
     isPlistDict(job.MachServices) ||
     isPlistDict(job.LaunchEvents);
   if (!hasTrigger) {
-    push("warning", null, "No trigger is set. The job only runs when you start it manually.");
+    push("warning", null, "No trigger is set. The job only runs when you start it manually.", { code: "no_trigger" });
   }
   if (typeof job.StartInterval === "number" && job.StartInterval < 1) {
-    push("error", "StartInterval", "StartInterval must be at least 1 second.");
+    push("error", "StartInterval", "StartInterval must be at least 1 second.", { code: "start_interval_min" });
   }
   if (job.KeepAlive === true && typeof job.StartInterval === "number") {
-    push("warning", "StartInterval", "StartInterval has no effect while KeepAlive keeps the job running.");
+    push("warning", "StartInterval", "StartInterval has no effect while KeepAlive keeps the job running.", {
+      code: "start_interval_keepalive_noop",
+    });
   }
   if (typeof job.ThrottleInterval === "number" && typeof job.StartInterval === "number" && job.StartInterval < job.ThrottleInterval) {
-    push("warning", "ThrottleInterval", "StartInterval is shorter than ThrottleInterval, so launchd delays the starts.");
+    push("warning", "ThrottleInterval", "StartInterval is shorter than ThrottleInterval, so launchd delays the starts.", {
+      code: "start_interval_throttled",
+    });
   }
   for (const [i, entry] of calendarEntries(job.StartCalendarInterval).entries()) {
     for (const [field, value] of Object.entries(entry)) {
       const spec = CALENDAR_FIELDS.find((f) => f.key === field);
-      if (!spec) push("warning", "StartCalendarInterval", `Schedule ${i + 1}: unknown field "${field}".`);
-      else if (!Number.isInteger(value) || (value as number) < spec.min || (value as number) > spec.max) {
-        push("error", "StartCalendarInterval", `Schedule ${i + 1}: ${field} must be an integer between ${spec.min} and ${spec.max}.`);
+      if (!spec) {
+        push("warning", "StartCalendarInterval", `Schedule ${i + 1}: unknown field "${field}".`, {
+          code: "calendar_unknown_field",
+          params: { index: i + 1, field },
+        });
+      } else if (!Number.isInteger(value) || (value as number) < spec.min || (value as number) > spec.max) {
+        push("error", "StartCalendarInterval", `Schedule ${i + 1}: ${field} must be an integer between ${spec.min} and ${spec.max}.`, {
+          code: "calendar_field_range",
+          params: { index: i + 1, field, min: spec.min, max: spec.max },
+        });
       }
     }
   }
   if (isPlistDict(job.KeepAlive) && "NetworkState" in job.KeepAlive) {
-    push("warning", "KeepAlive", "KeepAlive.NetworkState is no longer implemented by launchd.");
+    push("warning", "KeepAlive", "KeepAlive.NetworkState is no longer implemented by launchd.", {
+      code: "keepalive_network_state_unsupported",
+    });
   }
 
   // Paths
@@ -488,47 +532,69 @@ export function validateJob(job: PlistDict, opts: ValidateOptions): JobIssue[] {
     for (const p of v) {
       if (typeof p !== "string") continue;
       const f = facts.get(p);
-      if (f && !f.exists) push("warning", key, `Path does not exist yet: ${p}`);
-      if (key === "QueueDirectories" && f?.exists && !f.isDirectory) push("error", key, `Not a directory: ${p}`);
+      if (f && !f.exists) push("warning", key, `Path does not exist yet: ${p}`, { code: "path_missing", params: { path: p } });
+      if (key === "QueueDirectories" && f?.exists && !f.isDirectory) {
+        push("error", key, `Not a directory: ${p}`, { code: "queue_directory_not_a_directory", params: { path: p } });
+      }
     }
   }
   if (typeof job.WorkingDirectory === "string") {
     const f = facts.get(job.WorkingDirectory);
-    if (f && !f.isDirectory) push("error", "WorkingDirectory", `Working directory not found: ${job.WorkingDirectory}`);
+    if (f && !f.isDirectory) {
+      push("error", "WorkingDirectory", `Working directory not found: ${job.WorkingDirectory}`, {
+        code: "working_directory_missing",
+        params: { path: job.WorkingDirectory },
+      });
+    }
   }
   for (const key of ["StandardOutPath", "StandardErrorPath"] as const) {
     const v = job[key];
     if (typeof v !== "string" || !v.startsWith("/")) continue;
     const parent = v.slice(0, v.lastIndexOf("/")) || "/";
     const f = facts.get(parent);
-    if (f && !f.isDirectory) push("warning", key, `Folder does not exist: ${parent}. launchd does not create it.`);
+    if (f && !f.isDirectory) {
+      push("warning", key, `Folder does not exist: ${parent}. launchd does not create it.`, {
+        code: "log_folder_missing",
+        params: { path: parent },
+      });
+    }
   }
 
   // Scope-specific
   if (scope?.kind === "agent") {
     for (const key of ["UserName", "GroupName", "InitGroups", "RootDirectory"]) {
-      if (key in job) push("warning", key, `${key} is ignored for agents. It only applies to daemons.`);
+      if (key in job) push("warning", key, `${key} is ignored for agents. It only applies to daemons.`, { code: "key_ignored_for_agents", params: { key } });
     }
   }
   if (scope?.kind === "daemon" && "LimitLoadToSessionType" in job) {
-    push("warning", "LimitLoadToSessionType", "LimitLoadToSessionType applies to agents, not daemons.");
+    push("warning", "LimitLoadToSessionType", "LimitLoadToSessionType applies to agents, not daemons.", {
+      code: "session_type_ignored_for_daemons",
+    });
   }
   if (typeof job.Nice === "number" && (job.Nice < -20 || job.Nice > 20)) {
-    push("error", "Nice", "Nice must be between -20 and 20.");
+    push("error", "Nice", "Nice must be between -20 and 20.", { code: "nice_range" });
   }
   if (typeof job.ProcessType === "string" && !KEY_SPEC.get("ProcessType")!.options!.includes(job.ProcessType)) {
-    push("error", "ProcessType", "ProcessType must be Background, Standard, Adaptive or Interactive.");
+    push("error", "ProcessType", "ProcessType must be Background, Standard, Adaptive or Interactive.", { code: "process_type_invalid" });
   }
 
   // Types, unknown and deprecated keys
   for (const [key, value] of Object.entries(job)) {
     const spec = KEY_SPEC.get(key);
     if (!spec) {
-      push("info", key, `"${key}" is not a documented launchd key. launchd ignores unknown keys.`);
+      push("info", key, `"${key}" is not a documented launchd key. launchd ignores unknown keys.`, { code: "key_undocumented", params: { key } });
       continue;
     }
-    if (!typeMatches(spec, value)) push("error", key, `${key} has the wrong type. Expected ${spec.type}.`, true);
-    if (spec.deprecated) push("warning", key, `${key} is deprecated. ${spec.help}`);
+    if (!typeMatches(spec, value)) {
+      push("error", key, `${key} has the wrong type. Expected ${spec.type}.`, {
+        code: "key_wrong_type",
+        params: { key, type: spec.type },
+        blocking: true,
+      });
+    }
+    if (spec.deprecated) {
+      push("warning", key, `${key} is deprecated. ${spec.help}`, { code: "key_deprecated", params: { key, help: spec.help } });
+    }
   }
 
   const order: Record<IssueSeverity, number> = { error: 0, warning: 1, info: 2 };
@@ -537,12 +603,14 @@ export function validateJob(job: PlistDict, opts: ValidateOptions): JobIssue[] {
 
 // ── Exit status ──────────────────────────────────────────────────────
 
-const SIGNALS: Record<number, string> = {
+/** Exported so the client can build localized exit-status text without duplicating this table. */
+export const SIGNALS: Record<number, string> = {
   1: "SIGHUP", 2: "SIGINT", 3: "SIGQUIT", 4: "SIGILL", 5: "SIGTRAP", 6: "SIGABRT", 8: "SIGFPE",
   9: "SIGKILL", 10: "SIGBUS", 11: "SIGSEGV", 13: "SIGPIPE", 14: "SIGALRM", 15: "SIGTERM",
 };
 
-const EXIT_CODES: Record<number, string> = {
+/** Exported so the client can build localized exit-status text without duplicating this table. */
+export const EXIT_CODES: Record<number, string> = {
   0: "Success",
   1: "General error",
   2: "Misuse of a shell builtin or wrong arguments",

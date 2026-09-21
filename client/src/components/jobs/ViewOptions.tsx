@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, SlidersHorizontal } from "lucide-react";
+import { formatNumber, useT, type TKey } from "@/i18n";
 
 // ── Options ──────────────────────────────────────────────────────────
 
@@ -17,13 +18,13 @@ export interface ViewOptions {
 
 export type ViewOptionId = keyof ViewOptions;
 
-export const VIEW_OPTION_ITEMS: { id: ViewOptionId; title: string }[] = [
-  { id: "statusFilter", title: "Status filter" },
-  { id: "ownerFilter", title: "Owner filter" },
-  { id: "tagFilter", title: "Tag filter" },
-  { id: "smartFolders", title: "Smart folder bar" },
-  { id: "startupCard", title: "Other startup mechanisms" },
-  { id: "powerCard", title: "Power schedule" },
+export const VIEW_OPTION_ITEMS: { id: ViewOptionId; titleKey: TKey }[] = [
+  { id: "statusFilter", titleKey: "list.filters.statusLabel" },
+  { id: "ownerFilter", titleKey: "list.filters.ownerLabel" },
+  { id: "tagFilter", titleKey: "list.filters.tagLabel" },
+  { id: "smartFolders", titleKey: "list.filters.smartFoldersLabel" },
+  { id: "startupCard", titleKey: "list.filters.startupCardLabel" },
+  { id: "powerCard", titleKey: "list.filters.powerCardLabel" },
 ];
 
 export const DEFAULT_VIEW_OPTIONS: ViewOptions = {
@@ -69,6 +70,7 @@ export interface ViewOptionsMenuProps {
 
 /** Menu button that shows and hides the parts of the Services page. Arrow keys move, Escape closes. */
 export function ViewOptionsMenu({ value, onChange }: ViewOptionsMenuProps) {
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -122,15 +124,15 @@ export function ViewOptionsMenu({ value, onChange }: ViewOptionsMenuProps) {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        title="Show or hide parts of this page"
+        title={t("list.viewOptions.buttonTitle")}
         className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-gray-300 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
       >
         <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden />
-        View options
-        {hiddenCount > 0 && <span className="text-gray-500">({hiddenCount} hidden)</span>}
+        {t("list.viewOptions.buttonLabel")}
+        {hiddenCount > 0 && <span className="text-gray-500">({t("list.count.hiddenTotal", { count: formatNumber(hiddenCount) })})</span>}
       </button>
       {open && (
-        <div role="menu" aria-label="Visible parts of the Services page" className="absolute right-0 mt-1 w-60 z-40 glass rounded-xl border border-white/[0.08] p-1 shadow-2xl">
+        <div role="menu" aria-label={t("list.viewOptions.menuLabel")} className="absolute right-0 mt-1 w-60 z-40 glass rounded-xl border border-white/[0.08] p-1 shadow-2xl">
           {VIEW_OPTION_ITEMS.map((item) => (
             <button
               key={item.id}
@@ -141,13 +143,13 @@ export function ViewOptionsMenu({ value, onChange }: ViewOptionsMenuProps) {
               className={itemClass}
             >
               <span className="w-3.5 flex-shrink-0">{value[item.id] && <Check className="w-3.5 h-3.5 text-cyan-400" aria-hidden />}</span>
-              {item.title}
+              {t(item.titleKey)}
             </button>
           ))}
           <div role="separator" className="my-1 border-t border-white/[0.06]" />
           <button type="button" role="menuitem" disabled={hiddenCount === 0} onClick={() => onChange({ ...DEFAULT_VIEW_OPTIONS })} className={itemClass}>
             <span className="w-3.5 flex-shrink-0" />
-            Show everything
+            {t("list.viewOptions.showEverything")}
           </button>
         </div>
       )}

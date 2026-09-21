@@ -4,6 +4,7 @@ import { backend } from "@/lib/backend";
 import { useServicesStore } from "@/stores/app";
 import { LABEL_PATTERN, type PathFacts } from "@shared/launchd";
 import type { PlistDict } from "@shared/plist";
+import { t, type TKey } from "@/i18n";
 import type { JobEditorTarget } from "./JobEditor";
 import { buildOpenArgs } from "./scriptApp";
 
@@ -84,12 +85,12 @@ export function buildDropJob(
   return { kind: "watch-file", job: { Label, ProgramArguments: ["/bin/sh", "-c", "echo changed"], WatchPaths: [target] } };
 }
 
-export const DROP_KIND_NOTES: Record<DropKind, string> = {
-  app: "New job: open this app at login.",
-  program: "New job: run this program at login.",
-  script: "New job: run this script at login.",
-  "watch-folder": "New job: run a command when this folder changes. Replace the example command.",
-  "watch-file": "This file cannot run. New job: run a command when the file changes. Replace the example command.",
+export const DROP_KIND_NOTES: Record<DropKind, TKey> = {
+  app: "editor.drop.note.app",
+  program: "editor.drop.note.program",
+  script: "editor.drop.note.script",
+  "watch-folder": "editor.drop.note.watchFolder",
+  "watch-file": "editor.drop.note.watchFile",
 };
 
 // ── Overlay ──────────────────────────────────────────────────────────
@@ -113,10 +114,10 @@ function createDropOverlay() {
   return {
     show(paths: string[]) {
       const one = paths.length === 1;
-      title.textContent = one ? "Drop to create a job" : "Drop one item at a time";
+      title.textContent = one ? t("editor.drop.overlayTitleOne") : t("editor.drop.overlayTitleMany");
       hint.textContent = one
-        ? `${cleanPath(paths[0]).split("/").pop()}: an app, a program or a script runs at login. A folder or another file is watched for changes.`
-        : "A job is created for one app, program, script or folder.";
+        ? t("editor.drop.overlayHintOne", { name: cleanPath(paths[0]).split("/").pop() ?? "" })
+        : t("editor.drop.overlayHintMany");
       root.classList.remove("hidden");
       root.classList.add("flex");
     },
@@ -159,8 +160,8 @@ export function useFileDropToCreate(onCreate: (target: JobEditorTarget) => void)
             .catch(() => null);
       if (disposed) return;
       const built = buildDropJob(path, facts, useServicesStore.getState().services.map((s) => s.label));
-      if (!built) return toast.error(facts ? "This item cannot start a job." : "The dropped item could not be inspected.");
-      toast.info(DROP_KIND_NOTES[built.kind]);
+      if (!built) return toast.error(facts ? t("editor.drop.cannotStart") : t("editor.drop.inspectFailed"));
+      toast.info(t(DROP_KIND_NOTES[built.kind]));
       handler.current({ mode: "new", initialJob: built.job });
     };
 
@@ -175,7 +176,7 @@ export function useFileDropToCreate(onCreate: (target: JobEditorTarget) => void)
           } else if (payload.type === "drop") {
             overlay.hide();
             if (dialogIsOpen() || payload.paths.length === 0) return;
-            if (payload.paths.length > 1) return void toast.info("Drop one item at a time to create a job.");
+            if (payload.paths.length > 1) return void toast.info(t("editor.drop.oneAtATime"));
             void create(payload.paths[0]);
           }
         });

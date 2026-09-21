@@ -4,6 +4,7 @@ import type { JobEditorTarget } from "@/components/jobs/JobEditor";
 import type { ServiceAction } from "@/lib/backend";
 import type { ServiceInfo } from "@/stores/app";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 
 /** Stable identity of a job across the views of the Services page. */
 export const serviceKey = (s: { category: string; label: string }) => `${s.category}/${s.label}`;
@@ -32,6 +33,7 @@ const iconButton =
  * The buttons stop click propagation, so a clickable row around them does not open.
  */
 export const JobRowActions = memo(function JobRowActions({ service, busy, armedAction, onAction, onEdit, className }: JobRowActionsProps) {
+  const { t } = useT();
   const ref = { label: service.label, category: service.category };
   const hasFile = service.plistPath !== null;
   const act = (action: ServiceAction) => (e: React.MouseEvent) => {
@@ -51,8 +53,8 @@ export const JobRowActions = memo(function JobRowActions({ service, busy, armedA
             type="button"
             disabled={busy}
             onClick={act("stop")}
-            aria-label={armedAction === "stop" ? `Confirm stop ${service.label}` : `Stop ${service.label}`}
-            title={armedAction === "stop" ? "Click again to stop" : "Stop"}
+            aria-label={armedAction === "stop" ? t("list.actions.confirmStopLabel", { label: service.label }) : t("list.actions.stopLabel", { label: service.label })}
+            title={armedAction === "stop" ? t("list.actions.confirmStopTitle") : t("common.stop")}
             className={cn(iconButton, armedAction === "stop" ? "bg-red-500/25 text-red-300" : "hover:bg-red-500/10 hover:text-red-400")}
           >
             <Square className="w-3 h-3" aria-hidden />
@@ -61,8 +63,8 @@ export const JobRowActions = memo(function JobRowActions({ service, busy, armedA
             type="button"
             disabled={busy}
             onClick={act("restart")}
-            aria-label={`Restart ${service.label}`}
-            title="Restart"
+            aria-label={t("list.actions.restartLabel", { label: service.label })}
+            title={t("common.restart")}
             className={cn(iconButton, "hover:bg-cyan-500/10 hover:text-cyan-400")}
           >
             <RotateCw className="w-3 h-3" aria-hidden />
@@ -73,8 +75,8 @@ export const JobRowActions = memo(function JobRowActions({ service, busy, armedA
           type="button"
           disabled={busy}
           onClick={act("start")}
-          aria-label={`Run ${service.label} now`}
-          title="Run now"
+          aria-label={t("list.actions.runNowLabel", { label: service.label })}
+          title={t("list.actions.runNowTitle")}
           className={cn(iconButton, "hover:bg-green-500/10 hover:text-green-400")}
         >
           <Play className="w-3 h-3" aria-hidden />
@@ -86,8 +88,8 @@ export const JobRowActions = memo(function JobRowActions({ service, busy, armedA
           type="button"
           disabled={busy}
           onClick={act("enable")}
-          aria-label={`Enable ${service.label}`}
-          title="Enable and load"
+          aria-label={t("list.actions.enableLabel", { label: service.label })}
+          title={t("list.actions.enableTitle")}
           className={cn(iconButton, "hover:bg-cyan-500/10 hover:text-cyan-400")}
         >
           <Power className="w-3 h-3" aria-hidden />
@@ -97,8 +99,8 @@ export const JobRowActions = memo(function JobRowActions({ service, busy, armedA
           type="button"
           disabled={busy}
           onClick={act("disable")}
-          aria-label={armedAction === "disable" ? `Confirm disable ${service.label}` : `Disable ${service.label}`}
-          title={armedAction === "disable" ? "Click again to disable" : "Disable and unload"}
+          aria-label={armedAction === "disable" ? t("list.actions.confirmDisableLabel", { label: service.label }) : t("list.actions.disableLabel", { label: service.label })}
+          title={armedAction === "disable" ? t("list.actions.confirmDisableTitle") : t("list.actions.disableTitle")}
           className={cn(iconButton, armedAction === "disable" ? "bg-amber-500/25 text-amber-300" : "hover:bg-amber-500/10 hover:text-amber-400")}
         >
           <PowerOff className="w-3 h-3" aria-hidden />
@@ -110,8 +112,8 @@ export const JobRowActions = memo(function JobRowActions({ service, busy, armedA
           <button
             type="button"
             onClick={edit("edit")}
-            aria-label={`${service.writable ? "Edit" : "View"} ${service.label}`}
-            title={service.writable ? "Edit" : "View plist"}
+            aria-label={service.writable ? t("list.actions.editLabel", { label: service.label }) : t("list.actions.viewLabel", { label: service.label })}
+            title={service.writable ? t("common.edit") : t("list.actions.viewPlistTitle")}
             className={cn(iconButton, "hover:bg-white/[0.06] hover:text-gray-300")}
           >
             <Pencil className="w-3 h-3" aria-hidden />
@@ -119,8 +121,8 @@ export const JobRowActions = memo(function JobRowActions({ service, busy, armedA
           <button
             type="button"
             onClick={edit("duplicate")}
-            aria-label={`Duplicate ${service.label}`}
-            title="Duplicate"
+            aria-label={t("list.actions.duplicateLabel", { label: service.label })}
+            title={t("common.duplicate")}
             className={cn(iconButton, "hover:bg-white/[0.06] hover:text-gray-300")}
           >
             <Copy className="w-3 h-3" aria-hidden />

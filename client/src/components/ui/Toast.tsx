@@ -2,52 +2,54 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, CheckCircle2, Info, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToastStore, type ToastKind } from "@/stores/toast";
+import { useT, type TKey } from "@/i18n";
 
 export { toast } from "@/stores/toast";
 
 const kindStyles: Record<
   ToastKind,
-  { icon: typeof Info; iconClass: string; border: string; label: string }
+  { icon: typeof Info; iconClass: string; border: string; labelKey: TKey }
 > = {
   success: {
     icon: CheckCircle2,
     iconClass: "text-green-400",
     border: "border-green-500/30",
-    label: "Success",
+    labelKey: "app.toast.success",
   },
   error: {
     icon: AlertTriangle,
     iconClass: "text-red-400",
     border: "border-red-500/30",
-    label: "Error",
+    labelKey: "common.error",
   },
   info: {
     icon: Info,
     iconClass: "text-cyan-400",
     border: "border-cyan-500/30",
-    label: "Info",
+    labelKey: "common.info",
   },
 };
 
 /** Renders the toast stack. Mount it once, near the root of the app. */
 export function Toaster() {
+  const { t } = useT();
   const toasts = useToastStore((s) => s.toasts);
   const dismiss = useToastStore((s) => s.dismiss);
 
   return (
     <div
       role="region"
-      aria-label="Notifications"
+      aria-label={t("app.toast.notifications")}
       className="fixed bottom-4 right-4 z-[100] flex flex-col items-end gap-2 pointer-events-none"
     >
       <AnimatePresence initial={false}>
-        {toasts.map((t) => {
-          const style = kindStyles[t.kind];
+        {toasts.map((item) => {
+          const style = kindStyles[item.kind];
           const Icon = style.icon;
-          const isError = t.kind === "error";
+          const isError = item.kind === "error";
           return (
             <motion.div
-              key={t.id}
+              key={item.id}
               layout
               initial={{ opacity: 0, x: 24 }}
               animate={{ opacity: 1, x: 0 }}
@@ -65,13 +67,13 @@ export function Toaster() {
                 aria-hidden="true"
               />
               <p className="flex-1 min-w-0 text-xs text-gray-200 break-words">
-                <span className="sr-only">{style.label}: </span>
-                {t.message}
+                <span className="sr-only">{t(style.labelKey)}: </span>
+                {item.message}
               </p>
               <button
                 type="button"
-                onClick={() => dismiss(t.id)}
-                aria-label="Dismiss notification"
+                onClick={() => dismiss(item.id)}
+                aria-label={t("app.toast.dismiss")}
                 className="p-1 -m-0.5 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/[0.06] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
               >
                 <X className="w-3.5 h-3.5" aria-hidden="true" />

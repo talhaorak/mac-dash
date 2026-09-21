@@ -162,16 +162,20 @@ async function typeInto(page: Page, selector: string, text: string, delay = 45) 
 }
 
 // ── Scenes ───────────────────────────────────────────────────────────
-async function newPage(browser: Awaited<ReturnType<typeof puppeteer.launch>>, theme: "dark" | "light" = "dark") {
+async function newPage(browser: Awaited<ReturnType<typeof puppeteer.launch>>, theme: "dark" | "light" = "dark", language: "en" | "tr" = "en") {
   const page = await browser.newPage();
   await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: 2 });
   await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: theme }]);
   await page.exposeFunction("__demoData", demoData);
   await page.evaluateOnNewDocument(FAKE_SOCKET);
-  await page.evaluateOnNewDocument((theme) => {
-    localStorage.setItem("macdash.theme", theme);
-    localStorage.setItem("macdash.language", "en");
-  }, theme);
+  await page.evaluateOnNewDocument(
+    (theme, language) => {
+      localStorage.setItem("macdash.theme", theme);
+      localStorage.setItem("macdash.language", language);
+    },
+    theme,
+    language
+  );
   await page.setRequestInterception(true);
   page.on("request", (req) => {
     const url = new URL(req.url());
@@ -235,6 +239,12 @@ async function screenshots(browser: Awaited<ReturnType<typeof puppeteer.launch>>
   await sleep(1200);
   await shot(light, "services-light");
   await light.close();
+
+  const turkish = await newPage(browser, "dark", "tr");
+  await turkish.goto(`${BASE}/#/services?edit=user-agents/com.example.backup-documents`, { waitUntil: "networkidle0" });
+  await sleep(2000);
+  await shot(turkish, "job-editor-tr");
+  await turkish.close();
 }
 
 async function demoGif(browser: Awaited<ReturnType<typeof puppeteer.launch>>) {

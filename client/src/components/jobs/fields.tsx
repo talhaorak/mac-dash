@@ -1,14 +1,10 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  CALENDAR_FIELDS,
-  KEEPALIVE_CONDITIONS,
-  calendarEntries,
-  describeCalendarEntry,
-  type KeySpec,
-} from "@shared/launchd";
+import { CALENDAR_FIELDS, KEEPALIVE_CONDITIONS, calendarEntries, type KeySpec } from "@shared/launchd";
 import { isPlistDict, type PlistDict, type PlistValue } from "@shared/plist";
+import { intlLocale, t, type TKey } from "@/i18n";
+import { keepAliveHelp, localizeCalendarEntry } from "@/i18n/launchd";
 import { ChoosePathButton, type PathPickerMode } from "./PathPicker";
 import { PlistTreeEditor, nestedKeyOptionsFor, presetsForKey } from "./PlistTreeEditor";
 import {
@@ -65,7 +61,7 @@ export function FieldRow({
               issue.severity === "error" ? "text-red-400" : issue.severity === "warning" ? "text-amber-400" : "text-gray-500"
             )}
           >
-            {issue.severity === "error" ? "Error: " : issue.severity === "warning" ? "Warning: " : ""}
+            {issue.severity === "error" ? `${t("common.error")}: ` : issue.severity === "warning" ? `${t("common.warning")}: ` : ""}
             {issue.message}
           </p>
         )}
@@ -121,9 +117,9 @@ export function TriState({
   label: string;
 }) {
   const options: { v: boolean | undefined; text: string }[] = [
-    { v: undefined, text: "Not set" },
-    { v: true, text: "True" },
-    { v: false, text: "False" },
+    { v: undefined, text: t("fields.common.notSet") },
+    { v: true, text: t("fields.triState.true") },
+    { v: false, text: t("fields.triState.false") },
   ];
   return (
     <div role="radiogroup" aria-label={label} className="inline-flex rounded-lg bg-white/[0.04] p-0.5">
@@ -194,10 +190,10 @@ export function StringList({
   onChange,
   placeholder,
   disabled,
-  addLabel = "Add",
+  addLabel = t("common.add"),
   mono = true,
   choose,
-  chooseLabel = "Item",
+  chooseLabel = t("fields.common.item"),
 }: {
   values: string[];
   onChange: (next: string[] | undefined) => void;
@@ -217,7 +213,7 @@ export function StringList({
         <div key={i} className="flex gap-1.5">
           <input
             type="text"
-            aria-label={`Item ${i + 1}`}
+            aria-label={t("fields.stringList.itemLabel", { index: i + 1 })}
             value={v}
             disabled={disabled}
             placeholder={placeholder}
@@ -230,13 +226,13 @@ export function StringList({
               mode={choose(i)!}
               value={v}
               disabled={disabled}
-              fieldLabel={`${chooseLabel} ${i + 1}`}
+              fieldLabel={t("fields.stringList.chooseFieldLabel", { label: chooseLabel, index: i + 1 })}
               onPick={(path) => update(values.map((x, j) => (j === i ? path : x)))}
             />
           )}
           <button
             type="button"
-            aria-label={`Remove item ${i + 1}`}
+            aria-label={t("fields.stringList.removeItemLabel", { index: i + 1 })}
             disabled={disabled}
             onClick={() => update(values.filter((_, j) => j !== i))}
             className={smallButton}
@@ -262,7 +258,7 @@ export function DictEditor({
   valuePlaceholder,
   keyOptions,
   disabled,
-  addLabel = "Add",
+  addLabel = t("common.add"),
 }: {
   value: PlistDict;
   onChange: (next: PlistDict | undefined) => void;
@@ -308,7 +304,7 @@ export function DictEditor({
         <div key={i} className="flex gap-1.5 items-center">
           <input
             type="text"
-            aria-label={`Key ${i + 1}`}
+            aria-label={t("fields.common.keyIndex", { index: i + 1 })}
             list={keyOptions ? listId : undefined}
             value={k}
             disabled={disabled}
@@ -320,7 +316,7 @@ export function DictEditor({
           {kind === "string" && (
             <input
               type="text"
-              aria-label={`Value of ${k || `key ${i + 1}`}`}
+              aria-label={t("fields.common.valueOf", { name: k || t("fields.dict.unnamedKey", { index: i + 1 }) })}
               value={typeof v === "string" ? v : ""}
               disabled={disabled}
               spellCheck={false}
@@ -331,7 +327,7 @@ export function DictEditor({
           )}
           {kind === "integer" && (
             <NumberInput
-              ariaLabel={`Value of ${k || `key ${i + 1}`}`}
+              ariaLabel={t("fields.common.valueOf", { name: k || t("fields.dict.unnamedKey", { index: i + 1 }) })}
               value={typeof v === "number" ? v : undefined}
               disabled={disabled}
               min={0}
@@ -341,7 +337,7 @@ export function DictEditor({
           )}
           {kind === "boolean" && (
             <select
-              aria-label={`Value of ${k || `key ${i + 1}`}`}
+              aria-label={t("fields.common.valueOf", { name: k || t("fields.dict.unnamedKey", { index: i + 1 }) })}
               value={v === false ? "false" : "true"}
               disabled={disabled}
               onChange={(e) => commit(entries.map((en, j) => (j === i ? [en[0], e.target.value === "true"] : en)))}
@@ -353,7 +349,7 @@ export function DictEditor({
           )}
           <button
             type="button"
-            aria-label={`Remove ${k || `entry ${i + 1}`}`}
+            aria-label={t("fields.common.removeNamed", { name: k || t("fields.dict.unnamedEntry", { index: i + 1 }) })}
             disabled={disabled}
             onClick={() => commit(entries.filter((_, j) => j !== i))}
             className={smallButton}
@@ -364,7 +360,7 @@ export function DictEditor({
       ))}
       {duplicates.length > 0 && (
         <p role="alert" className="text-[11px] text-amber-400">
-          Duplicate key: {duplicates.join(", ")}. Only the last one is saved.
+          {t("fields.common.duplicateKey", { keys: duplicates.join(", ") })}
         </p>
       )}
       <button
@@ -403,15 +399,15 @@ export function KeepAliveEditor({
   return (
     <div className="space-y-2">
       <select
-        aria-label="Keep alive mode"
+        aria-label={t("fields.keepAlive.modeLabel")}
         value={mode}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value === "always" ? true : e.target.value === "conditional" ? {} : undefined)}
         className={cn(inputClass, "max-w-xs")}
       >
-        <option value="off">Off: run only when triggered</option>
-        <option value="always">Always: restart whenever it exits</option>
-        <option value="conditional">Conditional: restart only when…</option>
+        <option value="off">{t("fields.keepAlive.off")}</option>
+        <option value="always">{t("fields.keepAlive.always")}</option>
+        <option value="conditional">{t("fields.keepAlive.conditional")}</option>
       </select>
 
       {mode === "conditional" && (
@@ -435,11 +431,11 @@ export function KeepAliveEditor({
                   disabled={disabled}
                   value={isPlistDict(dict[c.key]) ? (dict[c.key] as PlistDict) : {}}
                   keyPlaceholder={c.key === "PathState" ? "/path/to/file" : "com.example.other-job"}
-                  addLabel={c.key === "PathState" ? "Add path" : "Add job"}
+                  addLabel={c.key === "PathState" ? t("fields.keepAlive.addPath") : t("fields.keepAlive.addJob")}
                   onChange={(v) => setCondition(c.key, v)}
                 />
               )}
-              <p className="text-[11px] text-gray-600">{c.help}</p>
+              <p className="text-[11px] text-gray-600">{keepAliveHelp(c)}</p>
             </div>
           ))}
         </div>
@@ -451,11 +447,18 @@ export function KeepAliveEditor({
 // ── StartInterval ────────────────────────────────────────────────────
 
 const UNITS = [
-  { label: "seconds", factor: 1 },
-  { label: "minutes", factor: 60 },
-  { label: "hours", factor: 3600 },
-  { label: "days", factor: 86400 },
-];
+  { id: "seconds", factor: 1 },
+  { id: "minutes", factor: 60 },
+  { id: "hours", factor: 3600 },
+  { id: "days", factor: 86400 },
+] as const;
+
+const UNIT_LABEL_KEYS: Record<(typeof UNITS)[number]["id"], TKey> = {
+  seconds: "fields.interval.unit.seconds",
+  minutes: "fields.interval.unit.minutes",
+  hours: "fields.interval.unit.hours",
+  days: "fields.interval.unit.days",
+};
 
 export function IntervalEditor({
   value,
@@ -469,28 +472,30 @@ export function IntervalEditor({
   const unit = value === undefined ? UNITS[1] : [...UNITS].reverse().find((u) => value % u.factor === 0) ?? UNITS[0];
   return (
     <div className="flex gap-2 items-center">
-      <span className="text-xs text-gray-500">Every</span>
+      <span className="text-xs text-gray-500">{t("fields.interval.every")}</span>
       <NumberInput
-        ariaLabel="Interval"
+        ariaLabel={t("fields.interval.numberLabel")}
         value={value === undefined ? undefined : value / unit.factor}
         min={1}
         disabled={disabled}
-        placeholder="off"
+        placeholder={t("fields.interval.offPlaceholder")}
         onChange={(n) => onChange(n === undefined || n < 1 ? undefined : n * unit.factor)}
         className="w-24"
       />
       <select
-        aria-label="Interval unit"
-        value={unit.label}
+        aria-label={t("fields.interval.unitSelectLabel")}
+        value={unit.id}
         disabled={disabled || value === undefined}
         onChange={(e) => {
-          const next = UNITS.find((u) => u.label === e.target.value)!;
+          const next = UNITS.find((u) => u.id === e.target.value)!;
           if (value !== undefined) onChange((value / unit.factor) * next.factor);
         }}
         className={cn(inputClass, "w-28")}
       >
         {UNITS.map((u) => (
-          <option key={u.label}>{u.label}</option>
+          <option key={u.id} value={u.id}>
+            {t(UNIT_LABEL_KEYS[u.id])}
+          </option>
         ))}
       </select>
       {value !== undefined && <span className="text-[11px] text-gray-600 font-mono">{value} s</span>}
@@ -500,7 +505,11 @@ export function IntervalEditor({
 
 // ── StartCalendarInterval ────────────────────────────────────────────
 
-const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+/** "Sunday"…"Saturday" for weekday `d` (0-6), in the active language. 2023-01-01 (UTC) was a Sunday. */
+function weekdayName(d: number): string {
+  const date = new Date(Date.UTC(2023, 0, 1 + d));
+  return new Intl.DateTimeFormat(intlLocale(), { weekday: "long", timeZone: "UTC" }).format(date);
+}
 
 export function CalendarEditor({
   value,
@@ -525,11 +534,11 @@ export function CalendarEditor({
     );
 
   const presets: { label: string; build: () => PlistDict[] }[] = [
-    { label: "Every day", build: () => [{ Hour: 9, Minute: 0 }] },
-    { label: "Weekdays", build: () => [1, 2, 3, 4, 5].map((Weekday) => ({ Weekday, Hour: 9, Minute: 0 })) },
-    { label: "Every hour", build: () => [{ Minute: 0 }] },
-    { label: "Weekly", build: () => [{ Weekday: 1, Hour: 9, Minute: 0 }] },
-    { label: "Monthly", build: () => [{ Day: 1, Hour: 9, Minute: 0 }] },
+    { label: t("fields.calendar.preset.everyDay"), build: () => [{ Hour: 9, Minute: 0 }] },
+    { label: t("fields.calendar.preset.weekdays"), build: () => [1, 2, 3, 4, 5].map((Weekday) => ({ Weekday, Hour: 9, Minute: 0 })) },
+    { label: t("fields.calendar.preset.everyHour"), build: () => [{ Minute: 0 }] },
+    { label: t("fields.calendar.preset.weekly"), build: () => [{ Weekday: 1, Hour: 9, Minute: 0 }] },
+    { label: t("fields.calendar.preset.monthly"), build: () => [{ Day: 1, Hour: 9, Minute: 0 }] },
   ];
 
   return (
@@ -547,10 +556,10 @@ export function CalendarEditor({
                     onChange={(e) => setField(i, "Weekday", e.target.value === "" ? undefined : Number(e.target.value))}
                     className={cn(inputClass, "w-32 text-xs")}
                   >
-                    <option value="">Any</option>
-                    {WEEKDAY_NAMES.map((name, d) => (
-                      <option key={name} value={d}>
-                        {name}
+                    <option value="">{t("fields.calendar.anyWeekday")}</option>
+                    {[0, 1, 2, 3, 4, 5, 6].map((d) => (
+                      <option key={d} value={d}>
+                        {weekdayName(d)}
                       </option>
                     ))}
                   </select>
@@ -560,7 +569,7 @@ export function CalendarEditor({
                     min={f.min}
                     max={f.max}
                     disabled={disabled}
-                    placeholder="any"
+                    placeholder={t("fields.calendar.anyPlaceholder")}
                     onChange={(n) => setField(i, f.key, n)}
                     className="w-20 text-xs"
                   />
@@ -569,7 +578,7 @@ export function CalendarEditor({
             ))}
             <button
               type="button"
-              aria-label={`Remove schedule ${i + 1}`}
+              aria-label={t("fields.calendar.removeScheduleLabel", { index: i + 1 })}
               disabled={disabled}
               onClick={() => commit(entries.filter((_, j) => j !== i))}
               className={cn(smallButton, "ml-auto")}
@@ -577,7 +586,7 @@ export function CalendarEditor({
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
-          <p className="text-[11px] text-cyan-400/70">Runs {describeCalendarEntry(entry)}</p>
+          <p className="text-[11px] text-cyan-400/70">{t("fields.calendar.runsSummary", { summary: localizeCalendarEntry(entry) })}</p>
         </div>
       ))}
       <div className="flex flex-wrap gap-1">
@@ -643,6 +652,18 @@ export function MultiChoice({
 
 // ── Umask ────────────────────────────────────────────────────────────
 
+const UMASK_CLASS_KEYS: Record<(typeof UMASK_CLASSES)[number], TKey> = {
+  Owner: "fields.umask.class.owner",
+  Group: "fields.umask.class.group",
+  Other: "fields.umask.class.others",
+};
+
+const UMASK_PERMISSION_KEYS: Record<(typeof UMASK_PERMISSIONS)[number], TKey> = {
+  Read: "fields.umask.permission.read",
+  Write: "fields.umask.permission.write",
+  Execute: "fields.umask.permission.execute",
+};
+
 /**
  * Umask as an rwx grid. A checked box MASKS the permission: new files do not get it.
  * The plist stores the decimal integer (octal 022 = 18). launchd also accepts a string,
@@ -669,21 +690,21 @@ export function UmaskEditor({
     return (
       <div className="space-y-1.5">
         <div className="flex flex-wrap items-center gap-2">
-          <input type="text" readOnly aria-label="Umask (string value)" value={value} className={cn(inputClass, "w-32 font-mono text-xs")} />
+          <input type="text" readOnly aria-label={t("fields.umask.stringValueLabel")} value={value} className={cn(inputClass, "w-32 font-mono text-xs")} />
           {parsed !== null && (
             <button type="button" disabled={disabled} onClick={() => onChange(normalizeUmask(parsed))} className={smallButton}>
-              Convert to integer ({normalizeUmask(parsed)})
+              {t("fields.umask.convertToInteger", { value: normalizeUmask(parsed) })}
             </button>
           )}
           <button type="button" disabled={disabled} onClick={() => onChange(undefined)} className={smallButton}>
             <X className="w-3.5 h-3.5" />
-            Remove key
+            {t("fields.common.removeKey")}
           </button>
         </div>
         <p className="text-[11px] text-gray-600">
           {parsed !== null
-            ? `The plist stores a string. launchd reads it as octal ${formatOctal(parsed)}. Convert it to edit the permissions here.`
-            : "The plist stores a string that is not a clean number. Edit it in Expert mode, or remove the key."}
+            ? t("fields.umask.stringHint", { octal: formatOctal(parsed) })
+            : t("fields.umask.invalidStringHint")}
         </p>
       </div>
     );
@@ -698,8 +719,8 @@ export function UmaskEditor({
     <div className="space-y-2">
       <div role="radiogroup" aria-label="Umask" className="inline-flex rounded-lg bg-white/[0.04] p-0.5">
         {[
-          { set: false, text: "Not set" },
-          { set: true, text: "Set" },
+          { set: false, text: t("fields.common.notSet") },
+          { set: true, text: t("fields.umask.set") },
         ].map((o) => (
           <button
             key={o.text}
@@ -721,13 +742,13 @@ export function UmaskEditor({
       {isSet && (
         <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
           <table className="text-xs" aria-describedby={`${groupId}-hint`}>
-            <caption className="sr-only">Permissions removed from new files</caption>
+            <caption className="sr-only">{t("fields.umask.tableCaption")}</caption>
             <thead>
               <tr>
                 <td />
                 {UMASK_PERMISSIONS.map((p) => (
                   <th key={p} scope="col" className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-gray-600">
-                    {p}
+                    {t(UMASK_PERMISSION_KEYS[p])}
                   </th>
                 ))}
               </tr>
@@ -736,13 +757,13 @@ export function UmaskEditor({
               {UMASK_CLASSES.map((cls, c) => (
                 <tr key={cls}>
                   <th scope="row" className="pr-3 py-1 text-left font-medium text-gray-400">
-                    {cls}
+                    {t(UMASK_CLASS_KEYS[cls])}
                   </th>
                   {UMASK_PERMISSIONS.map((perm, p) => (
                     <td key={perm} className="px-2 py-1 text-center">
                       <input
                         type="checkbox"
-                        aria-label={`Mask ${perm.toLowerCase()} for ${cls.toLowerCase()}`}
+                        aria-label={t("fields.umask.maskCheckboxLabel", { perm: t(UMASK_PERMISSION_KEYS[perm]), cls: t(UMASK_CLASS_KEYS[cls]) })}
                         checked={grid[c][p]}
                         disabled={disabled}
                         onChange={() => onChange(toggleUmaskBit(mask, c, p))}
@@ -756,15 +777,15 @@ export function UmaskEditor({
           </table>
 
           <dl className="grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5 text-[11px] text-gray-500" aria-live="polite">
-            <dt>Octal</dt>
+            <dt>{t("fields.umask.octal")}</dt>
             <dd className="font-mono text-gray-300">{formatOctal(mask)}</dd>
-            <dt>Decimal (stored)</dt>
+            <dt>{t("fields.umask.decimalStored")}</dt>
             <dd className="font-mono text-gray-300">{mask}</dd>
-            <dt>New files</dt>
+            <dt>{t("fields.umask.newFiles")}</dt>
             <dd className="font-mono text-gray-400">
               {formatMode(modeUnderUmask(mask, "file"))} ({modeUnderUmask(mask, "file").toString(8)})
             </dd>
-            <dt>New folders</dt>
+            <dt>{t("fields.umask.newFolders")}</dt>
             <dd className="font-mono text-gray-400">
               {formatMode(modeUnderUmask(mask, "folder"))} ({modeUnderUmask(mask, "folder").toString(8)})
             </dd>
@@ -774,13 +795,12 @@ export function UmaskEditor({
 
       {isSet && (
         <p id={`${groupId}-hint`} className="text-[11px] text-gray-600">
-          A checked box removes that permission from the files the job creates.
+          {t("fields.umask.checkedBoxHint")}
         </p>
       )}
       {outOfRange && (
         <p className="text-[11px] text-amber-400">
-          The plist stores {String(value)}. umask(2) only uses the nine permission bits, so launchd applies {formatOctal(mask)} (decimal {mask}).
-          A change here stores the reduced value.
+          {t("fields.umask.outOfRangeWarning", { value: String(value), octal: formatOctal(mask), mask })}
         </p>
       )}
     </div>
@@ -840,7 +860,7 @@ export function SchemaField({
           onChange={(e) => onChange(e.target.value || undefined)}
           className={cn(inputClass, "max-w-xs")}
         >
-          <option value="">Default</option>
+          <option value="">{t("fields.schemaField.defaultOption")}</option>
           {spec.options.map((o) => (
             <option key={o}>{o}</option>
           ))}
@@ -878,7 +898,7 @@ export function SchemaField({
           min={spec.min}
           max={spec.max}
           disabled={disabled}
-          placeholder="default"
+          placeholder={t("fields.schemaField.defaultPlaceholder")}
           onChange={onChange}
           className="w-32"
         />
@@ -903,11 +923,30 @@ export function SchemaField({
         />
       );
     case "string-dict":
-      return <DictEditor kind="string" value={isPlistDict(value) ? value : {}} disabled={disabled} onChange={onChange} keyPlaceholder="NAME" valuePlaceholder="value" />;
+      return (
+        <DictEditor
+          kind="string"
+          value={isPlistDict(value) ? value : {}}
+          disabled={disabled}
+          onChange={onChange}
+          keyPlaceholder="NAME"
+          valuePlaceholder={t("fields.schemaField.valuePlaceholder")}
+        />
+      );
     case "bool-dict":
       return <DictEditor kind="boolean" value={isPlistDict(value) ? value : {}} disabled={disabled} onChange={onChange} />;
     case "integer-dict":
-      return <DictEditor kind="integer" value={isPlistDict(value) ? value : {}} keyOptions={spec.options} disabled={disabled} onChange={onChange} keyPlaceholder="Limit" addLabel="Add limit" />;
+      return (
+        <DictEditor
+          kind="integer"
+          value={isPlistDict(value) ? value : {}}
+          keyOptions={spec.options}
+          disabled={disabled}
+          onChange={onChange}
+          keyPlaceholder={t("fields.schemaField.limitPlaceholder")}
+          addLabel={t("fields.schemaField.addLimit")}
+        />
+      );
     case "keepalive":
       return <KeepAliveEditor value={value} disabled={disabled} onChange={onChange} />;
     case "calendar":

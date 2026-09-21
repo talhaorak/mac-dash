@@ -20,7 +20,9 @@ import { toast } from "@/components/ui/Toast";
 import { backend, type JobMeta, type JobOutput, type JobSignature, type ServiceDetail } from "@/lib/backend";
 import type { ServiceInfo } from "@/stores/app";
 import { cn } from "@/lib/utils";
-import { explainExitStatus, scopeFor } from "@shared/launchd";
+import { scopeFor } from "@shared/launchd";
+import { t, useT } from "@/i18n";
+import { localizeExitStatus, localizeTriggers, scopeTitle } from "@/i18n/launchd";
 import { inputClass } from "./fields";
 import { JobIconPicker } from "./JobIcon";
 import { JobLogTab } from "./JobLogTab";
@@ -83,6 +85,7 @@ function DrawerBody({
   onNavigateToProcess,
   onViewLogs,
 }: Omit<Parameters<typeof JobDetailDrawer>[0], "service"> & { titleId: string; service: ServiceInfo }) {
+  useT(); // subscribe: re-render when the language changes
   const ref = { label: service.label, category: service.category };
   const [tab, setTab] = useState<Tab>("overview");
   const [detail, setDetail] = useState<ServiceDetail | null>(null);
@@ -109,21 +112,21 @@ function DrawerBody({
     backend
       .getJobSignature({ label: service.label, category: service.category })
       .then((sig) => !cancelled && setSignature(sig))
-      .catch((e: Error) => !cancelled && setSignature({ failed: e.message || "The signature could not be read." }));
+      .catch((e: Error) => !cancelled && setSignature({ failed: e.message || t("detail.drawer.signatureReadError") }));
     return () => {
       cancelled = true;
     };
   }, [wantSignature, service.label, service.category]);
 
-  const exitText = explainExitStatus(service.lastExitStatus);
+  const exitText = localizeExitStatus(service.lastExitStatus);
   const programName = service.program?.split("/").pop();
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: "overview", label: "Overview" },
-    ...(hasFile ? [{ id: "output" as Tab, label: "Output" }] : []),
-    { id: "log", label: "Log" },
+    { id: "overview", label: t("detail.drawer.tabOverview") },
+    ...(hasFile ? [{ id: "output" as Tab, label: t("detail.drawer.tabOutput") }] : []),
+    { id: "log", label: t("detail.drawer.tabLog") },
     { id: "launchctl", label: "launchctl print" },
-    { id: "notes", label: `Notes${meta?.notes || meta?.tags.length || meta?.icon ? " •" : ""}` },
+    { id: "notes", label: `${t("detail.drawer.tabNotes")}${meta?.notes || meta?.tags.length || meta?.icon ? " •" : ""}` },
   ];
 
   return (
@@ -135,14 +138,14 @@ function DrawerBody({
           </h2>
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={service.status} />
-            {service.disabled && <Chip tone="amber">Disabled</Chip>}
-            {!service.loaded && !service.disabled && <Chip tone="gray">Not loaded</Chip>}
-            {service.unreadable && <Chip tone="red">Unreadable plist</Chip>}
-            {service.quarantined && <Chip tone="red">Quarantined</Chip>}
-            <Chip tone="gray">{scopeFor(service.category)?.title}</Chip>
+            {service.disabled && <Chip tone="amber">{t("detail.drawer.disabledChip")}</Chip>}
+            {!service.loaded && !service.disabled && <Chip tone="gray">{t("detail.drawer.notLoadedChip")}</Chip>}
+            {service.unreadable && <Chip tone="red">{t("detail.drawer.unreadablePlistChip")}</Chip>}
+            {service.quarantined && <Chip tone="red">{t("detail.drawer.quarantinedChip")}</Chip>}
+            <Chip tone="gray">{scopeTitle(service.category)}</Chip>
           </div>
         </div>
-        <button type="button" aria-label="Close details" onClick={onClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400">
+        <button type="button" aria-label={t("detail.drawer.closeDetails")} onClick={onClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400">
           <X className="w-4 h-4" />
         </button>
       </div>
@@ -151,12 +154,12 @@ function DrawerBody({
       <div className="flex flex-wrap gap-2">
         {hasFile && (
           <ActionButton icon={Pencil} onClick={onEdit}>
-            {service.writable ? "Edit" : "View plist"}
+            {service.writable ? t("common.edit") : t("detail.drawer.viewPlist")}
           </ActionButton>
         )}
         {hasFile && (
           <ActionButton icon={Copy} onClick={onDuplicate}>
-            Duplicate
+            {t("common.duplicate")}
           </ActionButton>
         )}
         {hasFile && (
@@ -164,79 +167,77 @@ function DrawerBody({
             icon={FolderOpen}
             onClick={() => backend.revealJob(ref).catch((e: Error) => toast.error(e.message))}
           >
-            Show in Finder
+            {t("common.revealInFinder")}
           </ActionButton>
         )}
         {programName && (
           <ActionButton icon={ScrollText} onClick={() => onViewLogs(programName)}>
-            System log
+            {t("detail.drawer.systemLogButton")}
           </ActionButton>
         )}
         {service.pid !== null && (
           <ActionButton icon={Activity} onClick={() => onNavigateToProcess(service.pid!)}>
-            Process {service.pid}
+            {t("detail.drawer.processButton", { pid: service.pid })}
           </ActionButton>
         )}
         {service.writable && hasFile && (
           <ConfirmButton
             onConfirm={onDelete}
-            confirmLabel="Click again to move to Trash"
+            confirmLabel={t("detail.drawer.confirmMoveToTrash")}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-red-400 bg-red-500/5 hover:bg-red-500/10 border border-red-500/20"
             armedClassName="bg-red-500/25! text-red-200!"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            Delete
+            {t("common.delete")}
           </ConfirmButton>
         )}
       </div>
 
-      {service.quarantined && (
-        <Notice>
-          This plist carries the com.apple.quarantine attribute (it was downloaded or AirDropped). launchd can refuse to load it.
-          Open it in the editor and save: mac-dash removes the attribute.
-        </Notice>
-      )}
-      {service.unreadable && <Notice>The plist cannot be parsed. Open it in the editor: Expert mode shows the line of the error.</Notice>}
+      {service.quarantined && <Notice>{t("detail.drawer.quarantineNotice")}</Notice>}
+      {service.unreadable && <Notice>{t("detail.drawer.unreadableNotice")}</Notice>}
 
-      <div role="tablist" aria-label="Job details" className="flex flex-wrap gap-1">
-        {tabs.map((t) => (
+      <div role="tablist" aria-label={t("detail.drawer.tabsAria")} className="flex flex-wrap gap-1">
+        {tabs.map((tabInfo) => (
           <button
-            key={t.id}
+            key={tabInfo.id}
             type="button"
             role="tab"
-            aria-selected={tab === t.id}
-            onClick={() => setTab(t.id)}
+            aria-selected={tab === tabInfo.id}
+            onClick={() => setTab(tabInfo.id)}
             className={cn(
               "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
-              tab === t.id ? "bg-cyan-500/15 text-cyan-400 ring-1 ring-cyan-500/30" : "text-gray-500 hover:text-gray-300 hover:bg-white/[0.04]"
+              tab === tabInfo.id ? "bg-cyan-500/15 text-cyan-400 ring-1 ring-cyan-500/30" : "text-gray-500 hover:text-gray-300 hover:bg-white/[0.04]"
             )}
           >
-            {t.label}
+            {tabInfo.label}
           </button>
         ))}
       </div>
 
       {tab === "overview" && (
         <dl className="space-y-3">
-          <Row label="Program" value={service.program} mono />
+          <Row label={t("detail.drawer.program")} value={service.program} mono />
           {service.programArguments && service.programArguments.length > 0 && (
-            <Row label="Arguments" value={service.programArguments.join("\n")} mono copyText={service.programArguments.join(" ")} />
+            <Row label={t("detail.drawer.arguments")} value={service.programArguments.join("\n")} mono copyText={service.programArguments.join(" ")} />
           )}
-          <Row label="Triggers" value={service.triggers.length > 0 ? service.triggers.join(" · ") : hasFile ? "None: starts only on demand" : null} />
-          <Row label="Plist" value={service.plistPath} mono />
-          {hasFile && <SignatureRow signature={signature} />}
-          <Row label="Runs as" value={service.userName ?? (scopeFor(service.category)?.kind === "daemon" ? "root" : "the logged-in user")} />
-          <Row label="launchd state" value={detail?.state ?? (service.loaded ? "loaded" : "not loaded")} />
-          <Row label="Domain" value={detail?.domain ?? null} mono />
           <Row
-            label="Last exit"
-            value={service.lastExitStatus === null ? "Never exited" : `${service.lastExitStatus}: ${exitText}`}
+            label={t("detail.drawer.triggers")}
+            value={service.triggers.length > 0 ? localizeTriggers(service.triggers).join(" · ") : hasFile ? t("detail.drawer.noTriggers") : null}
+          />
+          <Row label={t("detail.drawer.plistLabel")} value={service.plistPath} mono />
+          {hasFile && <SignatureRow signature={signature} />}
+          <Row label={t("detail.drawer.runsAs")} value={service.userName ?? (scopeFor(service.category)?.kind === "daemon" ? "root" : t("detail.drawer.loggedInUser"))} />
+          <Row label={t("detail.drawer.launchdState")} value={detail?.state ?? (service.loaded ? "loaded" : "not loaded")} />
+          <Row label={t("detail.drawer.domain")} value={detail?.domain ?? null} mono />
+          <Row
+            label={t("detail.drawer.lastExit")}
+            value={service.lastExitStatus === null ? t("detail.drawer.neverExited") : `${service.lastExitStatus}: ${exitText}`}
             tone={service.lastExitStatus ? "red" : undefined}
           />
-          <Row label="Exit reason" value={detail?.lastExitReason ?? null} />
-          <Row label="Bundle ID" value={detail?.bundleId ?? null} mono />
+          <Row label={t("detail.drawer.exitReason")} value={detail?.lastExitReason ?? null} />
+          <Row label={t("detail.drawer.bundleId")} value={detail?.bundleId ?? null} mono />
           {detail && Object.keys(detail.environment).length > 0 && (
-            <Row label="Environment" value={Object.entries(detail.environment).map(([k, v]) => `${k}=${v}`).join("\n")} mono />
+            <Row label={t("detail.drawer.environment")} value={Object.entries(detail.environment).map(([k, v]) => `${k}=${v}`).join("\n")} mono />
           )}
         </dl>
       )}
@@ -254,7 +255,7 @@ function DrawerBody({
             </span>
           </div>
         ) : (
-          <p className="text-sm text-gray-500">launchd does not know this job. It is not loaded.</p>
+          <p className="text-sm text-gray-500">{t("detail.drawer.launchctlEmpty")}</p>
         ))}
 
       {tab === "notes" && <NotesTab service={service} meta={meta} onSaved={onMetaSaved} />}
@@ -296,30 +297,33 @@ function OutputTab({ service }: { service: ServiceInfo }) {
             onClick={() => setStream(s)}
             className={cn("px-2.5 py-1 rounded-lg text-xs", stream === s ? "bg-white/[0.08] text-gray-200" : "text-gray-500 hover:text-gray-300")}
           >
-            {s === "stdout" ? "Standard output" : "Standard error"}
+            {s === "stdout" ? t("detail.output.stdout") : t("detail.output.stderr")}
           </button>
         ))}
-        <button type="button" aria-label="Refresh output" onClick={() => setTick((t) => t + 1)} className="ml-auto p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-white/[0.06]">
+        <button
+          type="button"
+          aria-label={t("detail.output.refreshAria")}
+          onClick={() => setTick((n) => n + 1)}
+          className="ml-auto p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-white/[0.06]"
+        >
           <RefreshCw className="w-3.5 h-3.5" />
         </button>
       </div>
       {output === null ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <p className="text-sm text-gray-500">{t("common.loading")}</p>
       ) : output.path === null ? (
-        <p className="text-sm text-gray-500">
-          The job has no {stream === "stdout" ? "StandardOutPath" : "StandardErrorPath"}. Set one in the editor to capture its output.
-        </p>
+        <p className="text-sm text-gray-500">{t("detail.output.noPath", { field: stream === "stdout" ? "StandardOutPath" : "StandardErrorPath" })}</p>
       ) : !output.exists ? (
         <p className="text-sm text-gray-500">
-          <span className="font-mono text-xs">{output.path}</span> does not exist yet. The job has not written anything.
+          <span className="font-mono text-xs">{output.path}</span> {t("detail.output.notExists")}
         </p>
       ) : (
         <>
           <p className="text-[11px] text-gray-600 font-mono break-all">
-            {output.path} · {output.size} B{output.truncated ? " · showing the end of the file" : ""}
+            {output.path} · {output.size} B{output.truncated ? ` · ${t("detail.output.truncated")}` : ""}
           </p>
           <pre className="max-h-[55vh] overflow-auto rounded-xl bg-black/40 p-3 text-[11px] font-mono text-gray-300 whitespace-pre-wrap break-all">
-            {output.text || "(empty)"}
+            {output.text || t("detail.output.empty")}
           </pre>
         </>
       )}
@@ -344,7 +348,7 @@ function NotesTab({ service, meta, onSaved }: { service: ServiceInfo; meta: JobM
     try {
       await backend.setJobMeta({ label: service.label, category: service.category }, next);
       onSaved(next);
-      toast.success("Notes, tags and icon saved");
+      toast.success(t("detail.notes.saved"));
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -356,14 +360,14 @@ function NotesTab({ service, meta, onSaved }: { service: ServiceInfo; meta: JobM
     <div className="space-y-3">
       <JobIconPicker value={icon} onChange={setIcon} label={service.label} disabled={saving} />
       <label className="block space-y-1">
-        <span className="text-xs font-medium text-gray-400">Tags</span>
-        <input type="text" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="backup, work" className={inputClass} />
-        <span className="text-[11px] text-gray-600">Separate tags with a space, a comma or a semicolon. Tags filter the job list.</span>
+        <span className="text-xs font-medium text-gray-400">{t("detail.notes.tagsLabel")}</span>
+        <input type="text" value={tags} onChange={(e) => setTags(e.target.value)} placeholder={t("detail.notes.tagsPlaceholder")} className={inputClass} />
+        <span className="text-[11px] text-gray-600">{t("detail.notes.tagsHint")}</span>
       </label>
       <label className="block space-y-1">
-        <span className="text-xs font-medium text-gray-400">Notes</span>
+        <span className="text-xs font-medium text-gray-400">{t("detail.notes.notesLabel")}</span>
         <textarea rows={8} value={notes} onChange={(e) => setNotes(e.target.value)} className={cn(inputClass, "resize-y")} />
-        <span className="text-[11px] text-gray-600">Notes, tags and the icon stay on this Mac (~/.macdash). They work on read-only jobs too. Search finds the notes.</span>
+        <span className="text-[11px] text-gray-600">{t("detail.notes.notesHint")}</span>
       </label>
       <button
         type="button"
@@ -371,7 +375,7 @@ function NotesTab({ service, meta, onSaved }: { service: ServiceInfo; meta: JobM
         onClick={save}
         className="px-3 py-1.5 rounded-lg text-xs font-medium text-cyan-950 bg-cyan-400 hover:bg-cyan-300 disabled:opacity-40"
       >
-        Save notes, tags and icon
+        {t("detail.notes.saveButton")}
       </button>
     </div>
   );
@@ -418,10 +422,10 @@ function SignatureRow({ signature }: { signature: JobSignature | { failed: strin
 
   return (
     <div className="grid grid-cols-[110px_1fr] gap-3">
-      <dt className="text-xs text-gray-500 pt-1.5">Signed by</dt>
+      <dt className="text-xs text-gray-500 pt-1.5">{t("detail.drawer.signedBy")}</dt>
       <dd className="min-w-0 text-sm space-y-1.5">
         {signature === null ? (
-          <span className="text-gray-500">Checking…</span>
+          <span className="text-gray-500">{t("detail.drawer.checkingSignature")}</span>
         ) : "failed" in signature ? (
           <span className="text-gray-500 break-words">{signature.failed}</span>
         ) : (
@@ -429,7 +433,7 @@ function SignatureRow({ signature }: { signature: JobSignature | { failed: strin
             <p className={cn("flex items-start gap-1.5 break-words", tone)} title={authorityChain(signature) || undefined}>
               {summary!.tone === "warning" && <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" aria-hidden />}
               <span>
-                {summary!.tone === "warning" && <span className="sr-only">Warning: </span>}
+                {summary!.tone === "warning" && <span className="sr-only">{t("detail.drawer.warningPrefix")}</span>}
                 {summary!.text}
               </span>
             </p>
@@ -442,14 +446,14 @@ function SignatureRow({ signature }: { signature: JobSignature | { failed: strin
                 className="inline-flex items-center gap-1 rounded-md text-[11px] text-gray-500 hover:text-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
               >
                 {open ? <ChevronDown className="w-3 h-3" aria-hidden /> : <ChevronRight className="w-3 h-3" aria-hidden />}
-                Signature details
+                {t("detail.drawer.signatureDetailsToggle")}
               </button>
             )}
             {hasDetails && open && (
               <div id={listId} className="rounded-lg bg-black/20 px-3 py-2 space-y-1.5 text-[11px] text-gray-400">
                 {signature.authorities.length > 0 && (
                   <>
-                    <p className="text-gray-500">Certificate chain, leaf first{signature.trusted ? "" : " (names only, not verified)"}</p>
+                    <p className="text-gray-500">{signature.trusted ? t("detail.drawer.certChain") : t("detail.drawer.certChainUnverified")}</p>
                     <ol className="list-decimal list-inside space-y-0.5 font-mono break-words">
                       {signature.authorities.map((a, i) => (
                         <li key={i}>{a}</li>
@@ -459,17 +463,17 @@ function SignatureRow({ signature }: { signature: JobSignature | { failed: strin
                 )}
                 {signature.identifier && (
                   <p>
-                    Identifier: <span className="font-mono break-all">{signature.identifier}</span>
+                    {t("detail.drawer.identifierLabel")} <span className="font-mono break-all">{signature.identifier}</span>
                   </p>
                 )}
                 {signature.teamId && (
                   <p>
-                    Team ID: <span className="font-mono">{signature.teamId}</span>
+                    {t("detail.drawer.teamIdLabel")} <span className="font-mono">{signature.teamId}</span>
                   </p>
                 )}
                 {signature.path && (
                   <p>
-                    Executable: <span className="font-mono break-all">{signature.path}</span>
+                    {t("detail.drawer.executableLabel")} <span className="font-mono break-all">{signature.path}</span>
                   </p>
                 )}
               </div>

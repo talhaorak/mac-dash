@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -95,7 +96,7 @@ interface ConfirmButtonProps
 export function ConfirmButton({
   onConfirm,
   children,
-  confirmLabel = "Click again to confirm",
+  confirmLabel,
   armedClassName,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   className,
@@ -103,8 +104,10 @@ export function ConfirmButton({
   onKeyDown,
   ...rest
 }: ConfirmButtonProps) {
+  const { t } = useT();
   const { armed, confirm, disarm } = useConfirm<true>(timeoutMs);
   const isArmed = armed === true;
+  const confirmText = confirmLabel ?? t("app.confirmButton.clickAgain");
 
   return (
     <button
@@ -131,7 +134,7 @@ export function ConfirmButton({
         onKeyDown?.(e);
       }}
     >
-      {isArmed ? confirmLabel : children}
+      {isArmed ? confirmText : children}
     </button>
   );
 }

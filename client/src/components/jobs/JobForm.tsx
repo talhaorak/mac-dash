@@ -12,6 +12,8 @@ import {
   type KeySpec,
 } from "@shared/launchd";
 import { isPlistDict, type PlistDict, type PlistValue } from "@shared/plist";
+import { t, useT, type TKey } from "@/i18n";
+import { keyHelp, keyTitle } from "@/i18n/launchd";
 import { FieldRow, SchemaField, StringList, Toggle, inputClass } from "./fields";
 import { ChoosePathButton } from "./PathPicker";
 import { PLIST_TYPES, PLIST_TYPE_LABELS, PlistTreeEditor, defaultForType, type PlistType } from "./PlistTreeEditor";
@@ -117,18 +119,18 @@ export function initialValueForSpec(spec: KeySpec): PlistValue {
 }
 
 export function newKeyProblem(name: string, job: PlistDict): string | null {
-  if (name === "") return "Enter the name of the key.";
-  if (name !== name.trim()) return "Remove the spaces around the name.";
-  if (name in job) return `The job already has the key "${name}".`;
+  if (name === "") return t("editor.addKey.emptyName");
+  if (name !== name.trim()) return t("editor.addKey.trimName");
+  if (name in job) return t("editor.addKey.alreadyHasKey", { name });
   return null;
 }
 
-const RUN_KINDS: { kind: RunKind; title: string; hint: string }[] = [
-  { kind: "command", title: "Command", hint: "A shell command line. Runs through sh -c, so pipes, && and variables work." },
-  { kind: "program", title: "Program", hint: "An executable and its arguments, passed to launchd as they are." },
-  { kind: "script", title: "Script", hint: "A script file, run by the interpreter you choose." },
-  { kind: "app", title: "App", hint: "Opens an application with /usr/bin/open." },
-  { kind: "shortcut", title: "Shortcut", hint: "Runs a shortcut from the Shortcuts app." },
+const RUN_KINDS: { kind: RunKind; titleKey: TKey; hintKey: TKey }[] = [
+  { kind: "command", titleKey: "editor.run.kind.command.title", hintKey: "editor.run.kind.command.hint" },
+  { kind: "program", titleKey: "editor.run.kind.program.title", hintKey: "editor.run.kind.program.hint" },
+  { kind: "script", titleKey: "editor.run.kind.script.title", hintKey: "editor.run.kind.script.hint" },
+  { kind: "app", titleKey: "editor.run.kind.app.title", hintKey: "editor.run.kind.app.hint" },
+  { kind: "shortcut", titleKey: "editor.run.kind.shortcut.title", hintKey: "editor.run.kind.shortcut.hint" },
 ];
 
 function argsOf(job: PlistDict): string[] {
@@ -156,6 +158,7 @@ function RunSection({
   disabled?: boolean;
   issueFor: (key: string) => JobIssue | null;
 }) {
+  const { t } = useT();
   const [kind, setKind] = useState<RunKind>(() => detectRunKind(job));
   const [shortcuts, setShortcuts] = useState<string[]>([]);
   const [resolveNote, setResolveNote] = useState<string | null>(null);
@@ -210,15 +213,15 @@ function RunSection({
     const facts = await backend.checkPaths(SEARCH_DIRS.map((d) => `${d}/${exe}`));
     const hit = SEARCH_DIRS.map((d) => `${d}/${exe}`).find((p) => facts.some((f) => f.path === p && f.isFile && f.executable));
     if (hit) setArgs([hit, ...args.slice(1)]);
-    setResolveNote(hit ? `Resolved to ${hit}` : `"${exe}" was not found in ${SEARCH_DIRS.join(", ")}`);
+    setResolveNote(hit ? t("editor.run.resolvedTo", { path: hit }) : t("editor.run.notFoundIn", { name: exe, dirs: SEARCH_DIRS.join(", ") }));
   };
 
   const issue = issueFor("ProgramArguments") ?? issueFor("Program");
 
   return (
     <div>
-      <FieldRow jobKey="ProgramArguments" label="Run" help={RUN_KINDS.find((k) => k.kind === kind)!.hint} issue={issue}>
-        <div role="radiogroup" aria-label="Run kind" className="inline-flex rounded-lg bg-white/[0.04] p-0.5 mb-2">
+      <FieldRow jobKey="ProgramArguments" label={t("editor.run.label")} help={t(RUN_KINDS.find((k) => k.kind === kind)!.hintKey)} issue={issue}>
+        <div role="radiogroup" aria-label={t("editor.run.kindGroupAria")} className="inline-flex rounded-lg bg-white/[0.04] p-0.5 mb-2">
           {RUN_KINDS.map((k) => (
             <button
               key={k.kind}
@@ -232,7 +235,7 @@ function RunSection({
                 kind === k.kind ? "bg-cyan-500/20 text-cyan-300" : "text-gray-500 hover:text-gray-300"
               )}
             >
-              {k.title}
+              {t(k.titleKey)}
             </button>
           ))}
         </div>
@@ -240,7 +243,7 @@ function RunSection({
         {kind === "command" && (
           <div className="flex gap-2">
             <select
-              aria-label="Shell"
+              aria-label={t("editor.run.shellAria")}
               value={args[0] ?? "/bin/sh"}
               disabled={disabled}
               onChange={(e) => setArgs([e.target.value, "-c", args[2] ?? ""])}
@@ -251,12 +254,12 @@ function RunSection({
               ))}
             </select>
             <textarea
-              aria-label="Command"
+              aria-label={t("editor.run.kind.command.title")}
               rows={2}
               spellCheck={false}
               value={args[2] ?? ""}
               disabled={disabled}
-              placeholder='e.g. /usr/bin/rsync -a "$HOME/Documents" /Volumes/Backup'
+              placeholder={t("editor.run.commandPlaceholder")}
               onChange={(e) => setArgs([args[0] ?? "/bin/sh", "-c", e.target.value])}
               className={cn(inputClass, "font-mono text-xs resize-y")}
             />
@@ -269,27 +272,33 @@ function RunSection({
               <div className="flex gap-1.5">
                 <input
                   type="text"
-                  aria-label="Program"
+                  aria-label={t("editor.field.program")}
                   spellCheck={false}
                   value={job.Program}
                   disabled={disabled}
                   onChange={(e) => commit(setKey(job, "Program", e.target.value || undefined))}
                   className={cn(inputClass, "font-mono text-xs")}
                 />
-                <ChoosePathButton mode="executable" value={job.Program} disabled={disabled} fieldLabel="Program" onPick={(path) => commit(setKey(job, "Program", path))} />
+                <ChoosePathButton
+                  mode="executable"
+                  value={job.Program}
+                  disabled={disabled}
+                  fieldLabel={t("editor.field.program")}
+                  onPick={(path) => commit(setKey(job, "Program", path))}
+                />
               </div>
             )}
             <StringList
               values={args}
               disabled={disabled}
-              addLabel="Add argument"
-              placeholder={args.length === 0 ? "/path/to/executable" : "argument"}
+              addLabel={t("editor.run.addArgument")}
+              placeholder={args.length === 0 ? "/path/to/executable" : t("editor.run.argumentPlaceholder")}
               onChange={(next) => commit(setKey(job, "ProgramArguments", next))}
               choose={(i) => (i === 0 ? "executable" : null)}
-              chooseLabel="Program argument"
+              chooseLabel={t("editor.run.programArgumentChoose")}
             />
             {args.length === 0 && typeof job.Program !== "string" && (
-              <ChoosePathButton mode="executable" disabled={disabled} fieldLabel="Program" onPick={(path) => commit(setKey(job, "ProgramArguments", [path]))} />
+              <ChoosePathButton mode="executable" disabled={disabled} fieldLabel={t("editor.field.program")} onPick={(path) => commit(setKey(job, "ProgramArguments", [path]))} />
             )}
             {args[0] && !args[0].includes("/") && (
               <button
@@ -299,7 +308,7 @@ function RunSection({
                 className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-cyan-400 hover:bg-cyan-500/10"
               >
                 <Wand2 className="w-3.5 h-3.5" />
-                Find the full path of "{args[0]}"
+                {t("editor.run.findFullPath", { name: args[0] })}
               </button>
             )}
             {resolveNote && <p className="text-[11px] text-gray-500">{resolveNote}</p>}
@@ -309,7 +318,7 @@ function RunSection({
         {kind === "script" && (
           <div className="flex gap-2">
             <select
-              aria-label="Interpreter"
+              aria-label={t("editor.run.interpreterAria")}
               value={args[0] ?? "/bin/sh"}
               disabled={disabled}
               onChange={(e) => setArgs([e.target.value, args[1] ?? ""])}
@@ -321,15 +330,15 @@ function RunSection({
             </select>
             <input
               type="text"
-              aria-label="Script path"
+              aria-label={t("editor.field.scriptPath")}
               spellCheck={false}
               value={args[1] ?? ""}
               disabled={disabled}
-              placeholder="/Users/you/bin/backup.sh"
+              placeholder={t("editor.field.scriptPathPlaceholder")}
               onChange={(e) => setArgs([args[0] ?? "/bin/sh", e.target.value])}
               className={cn(inputClass, "font-mono text-xs")}
             />
-            <ChoosePathButton mode="file" value={args[1]} disabled={disabled} fieldLabel="Script path" onPick={(path) => setArgs([args[0] ?? "/bin/sh", path])} />
+            <ChoosePathButton mode="file" value={args[1]} disabled={disabled} fieldLabel={t("editor.field.scriptPath")} onPick={(path) => setArgs([args[0] ?? "/bin/sh", path])} />
           </div>
         )}
         {kind === "script" && (args[1] ?? "").startsWith("/") && !disabled && (
@@ -350,11 +359,11 @@ function RunSection({
             <div className="flex gap-1.5">
               <input
                 type="text"
-                aria-label="Application"
+                aria-label={t("editor.field.application")}
                 spellCheck={false}
                 value={openArgs.app}
                 disabled={disabled}
-                placeholder="Safari  or  /Applications/Safari.app"
+                placeholder={t("editor.run.appPlaceholder")}
                 onChange={(e) => {
                   setBuiltApp(null);
                   setArgs(buildOpenArgs({ ...openArgs, app: e.target.value }));
@@ -365,7 +374,7 @@ function RunSection({
                 mode="app"
                 value={openArgs.app}
                 disabled={disabled}
-                fieldLabel="Application"
+                fieldLabel={t("editor.field.application")}
                 onPick={(path) => {
                   setBuiltApp(null);
                   setArgs(buildOpenArgs({ ...openArgs, app: path }));
@@ -380,12 +389,29 @@ function RunSection({
                 onChange={(e) => setArgs(buildOpenArgs({ ...openArgs, wait: e.target.checked }))}
                 className="h-3.5 w-3.5 rounded accent-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
               />
-              Wait until the app quits (<span className="font-mono">-W</span>), so launchd tracks the app and not only the launcher
+              {(() => {
+                const [before, after] = t("editor.run.waitForQuit").split("{flag}");
+                return (
+                  <>
+                    {before}
+                    <span className="font-mono">-W</span>
+                    {after}
+                  </>
+                );
+              })()}
             </label>
             {builtApp && (
               <p role="status" className="text-[11px] text-cyan-400/80">
-                Built <span className="font-mono">{builtApp}</span>. The job now opens this app, because macOS grants privacy permissions
-                (Full Disk Access, Automation) to apps, not to scripts.
+                {(() => {
+                  const [before, after] = t("editor.run.builtApp").split("{path}");
+                  return (
+                    <>
+                      {before}
+                      <span className="font-mono">{builtApp}</span>
+                      {after}
+                    </>
+                  );
+                })()}
               </p>
             )}
           </div>
@@ -400,11 +426,11 @@ function RunSection({
             </datalist>
             <input
               type="text"
-              aria-label="Shortcut name"
+              aria-label={t("editor.field.shortcutName")}
               list={shortcutListId}
               value={args[2] ?? ""}
               disabled={disabled}
-              placeholder={shortcuts.length > 0 ? "Pick or type a shortcut name" : "Shortcut name"}
+              placeholder={shortcuts.length > 0 ? t("editor.run.pickShortcut") : t("editor.field.shortcutName")}
               onChange={(e) => setArgs(["/usr/bin/shortcuts", "run", e.target.value])}
               className={inputClass}
             />
@@ -417,6 +443,7 @@ function RunSection({
 
 /** Lingon's "Build an App": the backend wraps the script in ~/Applications/<name>.app. */
 function WrapInApp({ scriptPath, onBuilt }: { scriptPath: string; onBuilt: (appPath: string) => void }) {
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(() => defaultAppName(scriptPath));
   const [busy, setBusy] = useState(false);
@@ -431,10 +458,10 @@ function WrapInApp({ scriptPath, onBuilt }: { scriptPath: string; onBuilt: (appP
     setError(null);
     try {
       const result = await backend.buildScriptApp(scriptPath, name);
-      if (!result || typeof result.path !== "string" || !result.path.startsWith("/")) throw new Error("The backend did not return the path of the app.");
+      if (!result || typeof result.path !== "string" || !result.path.startsWith("/")) throw new Error(t("editor.wrapApp.noPathReturned"));
       onBuilt(result.path);
     } catch (e) {
-      setError((e as Error).message || "The app could not be built.");
+      setError((e as Error).message || t("editor.wrapApp.buildFailed"));
     } finally {
       setBusy(false);
     }
@@ -449,20 +476,26 @@ function WrapInApp({ scriptPath, onBuilt }: { scriptPath: string; onBuilt: (appP
         className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-cyan-400 hover:bg-cyan-500/10"
       >
         <AppWindow className="w-3.5 h-3.5" aria-hidden />
-        Wrap in an app…
+        {t("editor.wrapApp.button")}
       </button>
     );
   }
 
+  const [descBefore, descRest] = t("editor.wrapApp.description").split("{path}");
+  const [descMiddle, descAfter] = descRest.split("{shebang}");
+
   return (
     <div className="rounded-lg border border-white/[0.06] bg-black/20 p-3 space-y-2">
       <p className="text-[11px] leading-snug text-gray-500">
-        Creates <span className="font-mono">~/Applications/{name || "<name>"}.app</span> and changes the job to open it. The app runs the script file
-        itself: the file must be executable and start with a <span className="font-mono">#!</span> line.
+        {descBefore}
+        <span className="font-mono">~/Applications/{name || "<name>"}.app</span>
+        {descMiddle}
+        <span className="font-mono">#!</span>
+        {descAfter}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <label htmlFor={nameId} className="text-xs text-gray-400">
-          App name
+          {t("editor.wrapApp.nameLabel")}
         </label>
         <input
           id={nameId}
@@ -493,10 +526,10 @@ function WrapInApp({ scriptPath, onBuilt }: { scriptPath: string; onBuilt: (appP
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-cyan-950 bg-cyan-400 hover:bg-cyan-300 disabled:opacity-40"
         >
           {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden />}
-          Build app
+          {t("editor.wrapApp.buildButton")}
         </button>
         <button type="button" disabled={busy} onClick={() => setOpen(false)} className="px-2 py-1.5 rounded-lg text-xs text-gray-400 hover:bg-white/[0.06]">
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
       <p id={errorId} role="alert" className={cn("text-[11px] leading-snug", error ? "text-red-400" : "text-amber-400")}>
@@ -508,13 +541,13 @@ function WrapInApp({ scriptPath, onBuilt }: { scriptPath: string; onBuilt: (appP
 
 // ── Sections ─────────────────────────────────────────────────────────
 
-const GROUPS: { group: KeyGroup; title: string; open: boolean }[] = [
-  { group: "triggers", title: "When", open: true },
-  { group: "io", title: "Output and input", open: false },
-  { group: "environment", title: "Environment", open: false },
-  { group: "identity", title: "User and session", open: false },
-  { group: "resources", title: "Resources and limits", open: false },
-  { group: "advanced", title: "Advanced", open: false },
+const GROUPS: { group: KeyGroup; titleKey: TKey; open: boolean }[] = [
+  { group: "triggers", titleKey: "editor.group.triggers", open: true },
+  { group: "io", titleKey: "editor.group.io", open: false },
+  { group: "environment", titleKey: "editor.group.environment", open: false },
+  { group: "identity", titleKey: "editor.group.identity", open: false },
+  { group: "resources", titleKey: "editor.group.resources", open: false },
+  { group: "advanced", titleKey: "editor.group.advanced", open: false },
 ];
 
 // Keys with their own controls above the generic sections.
@@ -534,6 +567,7 @@ function Section({
   reveal?: number;
   children: React.ReactNode;
 }) {
+  const { t } = useT();
   const [open, setOpen] = useState(defaultOpen || count > 0);
   const [revealed, setRevealed] = useState(reveal);
   if (revealed !== reveal) {
@@ -551,8 +585,8 @@ function Section({
         {open ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
         {title}
         {count > 0 && (
-          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400" title="Keys set in this section">
-            {count} set
+          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400" title={t("editor.section.countBadgeTitle")}>
+            {t("editor.section.countBadge", { count })}
           </span>
         )}
       </button>
@@ -563,6 +597,7 @@ function Section({
 
 /** "Add key…": any key by name. A documented key gets its own widget, another key gets the tree editor. */
 function AddKey({ job, onAdd }: { job: PlistDict; onAdd: (name: string, type: PlistType) => void }) {
+  const { t } = useT();
   const [name, setName] = useState("");
   const [type, setType] = useState<PlistType>("string");
   const listId = useId();
@@ -579,17 +614,17 @@ function AddKey({ job, onAdd }: { job: PlistDict; onAdd: (name: string, type: Pl
   };
 
   return (
-    <section aria-label="Add a key" className="border-t border-white/[0.06] py-3 space-y-1.5">
+    <section aria-label={t("editor.addKey.label")} className="border-t border-white/[0.06] py-3 space-y-1.5">
       <datalist id={listId}>
         {unused.map((s) => (
           <option key={s.key} value={s.key}>
-            {s.title}
+            {keyTitle(s)}
           </option>
         ))}
       </datalist>
       <div className="flex flex-wrap items-center gap-1.5">
         <label htmlFor={nameId} className="text-sm font-semibold text-gray-300 pr-1">
-          Add key…
+          {t("editor.addKey.label")}
         </label>
         <input
           id={nameId}
@@ -599,7 +634,7 @@ function AddKey({ job, onAdd }: { job: PlistDict; onAdd: (name: string, type: Pl
           autoCapitalize="off"
           autoCorrect="off"
           value={name}
-          placeholder="Key name, for example Sockets"
+          placeholder={t("editor.addKey.placeholder")}
           aria-invalid={name !== "" && problem !== null}
           aria-describedby={errorId}
           onChange={(e) => setName(e.target.value)}
@@ -611,17 +646,17 @@ function AddKey({ job, onAdd }: { job: PlistDict; onAdd: (name: string, type: Pl
           className={cn(inputClass, "w-64 font-mono text-xs")}
         />
         <select
-          aria-label="Type of the new key"
+          aria-label={t("editor.addKey.typeAria")}
           value={spec ? "" : type}
           disabled={spec !== undefined}
-          title={spec ? "launchd defines the type of this key" : undefined}
+          title={spec ? t("editor.addKey.typeFixedTitle") : undefined}
           onChange={(e) => setType(e.target.value as PlistType)}
           className={cn(inputClass, "w-32 text-xs")}
         >
           {spec && <option value="">{spec.type}</option>}
-          {PLIST_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {PLIST_TYPE_LABELS[t]}
+          {PLIST_TYPES.map((pt) => (
+            <option key={pt} value={pt}>
+              {PLIST_TYPE_LABELS[pt]}
             </option>
           ))}
         </select>
@@ -632,17 +667,17 @@ function AddKey({ job, onAdd }: { job: PlistDict; onAdd: (name: string, type: Pl
           className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-gray-300 bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-40"
         >
           <Plus className="w-3.5 h-3.5" aria-hidden />
-          Add
+          {t("common.add")}
         </button>
       </div>
       <p id={errorId} className={cn("text-[11px] leading-snug", name !== "" && problem ? "text-amber-400" : "text-gray-600")}>
         {name !== "" && problem
           ? problem
           : spec
-            ? `${spec.title}: ${spec.help}`
+            ? `${keyTitle(spec)}: ${keyHelp(spec)}`
             : name !== ""
-              ? "Not a documented launchd key. launchd ignores keys it does not know."
-              : "The list suggests the launchd keys this job does not set. Any other name is kept as it is."}
+              ? t("editor.addKey.undocumented")
+              : t("editor.addKey.hint")}
       </p>
     </section>
   );
@@ -661,6 +696,7 @@ export function JobForm({
   issues: JobIssue[];
   disabled?: boolean;
 }) {
+  const { t } = useT();
   const isDaemon = scopeFor(category)?.kind === "daemon";
   const issueFor = useMemo(() => {
     const byKey = new Map<string, JobIssue>();
@@ -712,31 +748,27 @@ export function JobForm({
     <div ref={root}>
       <RunSection job={job} onChange={onChange} disabled={disabled} issueFor={issueFor} />
 
-      <FieldRow
-        jobKey="Disabled"
-        label="Disabled key"
-        help="Writes Disabled=true into the plist. Prefer the Enable/Disable action: it uses launchd's own override database."
-      >
+      <FieldRow jobKey="Disabled" label={t("editor.field.disabledKey")} help={t("editor.field.disabledKeyHelp")}>
         <Toggle
-          label="Disabled key"
+          label={t("editor.field.disabledKey")}
           checked={job.Disabled === true}
           disabled={disabled}
           onChange={(on) => onChange(setKey(job, "Disabled", on ? true : undefined))}
         />
       </FieldRow>
 
-      {GROUPS.map(({ group, title, open }) => {
+      {GROUPS.map(({ group, titleKey, open }) => {
         const specs = LAUNCHD_KEYS.filter((s) => s.group === group && visible(s));
         if (specs.length === 0) return null;
         const count = specs.filter((s) => s.key in job).length;
         return (
-          <Section key={group} title={title} count={count} defaultOpen={open} reveal={revealFor(specs.map((s) => s.key))}>
+          <Section key={group} title={t(titleKey)} count={count} defaultOpen={open} reveal={revealFor(specs.map((s) => s.key))}>
             {specs.map((spec) => (
               <FieldRow
                 key={spec.key}
                 jobKey={spec.key}
-                label={spec.title}
-                help={`${spec.key}${spec.deprecated ? " (deprecated)" : ""}: ${spec.help}`}
+                label={keyTitle(spec)}
+                help={`${spec.key}${spec.deprecated ? ` (${t("editor.key.deprecated")})` : ""}: ${keyHelp(spec)}`}
                 issue={issueFor(spec.key)}
               >
                 <SchemaField
@@ -748,7 +780,7 @@ export function JobForm({
                 />
                 {spec.key === "EnvironmentVariables" && needsAutoPath(job) && !disabled && (
                   <button type="button" disabled={pathBusy} onClick={addPath} className="text-left text-[11px] text-cyan-400 hover:underline disabled:opacity-50">
-                    Add the default PATH of this Mac, with Homebrew and /usr/local (launchd's own PATH is /usr/bin:/bin:/usr/sbin:/sbin)
+                    {t("editor.field.addDefaultPath")}
                   </button>
                 )}
               </FieldRow>
@@ -758,7 +790,7 @@ export function JobForm({
       })}
 
       {unknownKeys.length > 0 && (
-        <Section title="Other keys" count={unknownKeys.length} defaultOpen={false} reveal={revealFor(unknownKeys)}>
+        <Section title={t("editor.section.otherKeys")} count={unknownKeys.length} defaultOpen={false} reveal={revealFor(unknownKeys)}>
           {unknownKeys.map((key) => (
             <FieldRow key={key} jobKey={key} label={key} issue={issueFor(key)}>
               <PlistTreeEditor name={key} value={job[key]} disabled={disabled} defaultType="string" onChange={(v) => onChange(setKey(job, key, v))} />
@@ -770,7 +802,16 @@ export function JobForm({
       {!disabled && <AddKey job={job} onAdd={addKey} />}
 
       <p className="pt-3 text-[11px] text-gray-600">
-        Every field shows its launchd key. Full reference: run <span className="font-mono">man launchd.plist</span> in Terminal.
+        {(() => {
+          const [before, after] = t("editor.footer.manualRef").split("{command}");
+          return (
+            <>
+              {before}
+              <span className="font-mono">man launchd.plist</span>
+              {after}
+            </>
+          );
+        })()}
       </p>
     </div>
   );

@@ -9,7 +9,7 @@ import {
   nextRuns,
   validateJob,
 } from "./launchd";
-import { parsePlistDict, serializePlist } from "./plist";
+import { parsePlistDict, serializePlist, type PlistDict } from "./plist";
 
 const messages = (issues: ReturnType<typeof validateJob>, severity?: string) =>
   issues.filter((i) => !severity || i.severity === severity).map((i) => `${i.key}: ${i.message}`);
@@ -95,6 +95,116 @@ describe("validateJob", () => {
   test("checks calendar ranges", () => {
     const issues = validateJob({ ...base, StartCalendarInterval: [{ Hour: 24 }, { Minute: 59 }] }, { category: "user-agents" });
     expect(messages(issues, "error")).toEqual(["StartCalendarInterval: Schedule 1: Hour must be an integer between 0 and 23."]);
+  });
+
+  test("every issue carries a stable code, and declared params match the message's interpolated values", () => {
+    const jobs: [PlistDict, Parameters<typeof validateJob>[1]][] = [
+      [{ ProgramArguments: ["/bin/true"] }, { category: "user-agents" }],
+      [{ ...base, Label: "../evil" }, { category: "user-agents" }],
+      [base, { category: "user-agents", otherLabels: ["com.example.ok"] }],
+      [{ Label: "com.apple.foo", ProgramArguments: ["/bin/true"] }, { category: "user-agents", fileName: "other.plist" }],
+      [{ ...base, ProgramArguments: [] }, { category: "user-agents" }],
+      [{ ...base, ProgramArguments: ["~/bin/x"] }, { category: "user-agents" }],
+      [{ ...base, ProgramArguments: ["bin/x"] }, { category: "user-agents" }],
+      [
+        { ...base, ProgramArguments: ["/opt/missing"] },
+        { category: "user-agents", pathFacts: [{ path: "/opt/missing", exists: false, isFile: false, isDirectory: false, executable: false }] },
+      ],
+      [
+        { ...base, ProgramArguments: ["/Applications/Foo.app"] },
+        {
+          category: "user-agents",
+          pathFacts: [{ path: "/Applications/Foo.app", exists: true, isFile: false, isDirectory: true, executable: false }],
+        },
+      ],
+      [
+        { ...base, ProgramArguments: ["/opt/dir"] },
+        { category: "user-agents", pathFacts: [{ path: "/opt/dir", exists: true, isFile: false, isDirectory: true, executable: false }] },
+      ],
+      [
+        { ...base, ProgramArguments: ["/opt/tool"] },
+        { category: "user-agents", pathFacts: [{ path: "/opt/tool", exists: true, isFile: true, isDirectory: false, executable: false }] },
+      ],
+      [{ Label: "com.example.ok" }, { category: "user-agents" }],
+      [{ Label: "com.example.ok", ProgramArguments: ["/bin/true"] }, { category: "user-agents" }],
+      [{ ...base, StartInterval: 0 }, { category: "user-agents" }],
+      [{ ...base, KeepAlive: true, StartInterval: 300 }, { category: "user-agents" }],
+      [{ ...base, StartInterval: 5, ThrottleInterval: 10 }, { category: "user-agents" }],
+      [{ ...base, StartCalendarInterval: [{ Bogus: 1 }] }, { category: "user-agents" }],
+      [{ ...base, StartCalendarInterval: [{ Hour: 24 }] }, { category: "user-agents" }],
+      [{ ...base, KeepAlive: { NetworkState: true } }, { category: "user-agents" }],
+      [
+        { ...base, WatchPaths: ["/nope"] },
+        { category: "user-agents", pathFacts: [{ path: "/nope", exists: false, isFile: false, isDirectory: false, executable: false }] },
+      ],
+      [
+        { ...base, QueueDirectories: ["/opt/tool"] },
+        { category: "user-agents", pathFacts: [{ path: "/opt/tool", exists: true, isFile: true, isDirectory: false, executable: false }] },
+      ],
+      [
+        { ...base, WorkingDirectory: "/opt/missing-dir" },
+        { category: "user-agents", pathFacts: [{ path: "/opt/missing-dir", exists: false, isFile: false, isDirectory: false, executable: false }] },
+      ],
+      [
+        { ...base, StandardOutPath: "/var/log/x/out.log" },
+        { category: "user-agents", pathFacts: [{ path: "/var/log/x", exists: false, isFile: false, isDirectory: false, executable: false }] },
+      ],
+      [{ ...base, UserName: "root" }, { category: "user-agents" }],
+      [{ ...base, LimitLoadToSessionType: "Aqua" }, { category: "global-daemons" }],
+      [{ ...base, Nice: 99 }, { category: "user-agents" }],
+      [{ ...base, ProcessType: "Bogus" }, { category: "user-agents" }],
+      [{ ...base, NotAKey: true }, { category: "user-agents" }],
+      [{ ...base, StartInterval: "300" }, { category: "user-agents" }],
+      [{ ...base, Debug: true }, { category: "user-agents" }],
+    ];
+
+    const seen = new Set<string>();
+    for (const [job, opts] of jobs) {
+      for (const issue of validateJob(job, opts)) {
+        expect(issue.code, `missing code for message: ${issue.message}`).toBeTruthy();
+        seen.add(issue.code!);
+        for (const [name, value] of Object.entries(issue.params ?? {})) {
+          expect(issue.message, `param "${name}" (${value}) not found in message for code ${issue.code}`).toContain(String(value));
+        }
+      }
+    }
+
+    // Every code this test exercises, so a future message change without a matching test update is caught.
+    expect([...seen].sort()).toEqual(
+      [
+        "label_required",
+        "label_pattern",
+        "label_duplicate",
+        "label_apple_prefix",
+        "file_name_mismatch",
+        "nothing_to_run",
+        "program_arguments_empty",
+        "tilde_not_expanded",
+        "program_not_absolute",
+        "executable_missing",
+        "executable_is_app",
+        "executable_is_directory",
+        "executable_not_executable",
+        "no_trigger",
+        "start_interval_min",
+        "start_interval_keepalive_noop",
+        "start_interval_throttled",
+        "calendar_unknown_field",
+        "calendar_field_range",
+        "keepalive_network_state_unsupported",
+        "path_missing",
+        "queue_directory_not_a_directory",
+        "working_directory_missing",
+        "log_folder_missing",
+        "key_ignored_for_agents",
+        "session_type_ignored_for_daemons",
+        "nice_range",
+        "process_type_invalid",
+        "key_undocumented",
+        "key_wrong_type",
+        "key_deprecated",
+      ].sort()
+    );
   });
 });
 

@@ -1,11 +1,17 @@
 /**
  * Smart folders: saved filters for the launchd job list.
  *
- * This module has no React and no backend import, so the matching engine can be unit-tested.
+ * This module has no React component and no backend import, so the matching engine can be unit-tested.
  * A folder holds rules. Each rule compares one field of a job with a value.
+ *
+ * Field kinds and option values are technical identifiers and stay fixed regardless of language. Display
+ * titles (field names, operator words, option labels, rule problems, built-in folder names) are resolved
+ * through the i18n layer at call time: `fieldTitle`, `fieldOptions`, `operatorTitle`, `ruleProblem`, `folderTitle`.
  */
 
 import { JOB_SCOPES, nextRuns, scopeFor } from "@shared/launchd";
+import { t, type TKey } from "@/i18n";
+import { scopeTitle } from "@/i18n/launchd";
 import type { JobMeta } from "@/lib/backend";
 import type { ServiceInfo } from "@/stores/app";
 
@@ -48,6 +54,7 @@ export type JobPlist = Record<string, unknown>;
 
 export interface SmartFolder {
   id: string;
+  /** The name the user typed. For a built-in folder this holds a dictionary key instead: read it through `folderTitle`. */
   name: string;
   match: "all" | "any";
   rules: SmartRule[];
@@ -57,60 +64,34 @@ export interface SmartFolder {
 
 export type FieldKind = "text" | "enum" | "boolean" | "number" | "plist";
 
+/** Logic-only shape of a field: kind and option values, none of which change with the language. */
 export interface FieldSpec {
   field: RuleField;
-  title: string;
   kind: FieldKind;
-  /** Choices of an enum field. */
-  options?: { value: string; title: string }[];
+  /** Values of an enum field. Use `fieldOptions` for the value paired with its display title. */
+  options?: { value: string }[];
 }
 
 export const RULE_FIELDS: FieldSpec[] = [
-  { field: "label", title: "Label", kind: "text" },
-  { field: "program", title: "Program", kind: "text" },
-  { field: "trigger", title: "Trigger text", kind: "text" },
-  { field: "tag", title: "Tag", kind: "text" },
-  { field: "scope", title: "Scope", kind: "enum", options: JOB_SCOPES.map((s) => ({ value: s.category, title: s.title })) },
-  {
-    field: "kind",
-    title: "Kind",
-    kind: "enum",
-    options: [
-      { value: "agent", title: "Agent" },
-      { value: "daemon", title: "Daemon" },
-    ],
-  },
-  {
-    field: "status",
-    title: "Status",
-    kind: "enum",
-    options: [
-      { value: "running", title: "Running" },
-      { value: "stopped", title: "Stopped" },
-      { value: "error", title: "Error" },
-      { value: "unknown", title: "Unknown" },
-    ],
-  },
-  {
-    field: "owner",
-    title: "Owner",
-    kind: "enum",
-    options: [
-      { value: "apple", title: "Apple" },
-      { value: "third-party", title: "Third party" },
-    ],
-  },
-  { field: "disabled", title: "Disabled", kind: "boolean" },
-  { field: "loaded", title: "Loaded", kind: "boolean" },
-  { field: "runsAsRoot", title: "Runs as root", kind: "boolean" },
-  { field: "hasSchedule", title: "Has a schedule", kind: "boolean" },
-  { field: "runsSoon", title: "Runs in the next 24 hours", kind: "boolean" },
-  { field: "keepAlive", title: "Keep alive", kind: "boolean" },
-  { field: "unreadable", title: "Unreadable plist", kind: "boolean" },
-  { field: "quarantined", title: "Quarantined", kind: "boolean" },
-  { field: "writable", title: "Writable", kind: "boolean" },
-  { field: "lastExitStatus", title: "Last exit status", kind: "number" },
-  { field: "launchdKey", title: "launchd key", kind: "plist" },
+  { field: "label", kind: "text" },
+  { field: "program", kind: "text" },
+  { field: "trigger", kind: "text" },
+  { field: "tag", kind: "text" },
+  { field: "scope", kind: "enum", options: JOB_SCOPES.map((s) => ({ value: s.category })) },
+  { field: "kind", kind: "enum", options: [{ value: "agent" }, { value: "daemon" }] },
+  { field: "status", kind: "enum", options: [{ value: "running" }, { value: "stopped" }, { value: "error" }, { value: "unknown" }] },
+  { field: "owner", kind: "enum", options: [{ value: "apple" }, { value: "third-party" }] },
+  { field: "disabled", kind: "boolean" },
+  { field: "loaded", kind: "boolean" },
+  { field: "runsAsRoot", kind: "boolean" },
+  { field: "hasSchedule", kind: "boolean" },
+  { field: "runsSoon", kind: "boolean" },
+  { field: "keepAlive", kind: "boolean" },
+  { field: "unreadable", kind: "boolean" },
+  { field: "quarantined", kind: "boolean" },
+  { field: "writable", kind: "boolean" },
+  { field: "lastExitStatus", kind: "number" },
+  { field: "launchdKey", kind: "plist" },
 ];
 
 const FIELD_SPEC = new Map(RULE_FIELDS.map((f) => [f.field, f]));
@@ -119,16 +100,59 @@ export function fieldSpec(field: RuleField): FieldSpec {
   return FIELD_SPEC.get(field) ?? RULE_FIELDS[0];
 }
 
-export const OPERATOR_TITLES: Record<RuleOperator, string> = {
-  is: "is",
-  isNot: "is not",
-  contains: "contains",
-  notContains: "does not contain",
-  startsWith: "starts with",
-  eq: "=",
-  neq: "≠",
-  exists: "exists",
-  notExists: "does not exist",
+// ── Display titles ───────────────────────────────────────────────────
+
+const FIELD_TITLE_KEYS: Record<RuleField, TKey> = {
+  label: "list.smartFolders.field.label",
+  program: "list.smartFolders.field.program",
+  trigger: "list.smartFolders.field.trigger",
+  tag: "list.smartFolders.field.tag",
+  scope: "list.common.scope",
+  kind: "common.type",
+  status: "common.status",
+  owner: "list.smartFolders.field.owner",
+  disabled: "status.disabled",
+  loaded: "list.smartFolders.field.loaded",
+  runsAsRoot: "list.smartFolders.field.runsAsRoot",
+  hasSchedule: "list.smartFolders.field.hasSchedule",
+  runsSoon: "list.smartFolders.field.runsSoon",
+  keepAlive: "list.smartFolders.field.keepAlive",
+  unreadable: "list.smartFolders.field.unreadable",
+  quarantined: "list.smartFolders.field.quarantined",
+  writable: "list.smartFolders.field.writable",
+  lastExitStatus: "list.smartFolders.field.lastExitStatus",
+  launchdKey: "list.smartFolders.field.launchdKey",
+};
+
+/** Display title of a field, in the active language. */
+export function fieldTitle(field: RuleField): string {
+  return t(FIELD_TITLE_KEYS[field]);
+}
+
+const STATIC_OPTION_TITLE_KEYS: Partial<Record<RuleField, Record<string, TKey>>> = {
+  kind: { agent: "list.smartFolders.option.agent", daemon: "list.smartFolders.option.daemon" },
+  status: { running: "status.running", stopped: "status.stopped", error: "status.error", unknown: "status.unknown" },
+  owner: { apple: "list.owner.apple", "third-party": "list.owner.thirdParty" },
+};
+
+/** Value/title pairs of an enum field, in the active language. The "scope" options follow the live scope names. */
+export function fieldOptions(field: RuleField): { value: string; title: string }[] {
+  if (field === "scope") return JOB_SCOPES.map((s) => ({ value: s.category, title: scopeTitle(s.category) }));
+  const keys = STATIC_OPTION_TITLE_KEYS[field];
+  if (!keys) return [];
+  return (fieldSpec(field).options ?? []).map((o) => ({ value: o.value, title: t(keys[o.value] ?? FIELD_TITLE_KEYS[field]) }));
+}
+
+const OPERATOR_TITLE_KEYS: Record<RuleOperator, TKey> = {
+  is: "list.smartFolders.operator.is",
+  isNot: "list.smartFolders.operator.isNot",
+  contains: "list.smartFolders.operator.contains",
+  notContains: "list.smartFolders.operator.notContains",
+  startsWith: "list.smartFolders.operator.startsWith",
+  eq: "list.smartFolders.operator.eq",
+  neq: "list.smartFolders.operator.neq",
+  exists: "list.smartFolders.operator.exists",
+  notExists: "list.smartFolders.operator.notExists",
 };
 
 const OPERATORS: Record<FieldKind, RuleOperator[]> = {
@@ -145,9 +169,9 @@ export function operatorsFor(field: RuleField): RuleOperator[] {
 
 /** Title of an operator in the context of a field. A launchd key "equals" a value, a label "is" a value. */
 export function operatorTitle(field: RuleField, operator: RuleOperator): string {
-  if (fieldSpec(field).kind === "plist" && operator === "is") return "equals";
-  if (fieldSpec(field).kind === "plist" && operator === "isNot") return "does not equal";
-  return OPERATOR_TITLES[operator];
+  if (fieldSpec(field).kind === "plist" && operator === "is") return t("list.smartFolders.operator.plistEquals");
+  if (fieldSpec(field).kind === "plist" && operator === "isNot") return t("list.smartFolders.operator.plistNotEquals");
+  return t(OPERATOR_TITLE_KEYS[operator]);
 }
 
 /** True for the operators that compare with `value`. "exists" and "does not exist" only look at the key. */
@@ -178,17 +202,17 @@ export function defaultRule(field: RuleField): SmartRule {
 /** Problem with a rule as a sentence, or null when the rule can run. */
 export function ruleProblem(rule: SmartRule): string | null {
   const spec = FIELD_SPEC.get(rule.field);
-  if (!spec) return "The field is unknown.";
-  if (!OPERATORS[spec.kind].includes(rule.operator)) return "The operator does not fit the field.";
-  if (spec.kind === "text" && rule.value.trim() === "") return "Enter a text.";
-  if (spec.kind === "enum" && !spec.options?.some((o) => o.value === rule.value)) return "Choose a value.";
-  if (spec.kind === "boolean" && rule.value !== "true" && rule.value !== "false") return "Choose yes or no.";
-  if (spec.kind === "number" && (rule.value.trim() === "" || !Number.isInteger(Number(rule.value)))) return "Enter a whole number.";
+  if (!spec) return t("list.smartFolders.problem.unknownField");
+  if (!OPERATORS[spec.kind].includes(rule.operator)) return t("list.smartFolders.problem.operatorMismatch");
+  if (spec.kind === "text" && rule.value.trim() === "") return t("list.smartFolders.problem.enterText");
+  if (spec.kind === "enum" && !spec.options?.some((o) => o.value === rule.value)) return t("list.smartFolders.problem.chooseValue");
+  if (spec.kind === "boolean" && rule.value !== "true" && rule.value !== "false") return t("list.smartFolders.problem.chooseYesNo");
+  if (spec.kind === "number" && (rule.value.trim() === "" || !Number.isInteger(Number(rule.value)))) return t("list.smartFolders.problem.enterWholeNumber");
   if (spec.kind === "plist") {
     const key = rule.key?.trim() ?? "";
-    if (key === "") return "Enter a launchd key.";
-    if (key.length > MAX_KEY_LENGTH) return "The key is too long.";
-    if (operatorTakesValue(rule.operator) && rule.value.trim() === "") return "Enter a value.";
+    if (key === "") return t("list.smartFolders.problem.enterKey");
+    if (key.length > MAX_KEY_LENGTH) return t("list.smartFolders.problem.keyTooLong");
+    if (operatorTakesValue(rule.operator) && rule.value.trim() === "") return t("list.smartFolders.problem.enterValue");
   }
   return null;
 }
@@ -271,7 +295,7 @@ function booleanValue(field: RuleField, s: ServiceInfo, now: Date): boolean {
     case "runsSoon":
       return runsWithinDay(s, now);
     case "keepAlive":
-      return s.triggers.some((t) => t.includes("Keep alive"));
+      return s.triggers.some((trig) => trig.includes("Keep alive"));
     case "unreadable":
       return s.unreadable;
     case "quarantined":
@@ -337,14 +361,14 @@ function matchesPlistRule(rule: SmartRule, plist: JobPlist | null | undefined): 
   if (rule.operator === "exists") return found;
   if (rule.operator === "notExists") return !found;
   const needle = rule.value.trim().toLowerCase();
-  const texts = found ? plistTexts(value).map((t) => t.toLowerCase()) : [];
+  const texts = found ? plistTexts(value).map((txt) => txt.toLowerCase()) : [];
   switch (rule.operator) {
     case "is":
-      return texts.some((t) => t === needle);
+      return texts.some((txt) => txt === needle);
     case "isNot":
-      return !texts.some((t) => t === needle);
+      return !texts.some((txt) => txt === needle);
     case "contains":
-      return texts.some((t) => t.includes(needle));
+      return texts.some((txt) => txt.includes(needle));
     default:
       return false;
   }
@@ -407,12 +431,20 @@ export function matchesFolder(service: ServiceInfo, meta: JobMeta | undefined, f
 
 // ── Built-in folders ─────────────────────────────────────────────────
 
+/** Dictionary keys used as the `name` of a built-in folder. `folderTitle` resolves them at render time. */
+const BUILTIN_FOLDER_NAMES = {
+  disabled: "status.disabled",
+  failed: "list.smartFolders.builtin.failed",
+  thirdPartyDaemons: "list.smartFolders.builtin.thirdPartyDaemons",
+  scheduledToday: "list.smartFolders.builtin.scheduledToday",
+} as const satisfies Record<string, TKey>;
+
 export const DEFAULT_FOLDERS: SmartFolder[] = [
-  { id: "builtin:disabled", name: "Disabled", match: "all", builtin: true, rules: [{ field: "disabled", operator: "is", value: "true" }] },
-  { id: "builtin:failed", name: "Failed", match: "all", builtin: true, rules: [{ field: "status", operator: "is", value: "error" }] },
+  { id: "builtin:disabled", name: BUILTIN_FOLDER_NAMES.disabled, match: "all", builtin: true, rules: [{ field: "disabled", operator: "is", value: "true" }] },
+  { id: "builtin:failed", name: BUILTIN_FOLDER_NAMES.failed, match: "all", builtin: true, rules: [{ field: "status", operator: "is", value: "error" }] },
   {
     id: "builtin:third-party-daemons",
-    name: "Third-party daemons",
+    name: BUILTIN_FOLDER_NAMES.thirdPartyDaemons,
     match: "all",
     builtin: true,
     rules: [
@@ -422,7 +454,7 @@ export const DEFAULT_FOLDERS: SmartFolder[] = [
   },
   {
     id: "builtin:scheduled-today",
-    name: "Scheduled today",
+    name: BUILTIN_FOLDER_NAMES.scheduledToday,
     match: "all",
     builtin: true,
     rules: [
@@ -431,6 +463,11 @@ export const DEFAULT_FOLDERS: SmartFolder[] = [
     ],
   },
 ];
+
+/** Display name of a folder: the user's own text, or the translated name of a built-in folder. */
+export function folderTitle(folder: Pick<SmartFolder, "name" | "builtin">): string {
+  return folder.builtin ? t(folder.name as TKey) : folder.name;
+}
 
 // ── Persistence of the user's folders ────────────────────────────────
 

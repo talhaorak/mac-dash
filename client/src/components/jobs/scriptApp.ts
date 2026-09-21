@@ -1,3 +1,5 @@
+import { t } from "@/i18n";
+
 // "Wrap in an app": pure pieces of the Run section. The backend builds the app (docs/backend-contract.md, "Build app").
 
 /** The backend accepts exactly this pattern for an app name. */
@@ -16,9 +18,9 @@ export function defaultAppName(scriptPath: string): string {
 }
 
 export function appNameProblem(name: string): string | null {
-  if (name.trim() === "") return "Enter a name for the app.";
+  if (name.trim() === "") return t("editor.wrapApp.emptyName");
   if (!APP_NAME_PATTERN.test(name)) {
-    return "Use 1 to 64 letters, digits, spaces, dots, dashes or underscores. Start with a letter or a digit.";
+    return t("editor.wrapApp.invalidName");
   }
   return null;
 }

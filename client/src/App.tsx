@@ -7,6 +7,7 @@ import { backend, type JobEvent } from "@/lib/backend";
 import { toast } from "@/components/ui/Toast";
 import { notifyJobEvent, openJobFromNotification, refreshMonitorSettings } from "@/components/jobs/JobPanels";
 import { jobRefFromParts } from "@/lib/router";
+import { useT, type TKey } from "@/i18n";
 import {
   useNavStore,
   useJobEventsStore,
@@ -31,6 +32,21 @@ const DESKTOP_POLL_MS = 3000;
 const WEB_FALLBACK_POLL_MS = 10000;
 
 const ALL_TOPICS = ["system", "services", "processes", "logs"];
+
+/** Dictionary key for the document title of each page id (the plain ones; "plugin:<id>" is handled separately). */
+const PAGE_TITLE_KEYS: Partial<Record<string, TKey>> = {
+  dashboard: "app.nav.dashboard",
+  services: "app.nav.services",
+  processes: "app.nav.processes",
+  logs: "app.nav.logs",
+  plugins: "app.nav.plugins",
+};
+
+const JOB_EVENT_TOAST_KEYS: Record<"added" | "modified" | "removed", TKey> = {
+  added: "app.toast.jobAdded",
+  modified: "app.toast.jobChanged",
+  removed: "app.toast.jobRemoved",
+};
 
 // ── Map current page to the data topics it actually needs ────────────
 // The same list drives the WS subscription and the REST polling fallback.
@@ -58,6 +74,7 @@ export default function App() {
   // Desktop: drop an app, a script or a folder on the window to create a job for it.
   useFileDropToCreate(useNavStore((s) => s.openEditor));
 
+  const { t, locale } = useT();
   const currentPage = useNavStore((s) => s.currentPage);
   const setStats = useSystemStore((s) => s.setStats);
   const setServices = useServicesStore((s) => s.setServices);
@@ -72,9 +89,19 @@ export default function App() {
 
   // Several tabs or windows can show different pages: the title tells them apart.
   useEffect(() => {
-    const name = currentPage.startsWith("plugin:") ? currentPage.slice("plugin:".length) : currentPage;
-    document.title = currentPage === "dashboard" ? "mac-dash" : `${name.charAt(0).toUpperCase()}${name.slice(1)} · mac-dash`;
-  }, [currentPage]);
+    if (currentPage === "dashboard") {
+      document.title = "mac-dash";
+      return;
+    }
+    if (currentPage.startsWith("plugin:")) {
+      // A plugin's own name is not in the dictionary: it comes from the plugin itself.
+      const name = currentPage.slice("plugin:".length);
+      document.title = `${name.charAt(0).toUpperCase()}${name.slice(1)} · mac-dash`;
+      return;
+    }
+    const titleKey = PAGE_TITLE_KEYS[currentPage];
+    document.title = titleKey ? `${t(titleKey)} · mac-dash` : "mac-dash";
+  }, [currentPage, t, locale]);
 
   // ── Smart topic subscription based on current page ─────────────────
   const topics = useMemo(() => getTopicsForPage(currentPage), [currentPage]);
@@ -86,14 +113,16 @@ export default function App() {
       notifyJobEvent(event);
       if (document.hidden) return;
       if (event.kind === "failed") {
-        const exit = event.exitStatus !== undefined ? ` (exit ${event.exitStatus})` : "";
-        toast.error(`launchd job failed: ${event.label}${exit}`);
+        toast.error(
+          event.exitStatus !== undefined
+            ? t("app.toast.jobFailedExit", { label: event.label, status: event.exitStatus })
+            : t("app.toast.jobFailed", { label: event.label })
+        );
       } else {
-        const verb = { added: "added", modified: "changed", removed: "removed" }[event.kind];
-        toast.info(`launchd job ${verb}: ${event.label}`);
+        toast.info(t(JOB_EVENT_TOAST_KEYS[event.kind], { label: event.label }));
       }
     },
-    [addJobEvent]
+    [addJobEvent, t]
   );
 
   useEffect(() => {

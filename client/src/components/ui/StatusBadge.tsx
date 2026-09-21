@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { useT, type TKey } from "@/i18n";
 
 interface StatusBadgeProps {
   status: "running" | "stopped" | "error" | "unknown" | "enabled" | "disabled";
@@ -6,17 +7,19 @@ interface StatusBadgeProps {
   size?: "sm" | "md";
 }
 
-const config = {
-  running: { color: "bg-green-500", ring: "ring-green-500/30", label: "Running" },
-  stopped: { color: "bg-gray-500", ring: "ring-gray-500/30", label: "Stopped" },
-  error: { color: "bg-red-500", ring: "ring-red-500/30", label: "Error" },
-  unknown: { color: "bg-yellow-500", ring: "ring-yellow-500/30", label: "Unknown" },
-  enabled: { color: "bg-cyan-500", ring: "ring-cyan-500/30", label: "Enabled" },
-  disabled: { color: "bg-gray-600", ring: "ring-gray-600/30", label: "Disabled" },
+const config: Record<StatusBadgeProps["status"], { color: string; ring: string; labelKey: TKey }> = {
+  running: { color: "bg-green-500", ring: "ring-green-500/30", labelKey: "status.running" },
+  stopped: { color: "bg-gray-500", ring: "ring-gray-500/30", labelKey: "status.stopped" },
+  error: { color: "bg-red-500", ring: "ring-red-500/30", labelKey: "status.error" },
+  unknown: { color: "bg-yellow-500", ring: "ring-yellow-500/30", labelKey: "status.unknown" },
+  enabled: { color: "bg-cyan-500", ring: "ring-cyan-500/30", labelKey: "status.enabled" },
+  disabled: { color: "bg-gray-600", ring: "ring-gray-600/30", labelKey: "status.disabled" },
 };
 
 export function StatusBadge({ status, label, size = "md" }: StatusBadgeProps) {
+  const { t } = useT();
   const c = config[status];
+  const text = label ?? t(c.labelKey);
   return (
     <span className="inline-flex items-center gap-1.5">
       <span
@@ -28,7 +31,7 @@ export function StatusBadge({ status, label, size = "md" }: StatusBadgeProps) {
           size === "sm" ? "h-2 w-2" : "h-2.5 w-2.5"
         )}
       />
-      {(label ?? c.label) && (
+      {text && (
         <span
           className={cn(
             "font-medium",
@@ -39,7 +42,7 @@ export function StatusBadge({ status, label, size = "md" }: StatusBadgeProps) {
             status === "unknown" && "text-yellow-400"
           )}
         >
-          {label ?? c.label}
+          {text}
         </span>
       )}
     </span>

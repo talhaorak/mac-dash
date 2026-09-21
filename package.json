@@ -1,6 +1,6 @@
 {
   "name": "@talhaorak/mac-dash",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Beautiful macOS system dashboard — monitor services, processes, resources and logs in real-time",
   "type": "module",
   "bin": {

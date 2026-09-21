@@ -5,14 +5,18 @@ import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { metaKey, type JobMeta } from "@/lib/backend";
 import { useJobPlists, type ServiceInfo } from "@/stores/app";
 import { cn } from "@/lib/utils";
-import { LAUNCHD_KEYS, scopeFor } from "@shared/launchd";
+import { formatNumber, useT } from "@/i18n";
+import { keyTitle, scopeTitle } from "@/i18n/launchd";
+import { LAUNCHD_KEYS } from "@shared/launchd";
 import { inputClass } from "./fields";
 import { InlineError } from "./StartupPanels";
 import {
   MAX_KEY_LENGTH,
   RULE_FIELDS,
   defaultRule,
+  fieldOptions,
   fieldSpec,
+  fieldTitle,
   matchesFolder,
   newFolderId,
   operatorTakesValue,
@@ -68,6 +72,7 @@ function EditorBody({
   onDelete,
   onClose,
 }: Omit<SmartFolderEditorProps, "open"> & { titleId: string; nameRef: React.RefObject<HTMLInputElement | null> }) {
+  const { t, tn } = useT();
   const tagListId = useId();
   const keyListId = useId();
   const problemId = useId();
@@ -79,7 +84,7 @@ function EditorBody({
   const [submitted, setSubmitted] = useState(false);
 
   const problems = rules.map(ruleProblem);
-  const nameProblem = name.trim() === "" ? "Enter a name." : null;
+  const nameProblem = name.trim() === "" ? t("list.smartFolders.enterName") : null;
   const valid = nameProblem === null && rules.length > 0 && problems.every((p) => p === null);
 
   // The plists are large. They are read when the first launchd-key rule appears in the draft.
@@ -118,17 +123,17 @@ function EditorBody({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 id={titleId} className="text-lg font-bold text-white">
-            {original ? "Edit smart folder" : "New smart folder"}
+            {original ? t("list.smartFolders.editTitle") : t("list.smartFolders.newTitle")}
           </h2>
-          <p className="text-xs text-gray-500 mt-1">A smart folder is a saved filter. It combines with the search box and the other filters.</p>
+          <p className="text-xs text-gray-500 mt-1">{t("list.smartFolders.subtitle")}</p>
         </div>
-        <button type="button" aria-label="Close" onClick={onClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50">
+        <button type="button" aria-label={t("common.close")} onClick={onClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50">
           <X className="w-4 h-4" aria-hidden />
         </button>
       </div>
 
       <label className="block space-y-1">
-        <span className="text-xs font-medium text-gray-400">Name</span>
+        <span className="text-xs font-medium text-gray-400">{t("common.name")}</span>
         <input
           ref={nameRef}
           type="text"
@@ -137,7 +142,7 @@ function EditorBody({
           onChange={(e) => setName(e.target.value)}
           aria-invalid={submitted && nameProblem !== null}
           aria-describedby={submitted && nameProblem ? problemId : undefined}
-          placeholder="Nightly backups"
+          placeholder={t("list.smartFolders.namePlaceholder")}
           className={inputClass}
         />
         {submitted && nameProblem && (
@@ -148,17 +153,17 @@ function EditorBody({
       </label>
 
       <fieldset className="space-y-2">
-        <legend className="text-xs font-medium text-gray-400">Rules</legend>
+        <legend className="text-xs font-medium text-gray-400">{t("list.smartFolders.rulesLegend")}</legend>
         <div className="flex items-center gap-2 text-xs text-gray-400">
-          <span id={`${titleId}-match`}>A job belongs to the folder when it matches</span>
+          <span id={`${titleId}-match`}>{t("list.smartFolders.matchIntro")}</span>
           <select
             aria-labelledby={`${titleId}-match`}
             value={match}
             onChange={(e) => setMatch(e.target.value === "any" ? "any" : "all")}
             className={cn(inputClass, "w-auto! py-1 text-xs")}
           >
-            <option value="all">all rules</option>
-            <option value="any">any rule</option>
+            <option value="all">{t("list.smartFolders.matchAll")}</option>
+            <option value="any">{t("list.smartFolders.matchAny")}</option>
           </select>
         </div>
 
@@ -179,14 +184,14 @@ function EditorBody({
           ))}
         </ul>
         <datalist id={tagListId}>
-          {tags.map((t) => (
-            <option key={t} value={t} />
+          {tags.map((tag) => (
+            <option key={tag} value={tag} />
           ))}
         </datalist>
         <datalist id={keyListId}>
           {LAUNCHD_KEYS.map((k) => (
             <option key={k.key} value={k.key}>
-              {k.title}
+              {keyTitle(k)}
             </option>
           ))}
         </datalist>
@@ -197,17 +202,17 @@ function EditorBody({
           onClick={() => setRules([...rules, defaultRule("label")])}
           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs text-gray-300 bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-40 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
         >
-          <Plus className="w-3 h-3" aria-hidden /> Add rule
+          <Plus className="w-3 h-3" aria-hidden /> {t("list.smartFolders.addRule")}
         </button>
       </fieldset>
 
-      <section aria-label="Preview" className="rounded-xl border border-white/[0.06] bg-black/20 p-3 space-y-1.5">
+      <section aria-label={t("list.smartFolders.previewLabel")} className="rounded-xl border border-white/[0.06] bg-black/20 p-3 space-y-1.5">
         <p className="text-xs text-gray-300" aria-live="polite">
-          {waitsForPlists && !jobPlists.error ? "Reading the plists of the jobs…" : `${preview.count} of ${services.length} jobs match`}
+          {waitsForPlists && !jobPlists.error ? t("list.status.readingPlists") : tn("list.count.matchOfTotal", services.length, { shown: formatNumber(preview.count) })}
         </p>
         {jobPlists.error && (
           <InlineError
-            title={plists ? "The job plists could not be read again. The preview uses the last copy." : "The job plists could not be read. A launchd-key rule matches no job until they are."}
+            title={plists ? t("list.errors.plistsRereadFailedPreview") : t("list.errors.plistsReadFailedPreview")}
             message={jobPlists.error}
             onRetry={jobPlists.retry}
             retrying={jobPlists.loading}
@@ -218,10 +223,12 @@ function EditorBody({
             {preview.first.map((s) => (
               <li key={metaKey(s)} className="flex items-baseline gap-2 text-[11px] min-w-0">
                 <span className="font-mono text-gray-300 truncate">{s.label}</span>
-                <span className="ml-auto flex-shrink-0 text-gray-600">{scopeFor(s.category)?.title}</span>
+                <span className="ml-auto flex-shrink-0 text-gray-600">{scopeTitle(s.category)}</span>
               </li>
             ))}
-            {preview.count > preview.first.length && <li className="text-[11px] text-gray-600">and {preview.count - preview.first.length} more</li>}
+            {preview.count > preview.first.length && (
+              <li className="text-[11px] text-gray-600">{tn("list.count.andMore", preview.count - preview.first.length)}</li>
+            )}
           </ul>
         )}
       </section>
@@ -230,16 +237,16 @@ function EditorBody({
         {original && onDelete && (
           <ConfirmButton
             onConfirm={() => onDelete(original.id)}
-            confirmLabel="Click again to delete"
+            confirmLabel={t("list.smartFolders.confirmDelete")}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-gray-400 hover:text-red-400 hover:bg-red-500/10 focus:outline-none focus-visible:ring-1 focus-visible:ring-red-500/50"
             armedClassName="bg-red-500/20 text-red-300!"
           >
-            <Trash2 className="w-3.5 h-3.5" aria-hidden /> Delete folder
+            <Trash2 className="w-3.5 h-3.5" aria-hidden /> {t("list.smartFolders.deleteFolder")}
           </ConfirmButton>
         )}
         <div className="flex-1" />
         <button type="button" onClick={onClose} className="px-3 py-2 rounded-xl text-xs text-gray-300 bg-white/[0.04] hover:bg-white/[0.08] focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50">
-          Cancel
+          {t("common.cancel")}
         </button>
         <button
           type="submit"
@@ -249,7 +256,7 @@ function EditorBody({
             !valid && "opacity-50"
           )}
         >
-          Save folder
+          {t("list.smartFolders.saveFolder")}
         </button>
       </div>
     </form>
@@ -277,6 +284,7 @@ function RuleRow({
   onChange: (rule: SmartRule) => void;
   onRemove: () => void;
 }) {
+  const { t } = useT();
   const problemId = useId();
   const spec = fieldSpec(rule.field);
   const n = index + 1;
@@ -296,7 +304,7 @@ function RuleRow({
         )}
       >
         <select
-          aria-label={`Rule ${n}: field`}
+          aria-label={t("list.smartFolders.ruleFieldAria", { n })}
           value={rule.field}
           // A new field brings its own operators and values: start from its default rule.
           onChange={(e) => onChange(defaultRule(e.target.value as RuleField))}
@@ -304,14 +312,14 @@ function RuleRow({
         >
           {RULE_FIELDS.map((f) => (
             <option key={f.field} value={f.field}>
-              {f.title}
+              {fieldTitle(f.field)}
             </option>
           ))}
         </select>
 
         {isPlistRule && (
           <input
-            aria-label={`Rule ${n}: launchd key`}
+            aria-label={t("list.smartFolders.ruleKeyAria", { n })}
             type="text"
             list={keyListId}
             value={rule.key ?? ""}
@@ -326,7 +334,7 @@ function RuleRow({
         )}
 
         <select
-          aria-label={`Rule ${n}: operator`}
+          aria-label={t("list.smartFolders.ruleOperatorAria", { n })}
           value={rule.operator}
           onChange={(e) => onChange({ ...rule, operator: e.target.value as RuleOperator })}
           className={selectClass}
@@ -343,7 +351,7 @@ function RuleRow({
           <span aria-hidden />
         ) : spec.kind === "enum" || spec.kind === "boolean" ? (
           <select
-            aria-label={`Rule ${n}: value`}
+            aria-label={t("list.smartFolders.ruleValueAria", { n })}
             value={rule.value}
             onChange={(e) => onChange({ ...rule, value: e.target.value })}
             aria-invalid={invalid}
@@ -352,10 +360,10 @@ function RuleRow({
           >
             {(spec.kind === "boolean"
               ? [
-                  { value: "true", title: "yes" },
-                  { value: "false", title: "no" },
+                  { value: "true", title: t("common.yes") },
+                  { value: "false", title: t("common.no") },
                 ]
-              : (spec.options ?? [])
+              : fieldOptions(rule.field)
             ).map((o) => (
               <option key={o.value} value={o.value}>
                 {o.title}
@@ -364,7 +372,7 @@ function RuleRow({
           </select>
         ) : (
           <input
-            aria-label={`Rule ${n}: value`}
+            aria-label={t("list.smartFolders.ruleValueAria", { n })}
             type={spec.kind === "number" ? "number" : "text"}
             step={spec.kind === "number" ? 1 : undefined}
             list={rule.field === "tag" ? tagListId : undefined}
@@ -381,8 +389,8 @@ function RuleRow({
           type="button"
           disabled={!canRemove}
           onClick={onRemove}
-          aria-label={`Remove rule ${n}`}
-          title="Remove rule"
+          aria-label={t("list.smartFolders.removeRuleAria", { n })}
+          title={t("common.remove")}
           className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-500/10 disabled:opacity-30 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
         >
           <X className="w-3.5 h-3.5" aria-hidden />
@@ -393,12 +401,7 @@ function RuleRow({
           {problem}
         </p>
       )}
-      {isPlistRule && (
-        <p className="mt-1 text-[11px] text-gray-600">
-          The key comes from the plist of the job. A dot reaches into a dictionary: KeepAlive.SuccessfulExit. The value is compared as text, a boolean is
-          true or false, and a list matches when one element matches.
-        </p>
-      )}
+      {isPlistRule && <p className="mt-1 text-[11px] text-gray-600">{t("list.smartFolders.plistRuleHelp")}</p>}
     </li>
   );
 }

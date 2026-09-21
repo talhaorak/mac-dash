@@ -7,7 +7,9 @@ import { backend, type JobEvent, type MonitorSettings } from "@/lib/backend";
 import { useJobEventsStore, useNavStore, type ServiceInfo } from "@/stores/app";
 import { servicesRoute, type RouteJobRef } from "@/lib/router";
 import { cn } from "@/lib/utils";
-import { explainExitStatus, formatInterval, nextRuns, scopeFor } from "@shared/launchd";
+import { nextRuns } from "@shared/launchd";
+import { formatDate, formatDateTime, formatTime, t, useT, type TKey } from "@/i18n";
+import { localizeExitStatus, localizeInterval, scopeTitle } from "@/i18n/launchd";
 import { inputClass } from "./fields";
 import { InlineError } from "./StartupPanels";
 
@@ -88,16 +90,29 @@ export async function refreshMonitorSettings(): Promise<MonitorSettings> {
 }
 
 const KIND = {
-  added: { icon: FilePlus2, text: "Added", tone: "text-green-400" },
-  modified: { icon: FilePen, text: "Changed", tone: "text-amber-400" },
-  removed: { icon: FileX2, text: "Removed", tone: "text-red-400" },
-  failed: { icon: AlertOctagon, text: "Failed", tone: "text-red-400" },
+  added: { icon: FilePlus2, key: "detail.events.added" as TKey, tone: "text-green-400" },
+  modified: { icon: FilePen, key: "detail.events.modified" as TKey, tone: "text-amber-400" },
+  removed: { icon: FileX2, key: "detail.events.removed" as TKey, tone: "text-red-400" },
+  failed: { icon: AlertOctagon, key: "detail.events.failed" as TKey, tone: "text-red-400" },
 } as const;
 
-/** "Failed (exit 78)" for a failed event, otherwise the plain kind text. */
+/** "Failed (exit 78)" for a failed event, otherwise the plain kind text. Called at use time, in the active language. */
 function kindText(event: JobEvent): string {
-  const text = KIND[event.kind].text;
-  return event.kind === "failed" && event.exitStatus !== undefined ? `${text} (exit ${event.exitStatus})` : text;
+  if (event.kind === "failed" && event.exitStatus !== undefined) return t("detail.events.failedWithExit", { exit: event.exitStatus });
+  return t(KIND[event.kind].key);
+}
+
+const NOTIFY_TITLE_KEY: Record<JobEvent["kind"], TKey> = {
+  added: "detail.events.notifyAdded",
+  modified: "detail.events.notifyModified",
+  removed: "detail.events.notifyRemoved",
+  failed: "detail.events.notifyFailed",
+};
+
+/** Title of the browser notification: a lowercase sentence, distinct from the (capitalized) history badge text. */
+function notificationTitle(event: JobEvent): string {
+  if (event.kind === "failed" && event.exitStatus !== undefined) return t("detail.events.notifyFailedWithExit", { exit: event.exitStatus });
+  return t(NOTIFY_TITLE_KEY[event.kind]);
 }
 
 /**
@@ -117,7 +132,7 @@ export function notifyJobEvent(event: JobEvent): void {
   if (backend.isDesktop()) return; // the desktop shell posts native notifications itself
   if (typeof Notification === "undefined" || Notification.permission !== "granted" || !document.hidden) return;
   try {
-    const notification = new Notification(`launchd job ${kindText(event).toLowerCase()}`, { body: `${event.label}\n${event.path}`, tag: event.id });
+    const notification = new Notification(notificationTitle(event), { body: `${event.label}\n${event.path}`, tag: event.id });
     notification.onclick = () => {
       window.focus();
       openJobFromNotification(event, event.kind);
@@ -136,6 +151,7 @@ const parsePrefixes = (text: string) =>
     .slice(0, MAX_PREFIXES);
 
 export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; onClose: () => void; onOpenJob: (event: JobEvent) => void }) {
+  useT(); // subscribe: re-render when the language changes
   const titleId = useId();
   const events = useJobEventsStore((s) => s.events);
   const setEvents = useJobEventsStore((s) => s.setEvents);
@@ -213,7 +229,7 @@ export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; o
 
   const enableNotifications = async () => {
     if (canNotify && Notification.permission === "default") await Notification.requestPermission();
-    if (canNotify && Notification.permission === "denied") toast.error("The browser blocks notifications for this page. Allow them in the site settings.");
+    if (canNotify && Notification.permission === "denied") toast.error(t("detail.events.notifyBlocked"));
     update({ ...settings, notify: true });
   };
 
@@ -223,14 +239,11 @@ export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; o
         <div className="flex items-start justify-between">
           <div>
             <h2 id={titleId} className="text-lg font-bold text-white">
-              Job changes
+              {t("detail.events.title")}
             </h2>
-            <p className="text-xs text-gray-500 mt-1">
-              mac-dash watches the five launchd folders all the time. Every plist that an app adds, changes or removes is recorded here. A job that
-              exits with an error is recorded as failed.
-            </p>
+            <p className="text-xs text-gray-500 mt-1">{t("detail.events.description")}</p>
           </div>
-          <button type="button" aria-label="Close" onClick={onClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400">
+          <button type="button" aria-label={t("common.close")} onClick={onClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -238,18 +251,18 @@ export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; o
         <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3 space-y-2">
           <div className="flex items-center gap-2">
             {settings.notify ? <Bell className="w-4 h-4 text-cyan-400" /> : <BellOff className="w-4 h-4 text-gray-500" />}
-            <span className="text-sm text-gray-300 flex-1">Notifications</span>
+            <span className="text-sm text-gray-300 flex-1">{t("detail.events.notifications")}</span>
             <button
               type="button"
               aria-pressed={settings.notify}
               onClick={() => (settings.notify ? update({ ...settings, notify: false }) : enableNotifications())}
               className="px-2.5 py-1 rounded-lg text-xs bg-white/[0.06] text-gray-300 hover:bg-white/[0.1]"
             >
-              {settings.notify ? "On" : "Off"}
+              {settings.notify ? t("detail.events.toggleOn") : t("detail.events.toggleOff")}
             </button>
           </div>
           <label className="block space-y-1">
-            <span className="text-[11px] text-gray-500">Do not notify for labels that start with</span>
+            <span className="text-[11px] text-gray-500">{t("detail.events.excludeLabel")}</span>
             <input
               type="text"
               value={excludeText}
@@ -263,41 +276,32 @@ export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; o
             />
           </label>
           <p className="text-[11px] text-gray-600">
-            {backend.isDesktop()
-              ? "The desktop app posts a macOS notification for every change that these settings allow."
-              : "The browser notifies while this tab is in the background. With no dashboard open, the server posts a macOS notification."}
+            {backend.isDesktop() ? t("detail.events.desktopNotifyInfo") : t("detail.events.browserNotifyInfo")}
           </p>
           <p className="text-[11px] text-gray-600" aria-live="polite">
-            {saveState === "pending" ? "Saving…" : saveState === "saved" ? "Saved. The settings apply to every client and to the native notifications." : ""}
+            {saveState === "pending" ? t("detail.events.saving") : saveState === "saved" ? t("detail.events.saved") : ""}
           </p>
-          {typeof saveState === "object" && (
-            <InlineError title="The settings did not reach the backend. This browser keeps them." message={saveState.error} onRetry={flush} />
-          )}
+          {typeof saveState === "object" && <InlineError title={t("detail.events.saveErrorTitle")} message={saveState.error} onRetry={flush} />}
           {loadError && typeof saveState !== "object" && (
-            <InlineError
-              title="The settings could not be read from the backend. The values of this browser are shown."
-              message={loadError}
-              onRetry={pull}
-              retrying={loadingSettings}
-            />
+            <InlineError title={t("detail.events.loadErrorTitle")} message={loadError} onRetry={pull} retrying={loadingSettings} />
           )}
         </div>
 
         <div className="flex items-center">
-          <h3 className="text-xs font-semibold text-gray-400 flex-1">History ({events.length})</h3>
+          <h3 className="text-xs font-semibold text-gray-400 flex-1">{t("detail.events.history", { count: events.length })}</h3>
           {events.length > 0 && (
             <button
               type="button"
               onClick={() => backend.clearJobEvents().then(() => setEvents([])).catch((e: Error) => toast.error(e.message))}
               className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-gray-500 hover:text-red-400 hover:bg-red-500/10"
             >
-              <Trash2 className="w-3 h-3" /> Clear
+              <Trash2 className="w-3 h-3" /> {t("common.clear")}
             </button>
           )}
         </div>
 
         {events.length === 0 ? (
-          <p className="text-sm text-gray-500">No changes recorded yet.</p>
+          <p className="text-sm text-gray-500">{t("detail.events.noChanges")}</p>
         ) : (
           <ul className="space-y-1">
             {events.map((event) => {
@@ -315,7 +319,7 @@ export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; o
                       <div className="flex items-baseline gap-2">
                         <span
                           className={cn("text-[11px] font-medium flex-shrink-0", kind.tone)}
-                          title={event.kind === "failed" ? (explainExitStatus(event.exitStatus ?? null) ?? undefined) : undefined}
+                          title={event.kind === "failed" ? (localizeExitStatus(event.exitStatus ?? null) ?? undefined) : undefined}
                         >
                           {kindText(event)}
                         </span>
@@ -323,7 +327,7 @@ export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; o
                       </div>
                       <div className="text-[10px] text-gray-600 font-mono truncate">{event.program ?? event.path}</div>
                       <div className="text-[10px] text-gray-600">
-                        {scopeFor(event.category)?.title} · {new Date(event.at).toLocaleString()}
+                        {scopeTitle(event.category)} · {formatDateTime(event.at)}
                       </div>
                     </div>
                   </button>
@@ -340,6 +344,7 @@ export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; o
 // ── Timeline ─────────────────────────────────────────────────────────
 
 export function JobTimeline({ services, onSelect }: { services: ServiceInfo[]; onSelect: (s: ServiceInfo) => void }) {
+  useT(); // subscribe: re-render when the language changes
   const { intervals, runs } = useMemo(() => {
     const now = new Date();
     const intervals = services.filter((s) => s.startInterval !== null && !s.disabled);
@@ -352,7 +357,7 @@ export function JobTimeline({ services, onSelect }: { services: ServiceInfo[]; o
   }, [services]);
 
   if (intervals.length === 0 && runs.length === 0) {
-    return <p className="text-sm text-gray-500 px-2 py-6 text-center">No enabled job has a StartInterval or a calendar schedule.</p>;
+    return <p className="text-sm text-gray-500 px-2 py-6 text-center">{t("detail.timeline.empty")}</p>;
   }
 
   let lastDay = "";
@@ -360,24 +365,29 @@ export function JobTimeline({ services, onSelect }: { services: ServiceInfo[]; o
     <div className="space-y-3">
       {intervals.length > 0 && (
         <GlowCard padding="sm">
-          <h3 className="px-2 py-1.5 text-sm font-semibold text-gray-300">Repeating</h3>
+          <h3 className="px-2 py-1.5 text-sm font-semibold text-gray-300">{t("detail.timeline.repeating")}</h3>
           {intervals.map((s) => (
-            <TimelineRow key={`${s.category}/${s.label}`} when={`every ${formatInterval(s.startInterval!)}`} service={s} onSelect={onSelect} />
+            <TimelineRow
+              key={`${s.category}/${s.label}`}
+              when={t("detail.timeline.every", { interval: localizeInterval(s.startInterval!) })}
+              service={s}
+              onSelect={onSelect}
+            />
           ))}
         </GlowCard>
       )}
       {runs.length > 0 && (
         <GlowCard padding="sm">
-          <h3 className="px-2 py-1.5 text-sm font-semibold text-gray-300">Next scheduled runs</h3>
+          <h3 className="px-2 py-1.5 text-sm font-semibold text-gray-300">{t("detail.timeline.nextRuns")}</h3>
           {runs.map((run, i) => {
-            const day = run.at.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+            const day = formatDate(run.at, { weekday: "long", month: "short", day: "numeric" });
             const header = day !== lastDay;
             lastDay = day;
             return (
               <div key={i}>
                 {header && <div className="px-2 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-gray-600">{day}</div>}
                 <TimelineRow
-                  when={run.everyMinute ? "every minute" : run.at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                  when={run.everyMinute ? t("detail.timeline.everyMinute") : formatTime(run.at, { hour: "2-digit", minute: "2-digit" })}
                   service={run.service}
                   onSelect={onSelect}
                 />

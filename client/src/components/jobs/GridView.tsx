@@ -5,6 +5,8 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { metaKey, type JobMeta } from "@/lib/backend";
 import type { ServiceInfo } from "@/stores/app";
 import { cn } from "@/lib/utils";
+import { formatNumber, t, useT, type TKey } from "@/i18n";
+import { localizeTriggers } from "@/i18n/launchd";
 import { JobIcon } from "./JobIcon";
 import { serviceKey } from "./ListJobRowActions";
 
@@ -15,10 +17,27 @@ export type GridTileSize = (typeof GRID_TILE_SIZES)[number];
 
 const STORAGE_KEY = "macdash.gridTileSize";
 
-const SIZE_SPEC: Record<GridTileSize, { title: string; minWidth: number; icon: number; tile: string; label: string }> = {
-  small: { title: "Small", minWidth: 128, icon: 28, tile: "p-2.5 gap-1.5", label: "text-[11px]" },
-  medium: { title: "Medium", minWidth: 172, icon: 40, tile: "p-3 gap-2", label: "text-[12px]" },
-  large: { title: "Large", minWidth: 228, icon: 56, tile: "p-4 gap-2.5", label: "text-[13px]" },
+const SIZE_SPEC: Record<GridTileSize, { minWidth: number; icon: number; tile: string; label: string }> = {
+  small: { minWidth: 128, icon: 28, tile: "p-2.5 gap-1.5", label: "text-[11px]" },
+  medium: { minWidth: 172, icon: 40, tile: "p-3 gap-2", label: "text-[12px]" },
+  large: { minWidth: 228, icon: 56, tile: "p-4 gap-2.5", label: "text-[13px]" },
+};
+
+const SIZE_TITLE_KEYS: Record<GridTileSize, TKey> = {
+  small: "list.grid.sizeSmall",
+  medium: "list.grid.sizeMedium",
+  large: "list.grid.sizeLarge",
+};
+
+function sizeTitle(size: GridTileSize): string {
+  return t(SIZE_TITLE_KEYS[size]);
+}
+
+const STATUS_WORD_KEYS: Record<ServiceInfo["status"], TKey> = {
+  running: "status.running",
+  stopped: "status.stopped",
+  error: "status.error",
+  unknown: "status.unknown",
 };
 
 function loadTileSize(): GridTileSize {
@@ -61,6 +80,7 @@ export interface JobGridViewProps {
  * Ctrl or Cmd with Home and End go to the first and the last tile.
  */
 export function JobGridView({ services, meta, loading, onSelect }: JobGridViewProps) {
+  const { t, tn } = useT();
   const hintId = useId();
   const gridRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState(loadTileSize);
@@ -80,7 +100,7 @@ export function JobGridView({ services, meta, loading, onSelect }: JobGridViewPr
     const index = tiles.indexOf(document.activeElement as HTMLButtonElement);
     if (index === -1) return;
     // The browser lays the columns out. The first row tells how many there are.
-    const columns = Math.max(1, tiles.filter((t) => t.offsetTop === tiles[0].offsetTop).length);
+    const columns = Math.max(1, tiles.filter((tile) => tile.offsetTop === tiles[0].offsetTop).length);
     const rowStart = index - (index % columns);
     const last = tiles.length - 1;
     let next: number;
@@ -111,8 +131,8 @@ export function JobGridView({ services, meta, loading, onSelect }: JobGridViewPr
     tiles[next]?.focus();
   };
 
-  if (loading && services.length === 0) return <p className="text-sm text-gray-500 text-center py-10">Reading launchd…</p>;
-  if (services.length === 0) return <p className="text-sm text-gray-500 text-center py-10">No job matches the filters.</p>;
+  if (loading && services.length === 0) return <p className="text-sm text-gray-500 text-center py-10">{t("list.status.readingLaunchd")}</p>;
+  if (services.length === 0) return <p className="text-sm text-gray-500 text-center py-10">{t("list.status.noMatch")}</p>;
 
   const spec = SIZE_SPEC[size];
 
@@ -120,17 +140,19 @@ export function JobGridView({ services, meta, loading, onSelect }: JobGridViewPr
     <GlowCard padding="sm">
       <div className="flex items-center gap-3 px-2 pb-2 flex-wrap">
         <p className="text-xs text-gray-500 flex-1" aria-live="polite">
-          {rows.length < sorted.length ? `${rows.length} of ${sorted.length} jobs` : `${sorted.length} jobs`}
+          {rows.length < sorted.length
+            ? tn("list.count.shownOfTotal", sorted.length, { shown: formatNumber(rows.length) })
+            : tn("list.count.jobs", sorted.length)}
         </p>
         <label className="inline-flex items-center gap-2 text-xs text-gray-500">
-          Tile size
+          {t("list.grid.tileSizeLabel")}
           <input
             type="range"
             min={0}
             max={GRID_TILE_SIZES.length - 1}
             step={1}
             value={GRID_TILE_SIZES.indexOf(size)}
-            aria-valuetext={spec.title}
+            aria-valuetext={sizeTitle(size)}
             onChange={(e) => {
               const next = GRID_TILE_SIZES[Number(e.target.value)] ?? "medium";
               setSize(next);
@@ -138,17 +160,17 @@ export function JobGridView({ services, meta, loading, onSelect }: JobGridViewPr
             }}
             className="w-24 accent-cyan-400 cursor-pointer rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
           />
-          <span className="w-12 text-gray-400">{spec.title}</span>
+          <span className="w-12 text-gray-400">{sizeTitle(size)}</span>
         </label>
       </div>
 
       <p id={hintId} className="sr-only">
-        The arrow keys move between the tiles. Enter opens the details of a job.
+        {t("list.grid.hint")}
       </p>
       <div
         ref={gridRef}
         role="group"
-        aria-label="launchd jobs"
+        aria-label={t("list.grid.ariaLabel")}
         aria-describedby={hintId}
         onKeyDown={onKeyDown}
         className="grid gap-2"
@@ -168,7 +190,7 @@ export function JobGridView({ services, meta, loading, onSelect }: JobGridViewPr
           onClick={() => setLimit((n) => n + WINDOW)}
           className="w-full mt-2 py-2 text-xs text-cyan-400 hover:bg-white/[0.03] rounded-lg focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
         >
-          Show {Math.min(WINDOW, sorted.length - rows.length)} more ({sorted.length - rows.length} hidden)
+          {tn("list.count.showMore", Math.min(WINDOW, sorted.length - rows.length))} ({t("list.count.hiddenTotal", { count: formatNumber(sorted.length - rows.length) })})
         </button>
       )}
     </GlowCard>
@@ -179,8 +201,9 @@ export function JobGridView({ services, meta, loading, onSelect }: JobGridViewPr
 
 /** "Every 5 minutes +2" for a job with three triggers. */
 function triggerSummary(service: ServiceInfo): string {
-  if (service.triggers.length === 0) return service.plistPath ? "On demand" : "No plist file";
-  return service.triggers.length === 1 ? service.triggers[0] : `${service.triggers[0]} +${service.triggers.length - 1}`;
+  if (service.triggers.length === 0) return service.plistPath ? t("list.grid.onDemand") : t("list.grid.noPlistFile");
+  const [first, ...rest] = localizeTriggers(service.triggers);
+  return rest.length === 0 ? first : t("list.grid.triggerPlusMore", { first, count: formatNumber(rest.length) });
 }
 
 const JobTile = memo(function JobTile({
@@ -198,17 +221,19 @@ const JobTile = memo(function JobTile({
   onSelect: (key: string) => void;
   onFocusTile: (key: string) => void;
 }) {
+  const { t } = useT();
   const spec = SIZE_SPEC[size];
   const key = serviceKey(service);
-  const flaw = service.unreadable ? "unreadable plist" : service.quarantined ? "quarantined plist" : null;
-  const name = [service.label, service.disabled ? "disabled" : service.status, !service.writable && "read-only", flaw].filter(Boolean).join(", ");
+  const flaw = service.unreadable ? t("list.badge.unreadableShort") : service.quarantined ? t("list.badge.quarantinedShort") : null;
+  const stateWord = service.disabled ? t("status.disabled") : t(STATUS_WORD_KEYS[service.status]);
+  const name = [service.label, stateWord, !service.writable && t("list.grid.readOnlyInline"), flaw].filter(Boolean).join(", ");
 
   return (
     <button
       type="button"
       data-tile
       tabIndex={tabbable ? 0 : -1}
-      aria-label={`${name}. Open details`}
+      aria-label={t("list.actions.openDetailsAria", { text: name })}
       title={service.label}
       onClick={() => onSelect(key)}
       onFocus={() => onFocusTile(key)}
@@ -223,16 +248,16 @@ const JobTile = memo(function JobTile({
         <JobIcon label={service.label} icon={icon} size={spec.icon} />
         <span className="ml-auto flex items-center gap-1 flex-wrap justify-end min-w-0">
           {flaw && (
-            <span title={service.unreadable ? "The plist cannot be parsed" : "The plist is quarantined"} className="text-red-400">
+            <span title={service.unreadable ? t("list.badge.unreadableTitle") : t("list.badge.quarantinedTitle")} className="text-red-400">
               <ShieldAlert className="w-3.5 h-3.5" aria-hidden />
             </span>
           )}
           {!service.writable && (
-            <span title="Read-only" className="inline-flex items-center justify-center w-4 h-4 rounded bg-white/[0.06] text-gray-400">
+            <span title={t("list.common.readOnly")} className="inline-flex items-center justify-center w-4 h-4 rounded bg-white/[0.06] text-gray-400">
               <Lock className="w-2.5 h-2.5" aria-hidden />
             </span>
           )}
-          {service.disabled && <span className="px-1.5 py-px rounded text-[9px] font-medium bg-amber-500/15 text-amber-400">disabled</span>}
+          {service.disabled && <span className="px-1.5 py-px rounded text-[9px] font-medium bg-amber-500/15 text-amber-400">{t("status.disabled")}</span>}
         </span>
       </span>
 

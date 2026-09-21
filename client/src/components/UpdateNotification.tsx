@@ -3,6 +3,7 @@ import { Download, X, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { backend } from "@/lib/backend";
 import { toast } from "@/components/ui/Toast";
+import { useT } from "@/i18n";
 
 interface UpdateInfo {
   version: string;
@@ -20,6 +21,7 @@ async function desktopInvoke<T>(cmd: string): Promise<T> {
 }
 
 export function UpdateNotification() {
+  const { t } = useT();
   const [updateAvailable, setUpdateAvailable] = useState<UpdateInfo | null>(null);
   const [installing, setInstalling] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -64,7 +66,7 @@ export function UpdateNotification() {
       // App will restart automatically after update
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to install update: ${message}`);
+      toast.error(t("app.update.installFailed", { message }));
       setInstalling(false);
     }
   };
@@ -88,15 +90,15 @@ export function UpdateNotification() {
                 <Download className="w-4 h-4 text-cyan-400" aria-hidden="true" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-white">Update Available</h3>
-                <p className="text-xs text-gray-400">Version {updateAvailable.version}</p>
+                <h3 className="text-sm font-semibold text-white">{t("app.update.available")}</h3>
+                <p className="text-xs text-gray-400">{t("app.update.version", { version: updateAvailable.version })}</p>
               </div>
             </div>
             <button
               type="button"
               onClick={() => setDismissed(true)}
-              aria-label="Dismiss update notification"
-              title="Dismiss"
+              aria-label={t("app.update.dismiss")}
+              title={t("app.update.dismissTitle")}
               className="text-gray-500 hover:text-gray-300 transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
               disabled={installing}
             >
@@ -119,12 +121,12 @@ export function UpdateNotification() {
               {installing ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
-                  Installing...
+                  {t("app.update.installing")}
                 </>
               ) : (
                 <>
                   <Download className="w-3.5 h-3.5" aria-hidden="true" />
-                  Install & Relaunch
+                  {t("app.update.installAndRelaunch")}
                 </>
               )}
             </button>
@@ -133,7 +135,7 @@ export function UpdateNotification() {
               disabled={installing}
               className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-gray-300 text-xs font-semibold transition-all disabled:opacity-50"
             >
-              Later
+              {t("app.update.later")}
             </button>
           </div>
         </div>

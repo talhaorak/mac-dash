@@ -7,15 +7,16 @@ import { useJobMetaStore, useNavStore, useServicesStore, type ServiceInfo } from
 import { cn } from "@/lib/utils";
 import { scopeFor } from "@shared/launchd";
 import { JobIcon } from "./JobIcon";
+import { useT, type TKey } from "@/i18n";
 
 const MAX_RESULTS = 50;
 
-const PAGES: { id: string; title: string; icon: LucideIcon }[] = [
-  { id: "dashboard", title: "Dashboard", icon: LayoutDashboard },
-  { id: "services", title: "Services", icon: Cog },
-  { id: "processes", title: "Processes", icon: Activity },
-  { id: "logs", title: "Logs", icon: ScrollText },
-  { id: "plugins", title: "Plugins", icon: Puzzle },
+const PAGES: { id: string; titleKey: TKey; icon: LucideIcon }[] = [
+  { id: "dashboard", titleKey: "app.nav.dashboard", icon: LayoutDashboard },
+  { id: "services", titleKey: "app.nav.services", icon: Cog },
+  { id: "processes", titleKey: "app.nav.processes", icon: Activity },
+  { id: "logs", titleKey: "app.nav.logs", icon: ScrollText },
+  { id: "plugins", titleKey: "app.nav.plugins", icon: Puzzle },
 ];
 
 type Result = { kind: "page"; id: string; title: string; icon: LucideIcon } | { kind: "job"; service: ServiceInfo };
@@ -47,9 +48,10 @@ export interface QuickSwitcherProps {
  * Arrow keys move the selection and Enter opens it. A job opens its detail drawer on the Services page.
  */
 export function QuickSwitcher({ open, onClose }: QuickSwitcherProps) {
+  const { t } = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   return (
-    <Dialog open={open} onClose={onClose} ariaLabel="Go to a page or a job" initialFocusRef={inputRef} className="h-[28rem] flex flex-col overflow-hidden!">
+    <Dialog open={open} onClose={onClose} ariaLabel={t("shell.goToTitle")} initialFocusRef={inputRef} className="h-[28rem] flex flex-col overflow-hidden!">
       {/* The dialog mounts its children on open, so every open starts with an empty query. */}
       <SwitcherBody inputRef={inputRef} onClose={onClose} />
     </Dialog>
@@ -57,6 +59,7 @@ export function QuickSwitcher({ open, onClose }: QuickSwitcherProps) {
 }
 
 function SwitcherBody({ inputRef, onClose }: { inputRef: React.RefObject<HTMLInputElement | null>; onClose: () => void }) {
+  const { t, tn } = useT();
   const listId = useId();
   const services = useServicesStore((s) => s.services);
   const setPage = useNavStore((s) => s.setPage);
@@ -64,6 +67,8 @@ function SwitcherBody({ inputRef, onClose }: { inputRef: React.RefObject<HTMLInp
   const meta = useJobMetaStore((s) => s.meta);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+
+  const localizedPages = useMemo(() => PAGES.map((p) => ({ ...p, title: t(p.titleKey) })), [t]);
 
   const indexed = useMemo(
     () => services.map((service) => ({ service, label: service.label.toLowerCase(), haystack: `${service.label} ${service.program ?? ""}`.toLowerCase() })),
@@ -73,7 +78,9 @@ function SwitcherBody({ inputRef, onClose }: { inputRef: React.RefObject<HTMLInp
   const results = useMemo<Result[]>(() => {
     const q = query.trim().toLowerCase();
     const tokens = q.split(/\s+/).filter(Boolean);
-    const pages: Result[] = PAGES.filter((p) => tokens.every((t) => p.title.toLowerCase().includes(t))).map((p) => ({ kind: "page", ...p }));
+    const pages: Result[] = localizedPages
+      .filter((p) => tokens.every((token) => p.title.toLowerCase().includes(token)))
+      .map((p) => ({ kind: "page", id: p.id, title: p.title, icon: p.icon }));
     const room = MAX_RESULTS - pages.length;
     if (tokens.length === 0) return [...pages, ...indexed.slice(0, room).map(({ service }): Result => ({ kind: "job", service }))];
 
@@ -86,7 +93,7 @@ function SwitcherBody({ inputRef, onClose }: { inputRef: React.RefObject<HTMLInp
       .slice(0, room)
       .map(({ entry }): Result => ({ kind: "job", service: entry.service }));
     return [...pages, ...jobs];
-  }, [indexed, query]);
+  }, [localizedPages, indexed, query]);
 
   // The icons come with the notes. The Services page loads them too. Without them every job shows its letter.
   useEffect(() => {
@@ -140,7 +147,7 @@ function SwitcherBody({ inputRef, onClose }: { inputRef: React.RefObject<HTMLInp
           <>
             <result.icon className="w-4 h-4 flex-shrink-0 text-gray-400" aria-hidden />
             <span className="text-sm text-gray-200">{result.title}</span>
-            <span className="ml-auto text-[10px] text-gray-600">Page</span>
+            <span className="ml-auto text-[10px] text-gray-600">{t("app.switcher.pageBadge")}</span>
           </>
         ) : (
           <>
@@ -151,7 +158,7 @@ function SwitcherBody({ inputRef, onClose }: { inputRef: React.RefObject<HTMLInp
               {result.service.program && <div className="text-[10px] text-gray-600 truncate">{result.service.program}</div>}
             </div>
             <span className="flex-shrink-0 text-[10px] text-gray-600">
-              {scopeFor(result.service.category)?.title} · {result.service.disabled ? "disabled" : result.service.status}
+              {scopeFor(result.service.category)?.title} · {t((`status.${result.service.disabled ? "disabled" : result.service.status}`) as TKey)}
             </span>
           </>
         )}
@@ -168,14 +175,14 @@ function SwitcherBody({ inputRef, onClose }: { inputRef: React.RefObject<HTMLInp
           ref={inputRef}
           type="text"
           role="combobox"
-          aria-label="Go to a page or a job"
+          aria-label={t("shell.goToTitle")}
           aria-expanded="true"
           aria-controls={listId}
           aria-autocomplete="list"
           aria-activedescendant={results.length > 0 ? optionId(activeIndex) : undefined}
           autoComplete="off"
           spellCheck={false}
-          placeholder="Go to a page or a launchd job…"
+          placeholder={t("app.switcher.placeholder")}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -186,20 +193,22 @@ function SwitcherBody({ inputRef, onClose }: { inputRef: React.RefObject<HTMLInp
         />
       </div>
 
-      <div id={listId} role="listbox" aria-label="Results" className="flex-1 overflow-y-auto p-2">
-        {results.length === 0 && <p className="px-3 py-6 text-sm text-gray-500 text-center">Nothing matches "{query.trim()}".</p>}
+      <div id={listId} role="listbox" aria-label={t("app.switcher.resultsGroup")} className="flex-1 overflow-y-auto p-2">
+        {results.length === 0 && (
+          <p className="px-3 py-6 text-sm text-gray-500 text-center">{t("app.switcher.noMatches", { query: query.trim() })}</p>
+        )}
         {pageResults.length > 0 && (
-          <div role="group" aria-label="Pages">
+          <div role="group" aria-label={t("app.switcher.pagesGroup")}>
             <div aria-hidden className="px-3 pt-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-gray-600">
-              Pages
+              {t("app.switcher.pagesGroup")}
             </div>
             {pageResults.map((r, i) => option(r, i))}
           </div>
         )}
         {jobResults.length > 0 && (
-          <div role="group" aria-label="Jobs">
+          <div role="group" aria-label={t("app.switcher.jobsGroup")}>
             <div aria-hidden className="px-3 pt-3 pb-1 text-[10px] font-medium uppercase tracking-wide text-gray-600">
-              Jobs
+              {t("app.switcher.jobsGroup")}
             </div>
             {jobResults.map((r, i) => option(r, pageResults.length + i))}
           </div>
@@ -208,17 +217,18 @@ function SwitcherBody({ inputRef, onClose }: { inputRef: React.RefObject<HTMLInp
 
       <div className="flex-shrink-0 flex items-center gap-4 px-4 py-2 border-t border-white/[0.06] text-[10px] text-gray-600">
         <span>
-          <kbd className="font-sans">↑</kbd> <kbd className="font-sans">↓</kbd> move
+          <kbd className="font-sans">↑</kbd> <kbd className="font-sans">↓</kbd> {t("app.switcher.hintMove")}
         </span>
         <span>
-          <kbd className="font-sans">Enter</kbd> open
+          <kbd className="font-sans">Enter</kbd> {t("app.switcher.hintOpen")}
         </span>
         <span>
-          <kbd className="font-sans">Esc</kbd> close
+          <kbd className="font-sans">Esc</kbd> {t("app.switcher.hintClose")}
         </span>
         <span className="ml-auto" aria-live="polite">
-          {results.length} {results.length === 1 ? "result" : "results"}
-          {results.length === MAX_RESULTS && " (first 50)"}
+          {results.length === MAX_RESULTS
+            ? tn("app.switcher.resultsLimited", results.length, { max: MAX_RESULTS })
+            : tn("app.switcher.results", results.length)}
         </span>
       </div>
     </>

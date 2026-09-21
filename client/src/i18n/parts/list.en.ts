@@ -1,3 +1,234 @@
-/** English source strings. Flat dotted keys, grouped by area. */
+/** Services page: header, filters, list/grid views, row actions, smart folders, view options, job icon. */
 export const enList = {
+  // header
+  "list.header.title": "Services",
+  "list.header.viewLabel": "View",
+  "list.header.newJob": "New job",
+  "list.header.searchAria": "Search jobs",
+  "list.header.searchPlaceholder": "Search label, program, notes, tags…",
+  "list.header.changesButton": "Changes",
+  "list.header.unseenChanges.one": "{count} new job change",
+  "list.header.unseenChanges.other": "{count} new job changes",
+  "list.header.summary": "{total} · {running} · {failed}",
+
+  // counts
+  "list.count.jobs.one": "{count} job",
+  "list.count.jobs.other": "{count} jobs",
+  "list.count.shownOfTotal.one": "{shown} of {count} job",
+  "list.count.shownOfTotal.other": "{shown} of {count} jobs",
+  "list.count.matchOfTotal.one": "{shown} of {count} job matches",
+  "list.count.matchOfTotal.other": "{shown} of {count} jobs match",
+  "list.count.showMore.one": "Show {count} more",
+  "list.count.showMore.other": "Show {count} more",
+  "list.count.andMore.one": "and {count} more",
+  "list.count.andMore.other": "and {count} more",
+  "list.count.hiddenTotal": "{count} hidden",
+  "list.count.running": "{count} running",
+  "list.count.failed": "{count} failed",
+
+  // shared status
+  "list.status.readingLaunchd": "Reading launchd…",
+  "list.status.readingPlists": "Reading the plists of the jobs…",
+  "list.status.noMatch": "No job matches the filters.",
+
+  // filters
+  "list.filters.statusLabel": "Status filter",
+  "list.filters.ownerLabel": "Owner filter",
+  "list.filters.tagLabel": "Tag filter",
+  "list.filters.smartFoldersLabel": "Smart folder bar",
+  "list.filters.startupCardLabel": "Other startup mechanisms",
+  "list.filters.powerCardLabel": "Power schedule",
+  "list.filters.hiddenBanner": "A filter without a visible control is active: {list}.",
+  "list.filters.hiddenStatus": "status {value}",
+  "list.filters.hiddenOwner": "owner {value}",
+  "list.filters.hiddenTag": "tag #{value}",
+  "list.filters.hiddenSmartFolder": 'smart folder "{value}"',
+
+  // owner
+  "list.owner.apple": "Apple",
+  "list.owner.thirdParty": "Third-party",
+
+  // views
+  "list.views.groups": "Groups",
+  "list.views.list": "List",
+  "list.views.grid": "Grid",
+  "list.views.timeline": "Timeline",
+
+  // toasts
+  "list.toast.jobNotFound": "{label} is not in the job list.",
+  "list.toast.movedToTrash": "{label} moved to the Trash",
+  "list.toast.actionError": "{label}: {message}",
+  "list.toast.started": "{label} started",
+  "list.toast.stopped": "{label} stopped",
+  "list.toast.restarted": "{label} restarted",
+  "list.toast.loaded": "{label} loaded",
+  "list.toast.unloaded": "{label} unloaded",
+  "list.toast.enabled": "{label} enabled",
+  "list.toast.disabled": "{label} disabled",
+
+  // errors
+  "list.errors.metaReadFailed": "Notes, tags and icons could not be read.",
+  "list.errors.plistsRereadFailed": "The job plists could not be read again. The smart folder uses the last copy.",
+  "list.errors.plistsReadFailed": "The job plists could not be read. The smart folder stays empty.",
+  "list.errors.plistsRereadFailedKeyFolders": "The job plists could not be read again. The launchd-key folders use the last copy.",
+  "list.errors.plistsReadFailedKeyFolders": "The job plists could not be read. Folders with a launchd-key rule stay empty.",
+  "list.errors.plistsRereadFailedPreview": "The job plists could not be read again. The preview uses the last copy.",
+  "list.errors.plistsReadFailedPreview": "The job plists could not be read. A launchd-key rule matches no job until they are.",
+
+  // shared badges
+  "list.badge.unreadableShort": "unreadable plist",
+  "list.badge.quarantinedShort": "quarantined plist",
+  "list.badge.unreadableTitle": "The plist cannot be parsed",
+  "list.badge.quarantinedTitle": "The plist is quarantined",
+
+  // shared words
+  "list.common.readOnly": "Read-only",
+  "list.common.scope": "Scope",
+  "list.common.triggers": "Triggers",
+
+  // row actions
+  "list.actions.openDetailsAria": "{text}. Open details",
+  "list.actions.stopLabel": "Stop {label}",
+  "list.actions.confirmStopLabel": "Confirm stop {label}",
+  "list.actions.confirmStopTitle": "Click again to stop",
+  "list.actions.restartLabel": "Restart {label}",
+  "list.actions.runNowLabel": "Run {label} now",
+  "list.actions.runNowTitle": "Run now",
+  "list.actions.enableLabel": "Enable {label}",
+  "list.actions.enableTitle": "Enable and load",
+  "list.actions.disableLabel": "Disable {label}",
+  "list.actions.confirmDisableLabel": "Confirm disable {label}",
+  "list.actions.disableTitle": "Disable and unload",
+  "list.actions.confirmDisableTitle": "Click again to disable",
+  "list.actions.editLabel": "Edit {label}",
+  "list.actions.viewLabel": "View {label}",
+  "list.actions.viewPlistTitle": "View plist",
+  "list.actions.duplicateLabel": "Duplicate {label}",
+
+  // list view (table)
+  "list.columns.pid": "PID",
+  "list.columns.lastExit": "Last exit",
+  "list.list.sortBy": "Sort by {column}",
+  "list.list.columnsButton": "Columns",
+  "list.list.columnsMenuLabel": "Visible columns",
+  "list.list.tableCaption": "launchd jobs. The column header buttons sort the table.",
+  "list.list.failedSuffix": " (failed)",
+
+  // grid view
+  "list.grid.tileSizeLabel": "Tile size",
+  "list.grid.sizeSmall": "Small",
+  "list.grid.sizeMedium": "Medium",
+  "list.grid.sizeLarge": "Large",
+  "list.grid.ariaLabel": "launchd jobs",
+  "list.grid.hint": "The arrow keys move between the tiles. Enter opens the details of a job.",
+  "list.grid.onDemand": "On demand",
+  "list.grid.noPlistFile": "No plist file",
+  "list.grid.triggerPlusMore": "{first} +{count}",
+  "list.grid.readOnlyInline": "read-only",
+
+  // smart folders: bar and editor chrome
+  "list.smartFolders.groupLabel": "Smart folders",
+  "list.smartFolders.countUnknown": ", count unknown",
+  "list.smartFolders.counting": ", counting",
+  "list.smartFolders.editAria": "Edit smart folder {name}",
+  "list.smartFolders.editOrDelete": "Edit or delete",
+  "list.smartFolders.newFolder": "New smart folder…",
+  "list.smartFolders.savedToast": 'Smart folder "{name}" saved',
+  "list.smartFolders.deletedToast": 'Smart folder "{name}" deleted',
+  "list.smartFolders.editTitle": "Edit smart folder",
+  "list.smartFolders.newTitle": "New smart folder",
+  "list.smartFolders.subtitle": "A smart folder is a saved filter. It combines with the search box and the other filters.",
+  "list.smartFolders.namePlaceholder": "Nightly backups",
+  "list.smartFolders.enterName": "Enter a name.",
+  "list.smartFolders.rulesLegend": "Rules",
+  "list.smartFolders.matchIntro": "A job belongs to the folder when it matches",
+  "list.smartFolders.matchAll": "all rules",
+  "list.smartFolders.matchAny": "any rule",
+  "list.smartFolders.addRule": "Add rule",
+  "list.smartFolders.previewLabel": "Preview",
+  "list.smartFolders.confirmDelete": "Click again to delete",
+  "list.smartFolders.deleteFolder": "Delete folder",
+  "list.smartFolders.saveFolder": "Save folder",
+  "list.smartFolders.ruleFieldAria": "Rule {n}: field",
+  "list.smartFolders.ruleKeyAria": "Rule {n}: launchd key",
+  "list.smartFolders.ruleOperatorAria": "Rule {n}: operator",
+  "list.smartFolders.ruleValueAria": "Rule {n}: value",
+  "list.smartFolders.removeRuleAria": "Remove rule {n}",
+  "list.smartFolders.plistRuleHelp":
+    "The key comes from the plist of the job. A dot reaches into a dictionary: KeepAlive.SuccessfulExit. The value is compared as text, a boolean is true or false, and a list matches when one element matches.",
+
+  // smart folders: built-in folder names
+  "list.smartFolders.builtin.failed": "Failed",
+  "list.smartFolders.builtin.thirdPartyDaemons": "Third-party daemons",
+  "list.smartFolders.builtin.scheduledToday": "Scheduled today",
+
+  // smart folders: rule field titles
+  "list.smartFolders.field.label": "Label",
+  "list.smartFolders.field.program": "Program",
+  "list.smartFolders.field.trigger": "Trigger text",
+  "list.smartFolders.field.tag": "Tag",
+  "list.smartFolders.field.owner": "Owner",
+  "list.smartFolders.field.loaded": "Loaded",
+  "list.smartFolders.field.runsAsRoot": "Runs as root",
+  "list.smartFolders.field.hasSchedule": "Has a schedule",
+  "list.smartFolders.field.runsSoon": "Runs in the next 24 hours",
+  "list.smartFolders.field.keepAlive": "Keep alive",
+  "list.smartFolders.field.unreadable": "Unreadable plist",
+  "list.smartFolders.field.quarantined": "Quarantined",
+  "list.smartFolders.field.writable": "Writable",
+  "list.smartFolders.field.lastExitStatus": "Last exit status",
+  "list.smartFolders.field.launchdKey": "launchd key",
+
+  // smart folders: enum option titles
+  "list.smartFolders.option.agent": "Agent",
+  "list.smartFolders.option.daemon": "Daemon",
+
+  // smart folders: operators
+  "list.smartFolders.operator.is": "is",
+  "list.smartFolders.operator.isNot": "is not",
+  "list.smartFolders.operator.contains": "contains",
+  "list.smartFolders.operator.notContains": "does not contain",
+  "list.smartFolders.operator.startsWith": "starts with",
+  "list.smartFolders.operator.eq": "=",
+  "list.smartFolders.operator.neq": "≠",
+  "list.smartFolders.operator.exists": "exists",
+  "list.smartFolders.operator.notExists": "does not exist",
+  "list.smartFolders.operator.plistEquals": "equals",
+  "list.smartFolders.operator.plistNotEquals": "does not equal",
+
+  // smart folders: rule problems
+  "list.smartFolders.problem.unknownField": "The field is unknown.",
+  "list.smartFolders.problem.operatorMismatch": "The operator does not fit the field.",
+  "list.smartFolders.problem.enterText": "Enter a text.",
+  "list.smartFolders.problem.chooseValue": "Choose a value.",
+  "list.smartFolders.problem.chooseYesNo": "Choose yes or no.",
+  "list.smartFolders.problem.enterWholeNumber": "Enter a whole number.",
+  "list.smartFolders.problem.enterKey": "Enter a launchd key.",
+  "list.smartFolders.problem.keyTooLong": "The key is too long.",
+  "list.smartFolders.problem.enterValue": "Enter a value.",
+
+  // view options menu
+  "list.viewOptions.buttonLabel": "View options",
+  "list.viewOptions.buttonTitle": "Show or hide parts of this page",
+  "list.viewOptions.menuLabel": "Visible parts of the Services page",
+  "list.viewOptions.showEverything": "Show everything",
+
+  // job icon
+  "list.icon.noCanvas": "The browser has no 2D canvas.",
+  "list.icon.notImage": "The file is not an image.",
+  "list.icon.tooLargeSource": "The image is larger than 20 MB.",
+  "list.icon.empty": "The image is empty.",
+  "list.icon.canvasBlocked": "The browser does not allow this image on a canvas.",
+  "list.icon.pngFailed": "The browser could not make a PNG from this image.",
+  "list.icon.tooLargeResult": "The icon is larger than 48 KB after the resize. Choose a simpler image.",
+  "list.icon.cannotRead": "The browser cannot read this image.",
+  "list.icon.readFailed": "The image could not be read.",
+  "list.icon.dropNoImage": "The drop holds no image file.",
+  "list.icon.legend": "Icon",
+  "list.icon.emojiLabel": "Emoji",
+  "list.icon.dropZoneAria": "Image icon. Paste or drop an image here.",
+  "list.icon.resizing": "Resizing the image…",
+  "list.icon.pasteOrDrop": "Paste or drop an image",
+  "list.icon.chooseImage": "Choose image…",
+  "list.icon.hint": "An image becomes a {pixels}×{pixels} PNG of at most 48 KB. Without an icon the job shows a coloured letter.",
 } as const;

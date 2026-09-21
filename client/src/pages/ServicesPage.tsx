@@ -11,27 +11,50 @@ import { JobGridView } from "@/components/jobs/GridView";
 import { JobListView } from "@/components/jobs/ListView";
 import { JobRowActions, serviceKey, type ArmedAction } from "@/components/jobs/ListJobRowActions";
 import { SmartFolderBar } from "@/components/jobs/SmartFolderBar";
-import { DEFAULT_FOLDERS, SMART_FOLDERS_KEY, folderNeedsPlists, isAppleService, loadUserFolders, matchesFolder } from "@/components/jobs/SmartFolders";
+import { DEFAULT_FOLDERS, SMART_FOLDERS_KEY, folderNeedsPlists, folderTitle, isAppleService, loadUserFolders, matchesFolder } from "@/components/jobs/SmartFolders";
 import { InlineError, StartupExtrasCard } from "@/components/jobs/StartupPanels";
 import { PowerSchedulePanel } from "@/components/jobs/PowerSchedulePanel";
 import { ViewOptionsMenu, loadViewOptions, saveViewOptions, type ViewOptions } from "@/components/jobs/ViewOptions";
 import { backend, metaKey, type ServiceAction } from "@/lib/backend";
-import { DEFAULT_SERVICES_ROUTE, OWNER_FILTERS, STATUS_FILTERS, parseJobRef, type OwnerFilter, type RouteJobRef } from "@/lib/router";
+import { DEFAULT_SERVICES_ROUTE, OWNER_FILTERS, STATUS_FILTERS, parseJobRef, type OwnerFilter, type RouteJobRef, type StatusFilter } from "@/lib/router";
 import { cn } from "@/lib/utils";
+import { formatNumber, useT, type TKey } from "@/i18n";
+import { localizeTriggers, scopeTitle, templateDescription, templateTitle } from "@/i18n/launchd";
 import { JOB_SCOPES, JOB_TEMPLATES, type JobCategory } from "@shared/launchd";
 import { Bell, CalendarClock, ChevronDown, ChevronRight, EyeOff, LayoutGrid, List, Plus, Search, ShieldAlert, Table2 } from "lucide-react";
 
 const categoryOrder: JobCategory[] = JOB_SCOPES.map((s) => s.category);
-const categoryLabels = Object.fromEntries(JOB_SCOPES.map((s) => [s.category, s.title])) as Record<JobCategory, string>;
 
-const OWNER_TITLES: Record<OwnerFilter, string> = { all: "All", apple: "Apple", "third-party": "3rd Party" };
+const OWNER_TITLE_KEYS: Record<OwnerFilter, TKey> = { all: "common.all", apple: "list.owner.apple", "third-party": "list.owner.thirdParty" };
+const STATUS_TITLE_KEYS: Record<StatusFilter, TKey> = {
+  all: "common.all",
+  running: "status.running",
+  stopped: "status.stopped",
+  error: "status.error",
+  disabled: "status.disabled",
+};
+const STATUS_WORD_KEYS: Record<ServiceInfo["status"], TKey> = {
+  running: "status.running",
+  stopped: "status.stopped",
+  error: "status.error",
+  unknown: "status.unknown",
+};
+const ACTION_DONE_KEYS: Record<ServiceAction, TKey> = {
+  start: "list.toast.started",
+  stop: "list.toast.stopped",
+  restart: "list.toast.restarted",
+  load: "list.toast.loaded",
+  unload: "list.toast.unloaded",
+  enable: "list.toast.enabled",
+  disable: "list.toast.disabled",
+};
 
 const VIEWS = [
-  { id: "groups", icon: List, label: "Groups" },
-  { id: "list", icon: Table2, label: "List" },
-  { id: "grid", icon: LayoutGrid, label: "Grid" },
-  { id: "timeline", icon: CalendarClock, label: "Timeline" },
-] as const;
+  { id: "groups", icon: List, labelKey: "list.views.groups" },
+  { id: "list", icon: Table2, labelKey: "list.views.list" },
+  { id: "grid", icon: LayoutGrid, labelKey: "list.views.grid" },
+  { id: "timeline", icon: CalendarClock, labelKey: "list.views.timeline" },
+] as const satisfies { id: string; icon: unknown; labelKey: TKey }[];
 
 const ROWS_PER_GROUP = 250;
 
@@ -43,6 +66,7 @@ const findJob = (services: ServiceInfo[], ref: RouteJobRef) => services.find((s)
  * Filter changes replace the history entry. A drawer, the editor and the change history add one, so Back closes them.
  */
 export function ServicesPage() {
+  const { t, tn } = useT();
   const services = useServicesStore((s) => s.services);
   const loading = useServicesStore((s) => s.loading);
   const setServices = useServicesStore((s) => s.setServices);
@@ -101,14 +125,14 @@ export function ServicesPage() {
     if (!sr.job || loading || services.length === 0) return;
     if (!selected) {
       // React runs an effect twice in development. One toast per reference is enough.
-      if (reportedMissing.current !== sr.job) toast.info(`${sr.job.label} is not in the job list.`);
+      if (reportedMissing.current !== sr.job) toast.info(t("list.toast.jobNotFound", { label: sr.job.label }));
       reportedMissing.current = sr.job;
       patch({ job: null });
     } else if (!sr.job.category) {
       // The short form `job=<label>` becomes the full reference, so the link names one job.
       patch({ job: { label: selected.label, category: selected.category } });
     }
-  }, [sr.job, selected, loading, services.length, patch]);
+  }, [sr.job, selected, loading, services.length, patch, t]);
 
   const folder = useMemo(() => (sr.folder ? ([...DEFAULT_FOLDERS, ...userFolders].find((f) => f.id === sr.folder) ?? null) : null), [sr.folder, userFolders]);
 
@@ -159,15 +183,15 @@ export function ServicesPage() {
       setBusy(key);
       try {
         await backend.manageService({ label: service.label, category: service.category }, action);
-        toast.success(`${service.label}: ${action} done`);
+        toast.success(t(ACTION_DONE_KEYS[action], { label: service.label }));
       } catch (e) {
-        toast.error(`${service.label}: ${(e as Error).message}`);
+        toast.error(t("list.toast.actionError", { label: service.label, message: (e as Error).message }));
       } finally {
         setBusy(null);
         refresh();
       }
     },
-    [refresh]
+    [refresh, t]
   );
 
   const requestAction = useCallback(
@@ -183,7 +207,7 @@ export function ServicesPage() {
   const deleteJob = async (service: ServiceInfo) => {
     try {
       await backend.deleteJob({ label: service.label, category: service.category });
-      toast.success(`${service.label} moved to the Trash`);
+      toast.success(t("list.toast.movedToTrash", { label: service.label }));
       // Replace: Back must not return to a job that is gone.
       patch({ job: null });
       removeOneMeta(serviceKey(service));
@@ -209,7 +233,7 @@ export function ServicesPage() {
         !s.program?.toLowerCase().includes(q) &&
         !s.plistPath?.toLowerCase().includes(q) &&
         !m?.notes.toLowerCase().includes(q) &&
-        !m?.tags.some((t) => t.toLowerCase().includes(q))
+        !m?.tags.some((tag) => tag.toLowerCase().includes(q))
       )
         return false;
       if (sr.status === "disabled" ? !s.disabled : sr.status !== "all" && s.status !== sr.status) return false;
@@ -245,10 +269,10 @@ export function ServicesPage() {
 
   // A link or an earlier choice can set a filter whose control is hidden. The user must see it and be able to clear it.
   const hiddenFilters = [
-    !viewOptions.statusFilter && sr.status !== "all" && `status ${sr.status}`,
-    !viewOptions.ownerFilter && sr.owner !== "all" && `owner ${OWNER_TITLES[sr.owner]}`,
-    !viewOptions.tagFilter && sr.tag && `tag #${sr.tag}`,
-    !viewOptions.smartFolders && folder && `smart folder "${folder.name}"`,
+    !viewOptions.statusFilter && sr.status !== "all" && t("list.filters.hiddenStatus", { value: t(STATUS_TITLE_KEYS[sr.status]) }),
+    !viewOptions.ownerFilter && sr.owner !== "all" && t("list.filters.hiddenOwner", { value: t(OWNER_TITLE_KEYS[sr.owner]) }),
+    !viewOptions.tagFilter && sr.tag && t("list.filters.hiddenTag", { value: sr.tag }),
+    !viewOptions.smartFolders && folder && t("list.filters.hiddenSmartFolder", { value: folderTitle(folder) }),
   ].filter((text): text is string => typeof text === "string");
 
   const clearHiddenFilters = () =>
@@ -264,13 +288,17 @@ export function ServicesPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-white">Services</h1>
+          <h1 className="text-2xl font-bold text-white">{t("list.header.title")}</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {services.length} launchd jobs &middot; {statusCounts.running} running &middot; {statusCounts.error} failed
+            {t("list.header.summary", {
+              total: tn("list.count.jobs", services.length),
+              running: t("list.count.running", { count: formatNumber(statusCounts.running) }),
+              failed: t("list.count.failed", { count: formatNumber(statusCounts.error) }),
+            })}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div role="radiogroup" aria-label="View" className="inline-flex rounded-xl bg-white/[0.04] p-0.5">
+          <div role="radiogroup" aria-label={t("list.header.viewLabel")} className="inline-flex rounded-xl bg-white/[0.04] p-0.5">
             {VIEWS.map((v) => (
               <button
                 key={v.id}
@@ -284,7 +312,7 @@ export function ServicesPage() {
                 )}
               >
                 <v.icon className="w-3.5 h-3.5" aria-hidden />
-                {v.label}
+                {t(v.labelKey)}
               </button>
             ))}
           </div>
@@ -297,11 +325,11 @@ export function ServicesPage() {
             className="relative inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-gray-300 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06]"
           >
             <Bell className="w-3.5 h-3.5" aria-hidden />
-            Changes
+            {t("list.header.changesButton")}
             {unseenEvents > 0 && (
               <span className="ml-1 min-w-4 h-4 px-1 rounded-full bg-amber-400 text-[10px] font-bold text-amber-950 inline-flex items-center justify-center">
-                {unseenEvents}
-                <span className="sr-only"> new job changes</span>
+                <span aria-hidden>{formatNumber(unseenEvents)}</span>
+                <span className="sr-only">{tn("list.header.unseenChanges", unseenEvents)}</span>
               </span>
             )}
           </button>
@@ -316,25 +344,25 @@ export function ServicesPage() {
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-cyan-950 bg-cyan-400 hover:bg-cyan-300"
             >
               <Plus className="w-3.5 h-3.5" aria-hidden />
-              New job
+              {t("list.header.newJob")}
               <ChevronDown className="w-3 h-3" aria-hidden />
             </button>
             {templateMenu && (
               <div role="menu" className="absolute right-0 mt-1 w-72 z-40 glass rounded-xl border border-white/[0.08] p-1 shadow-2xl">
-                {JOB_TEMPLATES.map((t) => (
+                {JOB_TEMPLATES.map((tpl) => (
                   <button
-                    key={t.id}
+                    key={tpl.id}
                     type="button"
                     role="menuitem"
                     onClick={() => {
                       setTemplateMenu(false);
-                      openEditor({ mode: "new", templateId: t.id });
+                      openEditor({ mode: "new", templateId: tpl.id });
                     }}
                     onBlur={(e) => !e.currentTarget.parentElement?.parentElement?.contains(e.relatedTarget) && setTemplateMenu(false)}
                     className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/[0.06]"
                   >
-                    <div className="text-xs font-medium text-gray-200">{t.title}</div>
-                    <div className="text-[11px] text-gray-500">{t.description}</div>
+                    <div className="text-xs font-medium text-gray-200">{templateTitle(tpl)}</div>
+                    <div className="text-[11px] text-gray-500">{templateDescription(tpl)}</div>
                   </button>
                 ))}
               </div>
@@ -349,8 +377,8 @@ export function ServicesPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" aria-hidden />
           <input
             type="search"
-            aria-label="Search jobs"
-            placeholder="Search label, program, notes, tags…"
+            aria-label={t("list.header.searchAria")}
+            placeholder={t("list.header.searchPlaceholder")}
             value={sr.q}
             maxLength={200}
             onChange={(e) => patch({ q: e.target.value })}
@@ -359,28 +387,28 @@ export function ServicesPage() {
         </div>
 
         {viewOptions.statusFilter && (
-          <div className="flex gap-1" role="group" aria-label="Status filter">
+          <div className="flex gap-1" role="group" aria-label={t("list.filters.statusLabel")}>
             {STATUS_FILTERS.map((s) => (
               <FilterButton key={s} active={sr.status === s} tone="cyan" onClick={() => patch({ status: s })}>
-                {s.charAt(0).toUpperCase() + s.slice(1)}
-                {s !== "all" && <span className="ml-1 opacity-60">{statusCounts[s]}</span>}
+                {t(STATUS_TITLE_KEYS[s])}
+                {s !== "all" && <span className="ml-1 opacity-60">{formatNumber(statusCounts[s])}</span>}
               </FilterButton>
             ))}
           </div>
         )}
 
         {viewOptions.ownerFilter && (
-          <div className="flex gap-1 border-l border-white/[0.06] pl-3" role="group" aria-label="Owner filter">
+          <div className="flex gap-1 border-l border-white/[0.06] pl-3" role="group" aria-label={t("list.filters.ownerLabel")}>
             {OWNER_FILTERS.map((value) => (
               <FilterButton key={value} active={sr.owner === value} tone="purple" onClick={() => patch({ owner: value })}>
-                {OWNER_TITLES[value]}
+                {t(OWNER_TITLE_KEYS[value])}
               </FilterButton>
             ))}
           </div>
         )}
 
         {viewOptions.tagFilter && tagChips.length > 0 && (
-          <div className="flex gap-1 border-l border-white/[0.06] pl-3 flex-wrap" role="group" aria-label="Tag filter">
+          <div className="flex gap-1 border-l border-white/[0.06] pl-3 flex-wrap" role="group" aria-label={t("list.filters.tagLabel")}>
             {tagChips.map((tag) => (
               <FilterButton key={tag} active={sr.tag === tag} tone="amber" onClick={() => patch({ tag: sr.tag === tag ? null : tag })}>
                 #{tag}
@@ -393,18 +421,18 @@ export function ServicesPage() {
       {hiddenFilters.length > 0 && (
         <div role="status" className="flex items-center gap-2 flex-wrap rounded-lg border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200/90">
           <EyeOff className="w-3.5 h-3.5 flex-shrink-0 text-amber-400" aria-hidden />
-          <span className="flex-1 min-w-0">A filter without a visible control is active: {hiddenFilters.join(", ")}.</span>
+          <span className="flex-1 min-w-0">{t("list.filters.hiddenBanner", { list: hiddenFilters.join(", ") })}</span>
           <button
             type="button"
             onClick={clearHiddenFilters}
             className="flex-shrink-0 px-2.5 py-1 rounded-lg text-xs text-gray-200 bg-white/[0.06] hover:bg-white/[0.1] focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
           >
-            Clear
+            {t("common.clear")}
           </button>
         </div>
       )}
 
-      {metaError && <InlineError title="Notes, tags and icons could not be read." message={metaError} onRetry={loadMeta} retrying={metaLoading} />}
+      {metaError && <InlineError title={t("list.errors.metaReadFailed")} message={metaError} onRetry={loadMeta} retrying={metaLoading} />}
 
       {viewOptions.smartFolders ? (
         <SmartFolderBar
@@ -420,7 +448,7 @@ export function ServicesPage() {
         folderNeeds &&
         jobPlists.error && (
           <InlineError
-            title={plists ? "The job plists could not be read again. The smart folder uses the last copy." : "The job plists could not be read. The smart folder stays empty."}
+            title={plists ? t("list.errors.plistsRereadFailed") : t("list.errors.plistsReadFailed")}
             message={jobPlists.error}
             onRetry={jobPlists.retry}
             retrying={jobPlists.loading}
@@ -430,7 +458,7 @@ export function ServicesPage() {
 
       {folderPending ? (
         <p className="text-sm text-gray-500 text-center py-10" aria-live="polite">
-          Reading the plists of the jobs…
+          {t("list.status.readingPlists")}
         </p>
       ) : sr.view === "timeline" ? (
         <JobTimeline services={filtered} onSelect={(s) => openJob(serviceKey(s))} />
@@ -449,8 +477,8 @@ export function ServicesPage() {
         <JobGridView services={filtered} meta={meta} loading={loading} onSelect={openJob} />
       ) : (
         <div className="space-y-3">
-          {loading && services.length === 0 && <p className="text-sm text-gray-500 text-center py-10">Reading launchd…</p>}
-          {!loading && filtered.length === 0 && <p className="text-sm text-gray-500 text-center py-10">No job matches the filters.</p>}
+          {loading && services.length === 0 && <p className="text-sm text-gray-500 text-center py-10">{t("list.status.readingLaunchd")}</p>}
+          {!loading && filtered.length === 0 && <p className="text-sm text-gray-500 text-center py-10">{t("list.status.noMatch")}</p>}
 
           {categoryOrder.map((category) => {
             const items = grouped[category];
@@ -468,9 +496,11 @@ export function ServicesPage() {
                   className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-white/[0.03] rounded-lg transition-colors"
                 >
                   {isCollapsed ? <ChevronRight className="w-4 h-4 text-gray-500" aria-hidden /> : <ChevronDown className="w-4 h-4 text-gray-400" aria-hidden />}
-                  <span className="text-sm font-semibold text-gray-300">{categoryLabels[category]}</span>
-                  <span className="text-xs text-gray-600 ml-1">({items.length})</span>
-                  <span className="ml-auto text-xs text-green-400/70">{items.filter((s) => s.status === "running").length} running</span>
+                  <span className="text-sm font-semibold text-gray-300">{scopeTitle(category)}</span>
+                  <span className="text-xs text-gray-600 ml-1">({formatNumber(items.length)})</span>
+                  <span className="ml-auto text-xs text-green-400/70">
+                    {t("list.count.running", { count: formatNumber(items.filter((s) => s.status === "running").length) })}
+                  </span>
                 </button>
 
                 {!isCollapsed && (
@@ -496,7 +526,7 @@ export function ServicesPage() {
                         onClick={() => toggle(expandedGroups, setExpandedGroups, category)}
                         className="w-full py-2 text-xs text-cyan-400 hover:bg-white/[0.03] rounded-lg"
                       >
-                        Show {items.length - visible.length} more
+                        {tn("list.count.showMore", items.length - visible.length)}
                       </button>
                     )}
                   </div>
@@ -595,11 +625,13 @@ const ServiceRow = memo(function ServiceRow({
   onSelect: (key: string) => void;
   onEdit: (target: JobEditorTarget) => void;
 }) {
+  const { t } = useT();
+  const stateWord = service.disabled ? t("status.disabled") : t(STATUS_WORD_KEYS[service.status]);
   return (
     <div
       role="button"
       tabIndex={0}
-      aria-label={`${service.label}, ${service.disabled ? "disabled" : service.status}. Open details`}
+      aria-label={t("list.actions.openDetailsAria", { text: `${service.label}, ${stateWord}` })}
       onClick={() => onSelect(serviceKey(service))}
       onKeyDown={(e) => {
         if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
@@ -617,16 +649,16 @@ const ServiceRow = memo(function ServiceRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-gray-200 font-medium truncate font-mono text-[12px]">{service.label}</span>
-          {service.disabled && <Badge tone="amber">disabled</Badge>}
+          {service.disabled && <Badge tone="amber">{t("status.disabled")}</Badge>}
           {(service.unreadable || service.quarantined) && (
-            <span title={service.unreadable ? "The plist cannot be parsed" : "The plist is quarantined"} className="text-red-400 flex-shrink-0">
+            <span title={service.unreadable ? t("list.badge.unreadableTitle") : t("list.badge.quarantinedTitle")} className="text-red-400 flex-shrink-0">
               <ShieldAlert className="w-3.5 h-3.5" aria-hidden />
-              <span className="sr-only">{service.unreadable ? "unreadable plist" : "quarantined plist"}</span>
+              <span className="sr-only">{service.unreadable ? t("list.badge.unreadableShort") : t("list.badge.quarantinedShort")}</span>
             </span>
           )}
-          {tags?.map((t) => (
-            <Badge key={t} tone="gray">
-              #{t}
+          {tags?.map((tag) => (
+            <Badge key={tag} tone="gray">
+              #{tag}
             </Badge>
           ))}
         </div>
@@ -636,7 +668,7 @@ const ServiceRow = memo(function ServiceRow({
               {service.program}
             </span>
           )}
-          {service.triggers.length > 0 && <span className="flex-shrink-0 text-cyan-500/60">{service.triggers.join(" · ")}</span>}
+          {service.triggers.length > 0 && <span className="flex-shrink-0 text-cyan-500/60">{localizeTriggers(service.triggers).join(" · ")}</span>}
         </div>
       </div>
 

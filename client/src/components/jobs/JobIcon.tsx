@@ -1,6 +1,7 @@
 import { memo, useId, useRef, useState } from "react";
 import { ImagePlus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { t, useT } from "@/i18n";
 
 // ── Icon values ──────────────────────────────────────────────────────
 // `JobMeta.icon` is an emoji or a small PNG/JPEG data URL. The value comes from the backend and from
@@ -139,7 +140,7 @@ function loadImageElement(blob: Blob): Promise<HTMLImageElement> {
     };
     image.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error("The browser cannot read this image."));
+      reject(new Error(t("list.icon.cannotRead")));
     };
     image.src = url;
   });
@@ -163,7 +164,7 @@ function canvasOf(width: number, height: number): { canvas: HTMLCanvasElement; c
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("The browser has no 2D canvas.");
+  if (!context) throw new Error(t("list.icon.noCanvas"));
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
   return { canvas, context };
@@ -174,11 +175,11 @@ function canvasOf(width: number, height: number): { canvas: HTMLCanvasElement; c
  * Throws an `Error` with a user-facing message when the file is not an image or the result is over 48 KB.
  */
 export async function imageToIcon(file: Blob): Promise<string> {
-  if (!file.type.startsWith("image/")) throw new Error("The file is not an image.");
-  if (file.size > MAX_SOURCE_BYTES) throw new Error("The image is larger than 20 MB.");
+  if (!file.type.startsWith("image/")) throw new Error(t("list.icon.notImage"));
+  if (file.size > MAX_SOURCE_BYTES) throw new Error(t("list.icon.tooLargeSource"));
 
   let { source, width, height } = await decodeImage(file);
-  if (width <= 0 || height <= 0) throw new Error("The image is empty.");
+  if (width <= 0 || height <= 0) throw new Error(t("list.icon.empty"));
 
   // One big step from a photo to 64 pixels looks jagged. Halve until the last step is less than a factor of two.
   while (Math.max(width, height) > ICON_PIXELS * 2) {
@@ -201,10 +202,10 @@ export async function imageToIcon(file: Blob): Promise<string> {
   try {
     dataUrl = icon.canvas.toDataURL("image/png");
   } catch {
-    throw new Error("The browser does not allow this image on a canvas.");
+    throw new Error(t("list.icon.canvasBlocked"));
   }
-  if (!isIconDataUrl(dataUrl)) throw new Error("The browser could not make a PNG from this image.");
-  if (dataUrl.length > MAX_ICON_LENGTH) throw new Error("The icon is larger than 48 KB after the resize. Choose a simpler image.");
+  if (!isIconDataUrl(dataUrl)) throw new Error(t("list.icon.pngFailed"));
+  if (dataUrl.length > MAX_ICON_LENGTH) throw new Error(t("list.icon.tooLargeResult"));
   return dataUrl;
 }
 
@@ -234,6 +235,7 @@ export interface JobIconPickerProps {
 
 /** Editor of a job icon: an emoji field, a zone that takes a pasted, dropped or chosen image, and a Remove button. */
 export function JobIconPicker({ value, onChange, label = "", disabled = false }: JobIconPickerProps) {
+  const { t } = useT();
   const emojiId = useId();
   const hintId = useId();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -251,7 +253,7 @@ export function JobIconPicker({ value, onChange, label = "", disabled = false }:
     try {
       onChange(await imageToIcon(file));
     } catch (e) {
-      setError((e as Error).message || "The image could not be read.");
+      setError((e as Error).message || t("list.icon.readFailed"));
     } finally {
       setBusy(false);
     }
@@ -268,14 +270,14 @@ export function JobIconPicker({ value, onChange, label = "", disabled = false }:
 
   return (
     <fieldset disabled={disabled} className="space-y-2 min-w-0">
-      <legend className="text-xs font-medium text-gray-400">Icon</legend>
+      <legend className="text-xs font-medium text-gray-400">{t("list.icon.legend")}</legend>
 
       <div className="flex items-stretch gap-3 flex-wrap">
         <JobIcon label={label} icon={value} size={48} />
 
         <div className="space-y-1">
           <label htmlFor={emojiId} className="block text-[11px] text-gray-500">
-            Emoji
+            {t("list.icon.emojiLabel")}
           </label>
           <input
             id={emojiId}
@@ -303,7 +305,7 @@ export function JobIconPicker({ value, onChange, label = "", disabled = false }:
 
         <div
           role="group"
-          aria-label="Image icon. Paste or drop an image here."
+          aria-label={t("list.icon.dropZoneAria")}
           tabIndex={disabled ? -1 : 0}
           onPaste={onPaste}
           onDragOver={(e) => {
@@ -316,7 +318,7 @@ export function JobIconPicker({ value, onChange, label = "", disabled = false }:
             setDragOver(false);
             const file = firstImageFile(e.dataTransfer);
             if (file) void takeImage(file);
-            else setError("The drop holds no image file.");
+            else setError(t("list.icon.dropNoImage"));
           }}
           className={cn(
             "flex-1 min-w-48 flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-[11px] text-gray-500 transition-colors",
@@ -325,14 +327,14 @@ export function JobIconPicker({ value, onChange, label = "", disabled = false }:
           )}
         >
           <ImagePlus className="w-4 h-4 flex-shrink-0" aria-hidden />
-          <span className="flex-1">{busy ? "Resizing the image…" : "Paste or drop an image"}</span>
+          <span className="flex-1">{busy ? t("list.icon.resizing") : t("list.icon.pasteOrDrop")}</span>
           <button
             type="button"
             disabled={busy}
             onClick={() => fileRef.current?.click()}
             className={cn("flex-shrink-0 px-2.5 py-1 rounded-lg text-xs text-gray-300 bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-40", ring)}
           >
-            Choose image…
+            {t("list.icon.chooseImage")}
           </button>
           <input
             ref={fileRef}
@@ -361,12 +363,12 @@ export function JobIconPicker({ value, onChange, label = "", disabled = false }:
           )}
         >
           <Trash2 className="w-3.5 h-3.5" aria-hidden />
-          Remove
+          {t("common.remove")}
         </button>
       </div>
 
       <p id={hintId} className="text-[11px] text-gray-600">
-        An image becomes a {ICON_PIXELS}×{ICON_PIXELS} PNG of at most 48 KB. Without an icon the job shows a coloured letter.
+        {t("list.icon.hint", { pixels: ICON_PIXELS })}
       </p>
       {error && (
         <p role="alert" className="text-[11px] text-red-400">

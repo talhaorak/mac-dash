@@ -2,11 +2,15 @@ import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from
 import { KeyRound, Loader2 } from "lucide-react";
 import { backend } from "@/lib/backend";
 import { UNAUTHORIZED_EVENT, authHeaders, setToken } from "@/lib/auth";
+import { useT } from "@/i18n";
+
+const TOKEN_PATH = "~/.macdash/token";
 
 type State = "checking" | "open" | "locked";
 
 /** Asks for the access token when the server requires one. Loopback servers and the desktop app never do. */
 export function AuthGate({ children }: { children: ReactNode }) {
+  const { t } = useT();
   const [state, setState] = useState<State>(backend.isDesktop() ? "open" : "checking");
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +45,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       return;
     }
     setToken(null);
-    setError("The server rejected this token.");
+    setError(t("app.authGate.rejected"));
     setBusy(false);
   };
 
@@ -50,10 +54,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <div className="min-h-screen flex items-center justify-center text-gray-500" role="status">
         <Loader2 className="w-5 h-5 animate-spin" aria-hidden />
-        <span className="sr-only">Connecting</span>
+        <span className="sr-only">{t("app.authGate.connecting")}</span>
       </div>
     );
   }
+
+  // Calling t() with no params leaves the "{path}" placeholder untouched, so the path can keep its own styling
+  // while the translator is still free to place it anywhere in the sentence.
+  const [hintPrefix, hintSuffix] = t("app.authGate.hint").split("{path}");
 
   return (
     <main className="min-h-screen flex items-center justify-center p-6">
@@ -64,11 +72,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
           </span>
           <div>
             <h1 className="text-lg font-bold text-white">mac-dash</h1>
-            <p className="text-xs text-gray-500">This server is open to the network and asks for its access token.</p>
+            <p className="text-xs text-gray-500">{t("app.authGate.subtitle")}</p>
           </div>
         </div>
         <label className="block space-y-1">
-          <span className="text-xs font-medium text-gray-400">Access token</span>
+          <span className="text-xs font-medium text-gray-400">{t("app.authGate.tokenLabel")}</span>
           <input
             type="password"
             autoComplete="current-password"
@@ -85,14 +93,16 @@ export function AuthGate({ children }: { children: ReactNode }) {
           </p>
         )}
         <p className="text-[11px] text-gray-600">
-          The server prints the token when it starts. It is also in <span className="font-mono">~/.macdash/token</span> on the Mac that runs it.
+          {hintPrefix}
+          <span className="font-mono">{TOKEN_PATH}</span>
+          {hintSuffix}
         </p>
         <button
           type="submit"
           disabled={busy || value.trim() === ""}
           className="w-full px-4 py-2 rounded-xl text-sm font-medium text-cyan-950 bg-cyan-400 hover:bg-cyan-300 disabled:opacity-40"
         >
-          {busy ? "Checking…" : "Unlock"}
+          {busy ? t("app.authGate.checking") : t("app.authGate.unlock")}
         </button>
       </form>
     </main>

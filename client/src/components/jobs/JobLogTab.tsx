@@ -3,16 +3,17 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { backend } from "@/lib/backend";
 import { cn } from "@/lib/utils";
+import { intlLocale, t, tn, useT, type TKey } from "@/i18n";
 
 // "Log" tab of the job details: the unified system log (`log show`), narrowed to one job.
 // The first half of this file is pure and unit-tested (helpers.test.ts).
 
 export const LOG_SPANS = [
-  { minutes: 5, label: "Last 5 minutes" },
-  { minutes: 60, label: "Last hour" },
-  { minutes: 360, label: "Last 6 hours" },
-  { minutes: 1440, label: "Last 24 hours" },
-] as const;
+  { minutes: 5, labelKey: "detail.log.span5m", noLinesKey: "detail.log.noLines5m" },
+  { minutes: 60, labelKey: "detail.log.span1h", noLinesKey: "detail.log.noLines1h" },
+  { minutes: 360, labelKey: "detail.log.span6h", noLinesKey: "detail.log.noLines6h" },
+  { minutes: 1440, labelKey: "detail.log.span24h", noLinesKey: "detail.log.noLines24h" },
+] as const satisfies { minutes: number; labelKey: TKey; noLinesKey: TKey }[];
 
 export const LOG_ROW_LIMIT = 500;
 /** Both backends refuse a longer predicate (docs/backend-contract.md). */
@@ -21,7 +22,18 @@ export const LOG_PREDICATE_MAX = 500;
 export const LOG_LEVELS = ["error", "warning", "info", "debug", "default"] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
 
-export const LOG_LEVEL_LABELS: Record<LogLevel, string> = { error: "Error", warning: "Warning", info: "Info", debug: "Debug", default: "Default" };
+const LOG_LEVEL_KEYS: Record<LogLevel, TKey> = {
+  error: "common.error",
+  warning: "common.warning",
+  info: "common.info",
+  debug: "detail.log.levelDebug",
+  default: "detail.log.levelDefault",
+};
+
+/** Display text of a log level, in the active language. Called at use time (module-scope text is never cached). */
+export function logLevelLabel(level: LogLevel): string {
+  return t(LOG_LEVEL_KEYS[level]);
+}
 
 export interface LogRow {
   timestamp: string;
@@ -86,7 +98,9 @@ export function selectLogRows(rows: LogRow[], options: { text: string; level: Lo
 }
 
 export function logRowsAsText(rows: LogRow[]): string {
-  return rows.map((r) => `${r.timestamp} ${LOG_LEVEL_LABELS[r.level].toUpperCase()} ${r.process}${r.pid !== null ? `[${r.pid}]` : ""}: ${r.message}`).join("\n");
+  return rows
+    .map((r) => `${r.timestamp} ${logLevelLabel(r.level).toLocaleUpperCase(intlLocale())} ${r.process}${r.pid !== null ? `[${r.pid}]` : ""}: ${r.message}`)
+    .join("\n");
 }
 
 // ── Component ────────────────────────────────────────────────────────
@@ -112,6 +126,7 @@ const control =
   "focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20";
 
 export function JobLogTab({ label, program }: { label: string; program: string | null }) {
+  useT(); // subscribe: re-render when the language changes
   const [minutes, setMinutes] = useState<number>(LOG_SPANS[0].minutes);
   const [level, setLevel] = useState<LogLevel | "all">("all");
   const [text, setText] = useState("");
@@ -134,7 +149,7 @@ export function JobLogTab({ label, program }: { label: string; program: string |
       setResult(next);
     } catch (e) {
       if (token !== request.current) return;
-      setError((e as Error).message || "The system log could not be read.");
+      setError((e as Error).message || t("detail.log.readError"));
     } finally {
       if (token === request.current) setLoading(false);
     }
@@ -154,25 +169,25 @@ export function JobLogTab({ label, program }: { label: string; program: string |
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-1.5">
-        <select aria-label="Time span" value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} className={control}>
+        <select aria-label={t("detail.log.timeSpanAria")} value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} className={control}>
           {LOG_SPANS.map((s) => (
             <option key={s.minutes} value={s.minutes}>
-              {s.label}
+              {t(s.labelKey)}
             </option>
           ))}
         </select>
-        <select aria-label="Level" value={level} onChange={(e) => setLevel(e.target.value as LogLevel | "all")} className={control}>
-          <option value="all">All levels</option>
+        <select aria-label={t("detail.log.levelAria")} value={level} onChange={(e) => setLevel(e.target.value as LogLevel | "all")} className={control}>
+          <option value="all">{t("detail.log.allLevels")}</option>
           {LOG_LEVELS.map((l) => (
             <option key={l} value={l}>
-              {LOG_LEVEL_LABELS[l]}
+              {logLevelLabel(l)}
             </option>
           ))}
         </select>
         <input
           type="search"
-          aria-label="Filter the log lines"
-          placeholder="Filter"
+          aria-label={t("detail.log.filterAria")}
+          placeholder={t("detail.log.filterPlaceholder")}
           spellCheck={false}
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -185,11 +200,11 @@ export function JobLogTab({ label, program }: { label: string; program: string |
             onChange={(e) => setNewestFirst(e.target.checked)}
             className="h-3.5 w-3.5 rounded accent-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
           />
-          Newest first
+          {t("detail.log.newestFirst")}
         </label>
         <button
           type="button"
-          aria-label="Refresh the log"
+          aria-label={t("detail.log.refreshAria")}
           disabled={loading}
           onClick={load}
           className="p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-white/[0.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 disabled:opacity-50"
@@ -199,12 +214,13 @@ export function JobLogTab({ label, program }: { label: string; program: string |
       </div>
 
       <p id={hintId} className="text-[11px] leading-snug text-gray-600">
-        Lines of the job's process, and lines that name its label. An account without administrator rights sees fewer lines: macOS hides the entries of
-        other users and of the system.
+        {t("detail.log.hint")}
       </p>
 
       <details className="text-[11px] text-gray-600">
-        <summary className="cursor-pointer rounded hover:text-gray-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50">Query</summary>
+        <summary className="cursor-pointer rounded hover:text-gray-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50">
+          {t("detail.log.queryLabel")}
+        </summary>
         <p className="mt-1 flex items-start gap-1 rounded-lg bg-black/20 px-2 py-1.5 font-mono text-gray-400 break-all selectable">
           <span className="flex-1">{predicate}</span>
           <CopyButton text={`log show --last ${minutes}m --predicate '${predicate.replace(/'/g, "'\\''")}'`} />
@@ -220,25 +236,21 @@ export function JobLogTab({ label, program }: { label: string; program: string |
             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-gray-300 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06]"
           >
             <RefreshCw className="w-3.5 h-3.5" aria-hidden />
-            Retry
+            {t("common.retry")}
           </button>
         </div>
       ) : result === null ? (
         <p className="flex items-center gap-2 text-sm text-gray-500" role="status">
           <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
-          Reading the system log. {minutes > 60 ? "A long time span takes up to 20 seconds." : ""}
+          {t("detail.log.reading")} {minutes > 60 ? t("detail.log.longSpanWarning") : ""}
         </p>
       ) : (
         <>
           <p role="status" className="flex items-center gap-2 text-[11px] text-gray-500">
             <span>
-              {total === 0
-                ? `No log lines in the ${span.label.toLowerCase()}.`
-                : rows.length === total
-                  ? `${total} ${total === 1 ? "line" : "lines"}`
-                  : `${rows.length} of ${total} lines`}
-              {result.truncated ? " The query reached its time or size limit: older lines can be missing." : ""}
-              {total >= LOG_ROW_LIMIT ? ` Only the newest ${LOG_ROW_LIMIT} lines are kept.` : ""}
+              {total === 0 ? t(span.noLinesKey) : rows.length === total ? tn("detail.log.lineCount", total) : t("detail.log.linesOfTotal", { shown: rows.length, total })}
+              {result.truncated ? ` ${t("detail.log.truncatedSuffix")}` : ""}
+              {total >= LOG_ROW_LIMIT ? ` ${t("detail.log.limitSuffix", { limit: LOG_ROW_LIMIT })}` : ""}
             </span>
             {rows.length > 0 && (
               <span className="ml-auto">
@@ -247,12 +259,12 @@ export function JobLogTab({ label, program }: { label: string; program: string |
             )}
           </p>
           {total === 0 ? (
-            <p className="text-sm text-gray-500">The job wrote nothing to the system log in this time. Choose a longer time span, or start the job and refresh.</p>
+            <p className="text-sm text-gray-500">{t("detail.log.emptyDetail")}</p>
           ) : rows.length === 0 ? (
-            <p className="text-sm text-gray-500">No line matches the filter.</p>
+            <p className="text-sm text-gray-500">{t("detail.log.noMatch")}</p>
           ) : (
             <ol
-              aria-label="Log lines"
+              aria-label={t("detail.log.rowsAria")}
               aria-describedby={hintId}
               aria-busy={loading}
               tabIndex={0}
@@ -265,7 +277,7 @@ export function JobLogTab({ label, program }: { label: string; program: string |
                 <li key={`${row.timestamp}-${i}`} className={cn("border-l-2 pl-2", LEVEL_BORDER[row.level])}>
                   <p className="flex flex-wrap gap-x-2 text-[10px] font-mono text-gray-500">
                     <time>{row.timestamp}</time>
-                    <span className={cn("font-semibold uppercase", LEVEL_TEXT[row.level])}>{LOG_LEVEL_LABELS[row.level]}</span>
+                    <span className={cn("font-semibold uppercase", LEVEL_TEXT[row.level])}>{logLevelLabel(row.level)}</span>
                     <span className="text-gray-400">
                       {row.process}
                       {row.pid !== null ? `[${row.pid}]` : ""}

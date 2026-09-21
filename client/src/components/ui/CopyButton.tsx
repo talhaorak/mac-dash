@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+import { useT } from "@/i18n";
 
 interface CopyButtonProps {
   text: string;
@@ -9,6 +10,7 @@ interface CopyButtonProps {
 }
 
 export function CopyButton({ text, className }: CopyButtonProps) {
+  const { t } = useT();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(
@@ -42,8 +44,8 @@ export function CopyButton({ text, className }: CopyButtonProps) {
         copied && "opacity-100",
         className
       )}
-      title="Copy to clipboard"
-      aria-label={copied ? "Copied" : "Copy to clipboard"}
+      title={t("app.copyButton.copyToClipboard")}
+      aria-label={copied ? t("common.copied") : t("app.copyButton.copyToClipboard")}
     >
       <AnimatePresence mode="wait" initial={false}>
         {copied ? (

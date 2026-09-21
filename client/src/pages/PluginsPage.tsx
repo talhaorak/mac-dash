@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { Fragment, useState, useEffect, type ReactNode } from "react";
 import { GlowCard } from "@/components/ui/GlowCard";
 import { api } from "@/lib/api";
 import {
@@ -15,13 +15,27 @@ import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { backend } from "@/lib/backend";
 import { toast } from "@/components/ui/Toast";
+import { t as translate, useT } from "@/i18n";
 
 // The plugin runtime is a separate chunk. Do not pull it into the main bundle from here.
 const clearPluginModuleCache = (pluginId?: string) =>
   import("@/lib/plugin-runtime").then((runtime) => runtime.clearPluginModuleCache(pluginId));
 
 function errorMessage(e: unknown): string {
-  return e instanceof Error && e.message ? e.message : "unknown error";
+  return e instanceof Error && e.message ? e.message : translate("pages.plugins.unknownError");
+}
+
+/**
+ * Splits a translated template on its `{token}` placeholders and substitutes rich nodes
+ * (e.g. a styled `<code>` element) for them, so a single full sentence stays intact per
+ * language instead of being assembled from separately-translated fragments.
+ */
+function withNodes(template: string, nodes: Record<string, ReactNode>): ReactNode {
+  return template.split(/(\{\w+\})/g).map((part, i) => {
+    const match = /^\{(\w+)\}$/.exec(part);
+    if (match && match[1] in nodes) return <Fragment key={i}>{nodes[match[1]]}</Fragment>;
+    return part;
+  });
 }
 
 interface PluginInfo {
@@ -37,6 +51,7 @@ interface PluginInfo {
 }
 
 export function PluginsPage() {
+  const { t } = useT();
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -56,7 +71,7 @@ export function PluginsPage() {
     let cancelled = false;
     fetchPlugins()
       .catch((e) => {
-        if (!cancelled) toast.error(`Failed to load plugins: ${errorMessage(e)}`);
+        if (!cancelled) toast.error(t("pages.plugins.loadFailedToast", { error: errorMessage(e) }));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -73,9 +88,9 @@ export function PluginsPage() {
       // A rescan can pick up changed plugin code. Drop every cached module.
       clearPluginModuleCache();
       await fetchPlugins();
-      toast.success("Plugin scan finished");
+      toast.success(t("pages.plugins.scanFinishedToast"));
     } catch (e) {
-      toast.error(`Plugin scan failed: ${errorMessage(e)}`);
+      toast.error(t("pages.plugins.scanFailedToast", { error: errorMessage(e) }));
     } finally {
       setLoading(false);
     }
@@ -90,9 +105,16 @@ export function PluginsPage() {
       // Drop the cached module so the next render loads the fresh code.
       clearPluginModuleCache(plugin.id);
       await fetchPlugins();
-      toast.success(`${plugin.name} ${plugin.enabled ? "disabled" : "enabled"}`);
+      toast.success(
+        t(plugin.enabled ? "pages.plugins.disabledToast" : "pages.plugins.enabledToast", { name: plugin.name })
+      );
     } catch (e) {
-      toast.error(`Failed to ${action} ${plugin.name}: ${errorMessage(e)}`);
+      toast.error(
+        t(plugin.enabled ? "pages.plugins.disableFailedToast" : "pages.plugins.enableFailedToast", {
+          name: plugin.name,
+          error: errorMessage(e),
+        })
+      );
     } finally {
       setTogglingId(null);
     }
@@ -103,22 +125,25 @@ export function PluginsPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-white">Plugins</h1>
+          <h1 className="text-2xl font-bold text-white">{t("pages.plugins.title")}</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Extend mac-dash with custom functionality
+            {t("pages.plugins.subtitle")}
           </p>
         </div>
         <GlowCard className="text-center py-12">
           <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 flex items-center justify-center mx-auto mb-4">
             <Monitor className="w-8 h-8 text-cyan-400" />
           </div>
-          <h3 className="text-lg font-semibold text-gray-300">Desktop App</h3>
+          <h3 className="text-lg font-semibold text-gray-300">{t("pages.plugins.desktopAppTitle")}</h3>
           <p className="text-sm text-gray-500 mt-2 max-w-md mx-auto">
-            Plugins are available in the web version. The desktop app has built-in functionality
-            using native macOS APIs — no server or plugins needed.
+            {t("pages.plugins.desktopAppDescription")}
           </p>
           <p className="text-xs text-gray-600 mt-4">
-            To use plugins, run <code className="text-cyan-400/70 font-mono bg-cyan-500/5 px-1.5 py-0.5 rounded">mac-dash serve</code> and access the web UI.
+            {withNodes(t("pages.plugins.usePluginsHint"), {
+              command: (
+                <code className="text-cyan-400/70 font-mono bg-cyan-500/5 px-1.5 py-0.5 rounded">mac-dash serve</code>
+              ),
+            })}
           </p>
         </GlowCard>
       </div>
@@ -130,9 +155,9 @@ export function PluginsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Plugins</h1>
+          <h1 className="text-2xl font-bold text-white">{t("pages.plugins.title")}</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Extend mac-dash with custom functionality
+            {t("pages.plugins.subtitle")}
           </p>
         </div>
         <div className="flex gap-2">
@@ -146,7 +171,7 @@ export function PluginsPage() {
               className={cn("w-3.5 h-3.5", loading && "animate-spin")}
               aria-hidden="true"
             />
-            Scan
+            {t("pages.plugins.scanButton")}
           </button>
         </div>
       </div>
@@ -189,7 +214,7 @@ export function PluginsPage() {
                       </h3>
                       <span className="text-[10px] text-gray-600 font-mono">
                         v{plugin.version} &middot;{" "}
-                        {plugin.enabled ? "Enabled" : "Disabled"}
+                        {plugin.enabled ? t("status.enabled") : t("status.disabled")}
                       </span>
                     </div>
                   </div>
@@ -197,8 +222,8 @@ export function PluginsPage() {
                     type="button"
                     role="switch"
                     aria-checked={plugin.enabled}
-                    aria-label={`${plugin.name} enabled`}
-                    title={plugin.enabled ? "Disable plugin" : "Enable plugin"}
+                    aria-label={t("pages.plugins.enabledSwitchAriaLabel", { name: plugin.name })}
+                    title={plugin.enabled ? t("pages.plugins.disablePluginTitle") : t("pages.plugins.enablePluginTitle")}
                     disabled={togglingId === plugin.id}
                     onClick={() => handleToggle(plugin)}
                     className={cn(
@@ -222,19 +247,19 @@ export function PluginsPage() {
                   {plugin.hasClient && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-400 text-[10px]">
                       <Monitor className="w-2.5 h-2.5" />
-                      UI
+                      {t("pages.plugins.badgeUi")}
                     </span>
                   )}
                   {plugin.sidebar && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 text-[10px]">
                       <Code2 className="w-2.5 h-2.5" />
-                      Sidebar
+                      {t("pages.plugins.badgeSidebar")}
                     </span>
                   )}
                   {plugin.dashboardWidget && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 text-[10px]">
                       <Package className="w-2.5 h-2.5" />
-                      Widget
+                      {t("pages.plugins.badgeWidget")}
                     </span>
                   )}
                 </div>
@@ -248,14 +273,20 @@ export function PluginsPage() {
           <div className="w-16 h-16 rounded-2xl bg-white/[0.03] flex items-center justify-center mx-auto mb-4">
             <Puzzle className="w-8 h-8 text-gray-600" />
           </div>
-          <h3 className="text-lg font-semibold text-gray-400">No plugins installed</h3>
+          <h3 className="text-lg font-semibold text-gray-400">{t("pages.plugins.noPluginsTitle")}</h3>
           <p className="text-sm text-gray-600 mt-2 max-w-md mx-auto">
-            Create a plugin by adding a directory in <code className="text-cyan-400/70 font-mono text-xs bg-cyan-500/5 px-1.5 py-0.5 rounded">plugins/</code> with
-            a <code className="text-cyan-400/70 font-mono text-xs bg-cyan-500/5 px-1.5 py-0.5 rounded">manifest.json</code> file.
+            {withNodes(t("pages.plugins.emptyStateHint"), {
+              dir: (
+                <code className="text-cyan-400/70 font-mono text-xs bg-cyan-500/5 px-1.5 py-0.5 rounded">plugins/</code>
+              ),
+              file: (
+                <code className="text-cyan-400/70 font-mono text-xs bg-cyan-500/5 px-1.5 py-0.5 rounded">manifest.json</code>
+              ),
+            })}
           </p>
 
           <div className="mt-6 glass rounded-xl p-4 max-w-sm mx-auto text-left">
-            <p className="text-xs text-gray-500 mb-2">Example manifest.json:</p>
+            <p className="text-xs text-gray-500 mb-2">{t("pages.plugins.exampleManifestLabel")}</p>
             <pre className="text-[11px] font-mono text-gray-400 leading-relaxed">
 {`{
   "id": "my-plugin",
@@ -272,14 +303,17 @@ export function PluginsPage() {
 
       {/* How to create a plugin */}
       <GlowCard>
-        <h3 className="text-sm font-semibold text-gray-300 mb-3">Creating a Plugin</h3>
+        <h3 className="text-sm font-semibold text-gray-300 mb-3">{t("pages.plugins.creatingTitle")}</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
           <div className="space-y-2">
             <div className="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center">
               <span className="text-cyan-400 font-bold">1</span>
             </div>
             <p className="text-gray-400">
-              Create a folder in <code className="text-cyan-400/70 font-mono bg-cyan-500/5 px-1 rounded">plugins/</code> with a <code className="text-cyan-400/70 font-mono bg-cyan-500/5 px-1 rounded">manifest.json</code>
+              {withNodes(t("pages.plugins.step1Hint"), {
+                dir: <code className="text-cyan-400/70 font-mono bg-cyan-500/5 px-1 rounded">plugins/</code>,
+                file: <code className="text-cyan-400/70 font-mono bg-cyan-500/5 px-1 rounded">manifest.json</code>,
+              })}
             </p>
           </div>
           <div className="space-y-2">
@@ -287,7 +321,10 @@ export function PluginsPage() {
               <span className="text-purple-400 font-bold">2</span>
             </div>
             <p className="text-gray-400">
-              Add <code className="text-purple-400/70 font-mono bg-purple-500/5 px-1 rounded">server.ts</code> to register API routes and/or <code className="text-purple-400/70 font-mono bg-purple-500/5 px-1 rounded">client.tsx</code> for UI
+              {withNodes(t("pages.plugins.step2Hint"), {
+                serverFile: <code className="text-purple-400/70 font-mono bg-purple-500/5 px-1 rounded">server.ts</code>,
+                clientFile: <code className="text-purple-400/70 font-mono bg-purple-500/5 px-1 rounded">client.tsx</code>,
+              })}
             </p>
           </div>
           <div className="space-y-2">
@@ -295,7 +332,9 @@ export function PluginsPage() {
               <span className="text-green-400 font-bold">3</span>
             </div>
             <p className="text-gray-400">
-              Click <strong className="text-gray-300">Scan</strong> to discover your plugin, then enable it
+              {withNodes(t("pages.plugins.step3Hint"), {
+                scanLabel: <strong className="text-gray-300">{t("pages.plugins.scanButton")}</strong>,
+              })}
             </p>
           </div>
         </div>

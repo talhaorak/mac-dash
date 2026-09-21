@@ -19,6 +19,7 @@ import { ConfirmButton, useConfirm } from "@/components/ui/ConfirmButton";
 import { toast } from "@/components/ui/Toast";
 import { backend, type ProcessChainEntry } from "@/lib/backend";
 import { cn, formatBytes } from "@/lib/utils";
+import { useT, formatNumber } from "@/i18n";
 import {
   Search,
   ArrowUpDown,
@@ -58,6 +59,7 @@ interface ProcessHistoryEntry {
 }
 
 export function ProcessesPage() {
+  const { t, tn } = useT();
   const processes = useProcessesStore((s) => s.processes);
   const services = useServicesStore((s) => s.services);
   const navigateToLogs = useNavStore((s) => s.navigateToLogs);
@@ -254,10 +256,10 @@ export function ProcessesPage() {
     killConfirm.disarm();
     try {
       await backend.killProcess(proc.pid, force);
-      toast.success(`Sent ${signal} to ${name}`);
+      toast.success(t("pages.processes.killSentToast", { signal, name }));
     } catch (e: any) {
       toast.error(
-        `Failed to send ${signal} to ${name}: ${e?.message || "unknown error"}`
+        t("pages.processes.killFailedToast", { signal, name, error: e?.message || t("pages.processes.unknownError") })
       );
     }
   };
@@ -277,11 +279,17 @@ export function ProcessesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Processes</h1>
+          <h1 className="text-2xl font-bold text-white">{t("pages.processes.title")}</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {processes.length} processes &middot; showing {visible.length}
-            {visible.length !== sorted.length && ` of ${sorted.length}`}
-            {search && " matching"}
+            {(() => {
+              const shown = formatNumber(visible.length);
+              const total = formatNumber(sorted.length);
+              const hasTotal = visible.length !== sorted.length;
+              if (hasTotal && search) return tn("pages.processes.subtitleOfTotalMatching", processes.length, { shown, total });
+              if (hasTotal) return tn("pages.processes.subtitleOfTotal", processes.length, { shown, total });
+              if (search) return tn("pages.processes.subtitleMatching", processes.length, { shown });
+              return tn("pages.processes.subtitlePlain", processes.length, { shown });
+            })()}
           </p>
         </div>
       </div>
@@ -294,8 +302,8 @@ export function ProcessesPage() {
         />
         <input
           type="text"
-          aria-label="Search processes"
-          placeholder="Search by name, PID, path, args, user..."
+          aria-label={t("pages.processes.searchAriaLabel")}
+          placeholder={t("pages.processes.searchPlaceholder")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="w-full pl-9 pr-4 py-2 rounded-xl bg-white/[0.04] border border-white/[0.06] text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20 transition-all"
@@ -310,9 +318,9 @@ export function ProcessesPage() {
               <tr className="border-b border-white/[0.06]">
                 {[
                   { field: "pid" as SortField, label: "PID", w: "w-16" },
-                  { field: "name" as SortField, label: "Name", w: "flex-1" },
-                  { field: "cpu" as SortField, label: "CPU %", w: "w-24" },
-                  { field: "mem" as SortField, label: "MEM %", w: "w-24" },
+                  { field: "name" as SortField, label: t("common.name"), w: "flex-1" },
+                  { field: "cpu" as SortField, label: t("pages.processes.cpuPercentHeader"), w: "w-24" },
+                  { field: "mem" as SortField, label: t("pages.processes.memPercentHeader"), w: "w-24" },
                   { field: "rss" as SortField, label: "RSS", w: "w-20" },
                 ].map(({ field, label, w }) => (
                   <th
@@ -338,13 +346,13 @@ export function ProcessesPage() {
                   </th>
                 ))}
                 <th scope="col" className="text-left py-2.5 px-3 text-gray-500 font-medium">
-                  User
+                  {t("pages.processes.user")}
                 </th>
                 <th scope="col" className="text-left py-2.5 px-3 text-gray-500 font-medium">
-                  Time
+                  {t("pages.processes.time")}
                 </th>
                 <th scope="col" className="py-2.5 px-3 w-20">
-                  <span className="sr-only">Actions</span>
+                  <span className="sr-only">{t("common.actions")}</span>
                 </th>
               </tr>
             </thead>
@@ -356,7 +364,7 @@ export function ProcessesPage() {
                   <tr
                     key={proc.pid}
                     tabIndex={0}
-                    aria-label={`${proc.command}, PID ${proc.pid}. Open details`}
+                    aria-label={t("pages.processes.rowAriaLabel", { command: proc.command, pid: proc.pid })}
                     className={cn(
                       "border-b border-white/[0.03] hover:bg-white/[0.03] transition-colors cursor-pointer group",
                       "focus:outline-none focus-visible:bg-white/[0.05] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-500/60",
@@ -446,7 +454,7 @@ export function ProcessesPage() {
                             <button
                               type="button"
                               onClick={() => handleKill(proc)}
-                              aria-label={`Send SIGTERM to ${proc.command}, PID ${proc.pid}`}
+                              aria-label={t("pages.processes.sendSigtermAriaLabel", { command: proc.command, pid: proc.pid })}
                               className="px-2 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 text-[10px] font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
                             >
                               TERM
@@ -454,7 +462,7 @@ export function ProcessesPage() {
                             <button
                               type="button"
                               onClick={() => handleKill(proc, true)}
-                              aria-label={`Send SIGKILL to ${proc.command}, PID ${proc.pid}`}
+                              aria-label={t("pages.processes.sendSigkillAriaLabel", { command: proc.command, pid: proc.pid })}
                               className="px-2 py-1 rounded bg-red-500/30 text-red-300 hover:bg-red-500/40 text-[10px] font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
                             >
                               KILL
@@ -462,8 +470,8 @@ export function ProcessesPage() {
                             <button
                               type="button"
                               onClick={killConfirm.disarm}
-                              aria-label="Cancel kill"
-                              title="Cancel"
+                              aria-label={t("pages.processes.cancelKillAriaLabel")}
+                              title={t("common.cancel")}
                               className="px-1 py-1 rounded text-gray-500 hover:text-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
                             >
                               <X className="w-3 h-3" aria-hidden="true" />
@@ -478,8 +486,8 @@ export function ProcessesPage() {
                                 navigateToLogs(proc.command);
                               }}
                               className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-cyan-500/10 text-gray-600 hover:text-cyan-400 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
-                              title="View Logs"
-                              aria-label={`View logs for ${proc.command}`}
+                              title={t("pages.processes.viewLogsTitle")}
+                              aria-label={t("pages.processes.viewLogsAriaLabel", { command: proc.command })}
                             >
                               <ScrollText className="w-3.5 h-3.5" aria-hidden="true" />
                             </button>
@@ -490,8 +498,8 @@ export function ProcessesPage() {
                                 killConfirm.arm(proc.pid);
                               }}
                               className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-red-500/10 text-gray-600 hover:text-red-400 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
-                              title="Kill process"
-                              aria-label={`Kill ${proc.command}, PID ${proc.pid}`}
+                              title={t("pages.processes.killProcessTitle")}
+                              aria-label={t("pages.processes.killAriaLabel", { command: proc.command, pid: proc.pid })}
                             >
                               <Skull className="w-3.5 h-3.5" aria-hidden="true" />
                             </button>
@@ -508,7 +516,7 @@ export function ProcessesPage() {
         {sorted.length > ROW_LIMIT && (
           <div className="flex items-center justify-center gap-3 pt-3 pb-1 text-xs text-gray-500">
             <span>
-              Showing {visible.length} of {sorted.length}
+              {t("pages.processes.showingOfTotal", { shown: formatNumber(visible.length), total: formatNumber(sorted.length) })}
             </span>
             <button
               type="button"
@@ -516,7 +524,7 @@ export function ProcessesPage() {
               aria-expanded={showAll}
               className="px-3 py-1 rounded-lg bg-white/[0.04] text-cyan-400 hover:bg-cyan-500/10 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
             >
-              {showAll ? `Show first ${ROW_LIMIT}` : "Show all"}
+              {showAll ? t("pages.processes.showFirst", { limit: ROW_LIMIT }) : t("pages.processes.showAllButton")}
             </button>
           </div>
         )}
@@ -538,8 +546,10 @@ export function ProcessesPage() {
                   className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-cyan-400 hover:bg-cyan-500/10 transition-colors -mt-1 mb-1"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-                  Back to {processHistory[processHistory.length - 1].process.command}:
-                  {processHistory[processHistory.length - 1].process.pid}
+                  {t("pages.processes.backTo", {
+                    command: processHistory[processHistory.length - 1].process.command,
+                    pid: processHistory[processHistory.length - 1].process.pid,
+                  })}
                 </button>
               )}
 
@@ -559,8 +569,8 @@ export function ProcessesPage() {
                 <button
                   type="button"
                   onClick={closeModal}
-                  aria-label="Close process details"
-                  title="Close"
+                  aria-label={t("pages.processes.closeDetailsAriaLabel")}
+                  title={t("common.close")}
                   className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
                 >
                   <X className="w-4 h-4" aria-hidden="true" />
@@ -579,7 +589,7 @@ export function ProcessesPage() {
                   <Cog className="w-4 h-4 text-purple-400 flex-shrink-0" />
                   <div className="flex-1 text-left">
                     <div className="text-xs font-medium text-purple-300">
-                      Managed by service
+                      {t("pages.processes.managedByService")}
                     </div>
                     <div className="text-[11px] font-mono text-purple-400/70">
                       {matchingService.label}
@@ -592,40 +602,42 @@ export function ProcessesPage() {
               <div className="grid grid-cols-2 gap-3">
                 <InfoCard
                   icon={Cpu}
-                  label="CPU"
+                  label={t("pages.processes.cpu")}
                   value={`${selectedProcess.cpu.toFixed(1)}%`}
                 />
                 <InfoCard
                   icon={MemoryStick}
-                  label="Memory"
+                  label={t("pages.processes.memory")}
                   value={`${selectedProcess.mem.toFixed(1)}% (${formatBytes(
                     selectedProcess.rss * 1024
                   )})`}
                 />
                 <InfoCard
                   icon={User}
-                  label="User"
+                  label={t("pages.processes.user")}
                   value={selectedProcess.user}
                 />
                 <InfoCard
                   icon={Clock}
-                  label="Elapsed"
-                  value={selectedProcess.elapsed || "N/A"}
+                  label={t("pages.processes.elapsed")}
+                  value={selectedProcess.elapsed || t("pages.processes.notAvailable")}
                 />
               </div>
 
               {/* Executable Path */}
               <InfoBox
                 icon={Terminal}
-                label="Executable Path"
-                value={selectedProcess.path || "N/A"}
+                label={t("pages.processes.executablePath")}
+                value={selectedProcess.path || t("pages.processes.notAvailable")}
+                copyable={!!selectedProcess.path}
               />
 
               {/* Full Command */}
               <InfoBox
                 icon={Terminal}
-                label="Full Command"
-                value={selectedProcess.args || "N/A"}
+                label={t("pages.processes.fullCommand")}
+                value={selectedProcess.args || t("pages.processes.notAvailable")}
+                copyable={!!selectedProcess.args}
                 scrollable
               />
 
@@ -633,12 +645,12 @@ export function ProcessesPage() {
               <div className="space-y-1.5 group">
                 <div className="text-xs text-gray-500 font-medium flex items-center gap-1.5">
                   <FolderOpen className="w-3.5 h-3.5" />
-                  Working Directory
+                  {t("pages.processes.workingDirectory")}
                 </div>
                 <div className="relative bg-black/30 rounded-lg p-3 font-mono text-xs text-gray-300 break-all">
                   {loadingExtended ? (
                     <span className="flex items-center gap-2 text-gray-600">
-                      <Loader2 className="w-3 h-3 animate-spin" /> Loading...
+                      <Loader2 className="w-3 h-3 animate-spin" /> {t("common.loading")}
                     </span>
                   ) : extendedInfo?.cwd ? (
                     <>
@@ -648,7 +660,7 @@ export function ProcessesPage() {
                       </div>
                     </>
                   ) : (
-                    <span className="text-gray-600">N/A</span>
+                    <span className="text-gray-600">{t("pages.processes.notAvailable")}</span>
                   )}
                 </div>
               </div>
@@ -657,12 +669,12 @@ export function ProcessesPage() {
               <div className="space-y-1.5">
                 <div className="text-xs text-gray-500 font-medium flex items-center gap-1.5">
                   <GitBranch className="w-3.5 h-3.5" />
-                  Process Chain (who started this)
+                  {t("pages.processes.processChainTitle")}
                 </div>
                 <div className="bg-black/30 rounded-lg p-3 space-y-1">
                   {loadingExtended ? (
                     <span className="flex items-center gap-2 text-gray-600 text-xs">
-                      <Loader2 className="w-3 h-3 animate-spin" /> Loading...
+                      <Loader2 className="w-3 h-3 animate-spin" /> {t("common.loading")}
                     </span>
                   ) : extendedInfo?.parentChain &&
                     extendedInfo.parentChain.length > 0 ? (
@@ -710,7 +722,7 @@ export function ProcessesPage() {
                       </button>
                     ))
                   ) : (
-                    <span className="text-gray-600 text-xs">N/A</span>
+                    <span className="text-gray-600 text-xs">{t("pages.processes.notAvailable")}</span>
                   )}
                 </div>
               </div>
@@ -726,7 +738,7 @@ export function ProcessesPage() {
                   className="px-4 py-2 rounded-xl bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 text-sm font-medium transition-colors flex items-center gap-2"
                 >
                   <ScrollText className="w-4 h-4" />
-                  View Logs
+                  {t("pages.processes.viewLogsTitle")}
                 </button>
                 <div className="flex gap-2">
                   <ConfirmButton
@@ -737,10 +749,10 @@ export function ProcessesPage() {
                     confirmLabel={
                       <>
                         <Skull className="w-4 h-4" aria-hidden="true" />
-                        Confirm SIGTERM
+                        {t("pages.processes.confirmSigterm")}
                       </>
                     }
-                    title="Ask the process to quit. Click twice to confirm."
+                    title={t("pages.processes.sigtermHint")}
                     className="px-4 py-2 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500/20 text-sm font-medium transition-colors flex items-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
                     armedClassName="ring-1 ring-red-400/60 !bg-red-500/30 !text-red-200"
                   >
@@ -755,10 +767,10 @@ export function ProcessesPage() {
                     confirmLabel={
                       <>
                         <AlertTriangle className="w-4 h-4" aria-hidden="true" />
-                        Confirm SIGKILL
+                        {t("pages.processes.confirmSigkill")}
                       </>
                     }
-                    title="Force-kill the process. Click twice to confirm."
+                    title={t("pages.processes.sigkillHint")}
                     className="px-4 py-2 rounded-xl bg-red-500/20 text-red-300 hover:bg-red-500/30 text-sm font-medium transition-colors flex items-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
                     armedClassName="ring-1 ring-red-400/60 !bg-red-500/40 !text-red-100"
                   >
@@ -800,11 +812,14 @@ function InfoBox({
   label,
   value,
   scrollable,
+  copyable = true,
 }: {
   icon: any;
   label: string;
   value: string;
   scrollable?: boolean;
+  /** False when `value` is a placeholder (e.g. "not available") rather than real, copyable data. */
+  copyable?: boolean;
 }) {
   return (
     <div className="space-y-1.5 group">
@@ -819,7 +834,7 @@ function InfoBox({
         )}
       >
         {value}
-        {value !== "N/A" && (
+        {copyable && (
           <div className="absolute top-1.5 right-1.5">
             <CopyButton text={value} />
           </div>

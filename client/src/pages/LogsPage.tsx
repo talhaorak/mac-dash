@@ -3,6 +3,7 @@ import { useLogsStore, useNavStore, type LogEntry } from "@/stores/app";
 import { GlowCard } from "@/components/ui/GlowCard";
 import { backend } from "@/lib/backend";
 import { cn } from "@/lib/utils";
+import { useT, formatTime, formatNumber, type TKey } from "@/i18n";
 import {
   Search,
   Pause,
@@ -51,7 +52,15 @@ function getEntryKey(entry: LogEntry): number {
   return id;
 }
 
+const LEVEL_LABEL_KEYS: Record<string, TKey> = {
+  error: "common.error",
+  warning: "common.warning",
+  info: "common.info",
+  debug: "pages.logs.levelDebug",
+};
+
 export function LogsPage() {
+  const { t, tn } = useT();
   const entries = useLogsStore((s) => s.entries);
   const paused = useLogsStore((s) => s.paused);
   const setPaused = useLogsStore((s) => s.setPaused);
@@ -193,17 +202,22 @@ export function LogsPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-shrink-0">
         <div>
-          <h1 className="text-2xl font-bold text-white">Logs</h1>
+          <h1 className="text-2xl font-bold text-white">{t("pages.logs.title")}</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {entries.length} entries &middot; showing {filtered.length}
-            {processFilter && <span> &middot; filtered by <span className="text-purple-400">{processFilter}</span></span>}
+            {tn("pages.logs.entriesSubtitle", entries.length, { shown: formatNumber(filtered.length) })}
+            {processFilter && (
+              <span>
+                {" "}
+                &middot; {t("pages.logs.filteredByLabel")} <span className="text-purple-400">{processFilter}</span>
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setPaused(!paused)}
-            title={paused ? "Resume the log stream" : "Pause the log stream"}
+            title={paused ? t("pages.logs.resumeStreamTitle") : t("pages.logs.pauseStreamTitle")}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all",
               paused
@@ -216,7 +230,7 @@ export function LogsPage() {
             ) : (
               <Pause className="w-3 h-3" aria-hidden="true" />
             )}
-            {paused ? "Resume" : "Streaming"}
+            {paused ? t("pages.logs.resume") : t("pages.logs.streaming")}
           </button>
           <button
             type="button"
@@ -224,7 +238,7 @@ export function LogsPage() {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-gray-500 hover:text-gray-300 hover:bg-white/[0.04] transition-all"
           >
             <Trash2 className="w-3 h-3" aria-hidden="true" />
-            Clear
+            {t("common.clear")}
           </button>
         </div>
       </div>
@@ -238,8 +252,8 @@ export function LogsPage() {
           />
           <input
             type="text"
-            aria-label="Search logs"
-            placeholder="Search logs..."
+            aria-label={t("pages.logs.searchAriaLabel")}
+            placeholder={t("pages.logs.searchPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-9 pr-4 py-2 rounded-xl bg-white/[0.04] border border-white/[0.06] text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20 transition-all"
@@ -247,7 +261,7 @@ export function LogsPage() {
         </div>
 
         {/* Level chips */}
-        <div className="flex gap-1" role="group" aria-label="Filter by level">
+        <div className="flex gap-1" role="group" aria-label={t("pages.logs.filterByLevelAriaLabel")}>
           {["error", "warning", "info", "debug"].map((level) => (
             <button
               key={level}
@@ -261,7 +275,7 @@ export function LogsPage() {
                   : "text-gray-600 hover:text-gray-400 hover:bg-white/[0.04]"
               )}
             >
-              {level.charAt(0).toUpperCase() + level.slice(1)}
+              {t(LEVEL_LABEL_KEYS[level])}
               <span className="ml-1 opacity-60">{levelCounts[level]}</span>
             </button>
           ))}
@@ -276,7 +290,7 @@ export function LogsPage() {
             aria-expanded={showProcessPicker}
             aria-controls="log-source-picker"
             aria-label={
-              processFilter ? `Source filter: ${processFilter}` : "Filter by source"
+              processFilter ? t("pages.logs.sourceFilterAriaLabel", { process: processFilter }) : t("pages.logs.filterBySourceAriaLabel")
             }
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
@@ -286,7 +300,7 @@ export function LogsPage() {
             )}
           >
             <Filter className="w-3 h-3" aria-hidden="true" />
-            {processFilter || "Source"}
+            {processFilter || t("pages.logs.source")}
             <ChevronDown className="w-3 h-3" aria-hidden="true" />
           </button>
 
@@ -307,10 +321,10 @@ export function LogsPage() {
                       !processFilter ? "bg-purple-500/10 text-purple-400" : "text-gray-400 hover:bg-white/[0.04]"
                     )}
                   >
-                    All Sources
+                    {t("pages.logs.allSources")}
                   </button>
                   {activeProcesses.length > 0 && (
-                    <div className="text-[10px] text-gray-600 px-3 pt-2 pb-1 font-medium uppercase tracking-wide">Active Sources ({activeProcesses.length})</div>
+                    <div className="text-[10px] text-gray-600 px-3 pt-2 pb-1 font-medium uppercase tracking-wide">{tn("pages.logs.activeSourcesCount", activeProcesses.length)}</div>
                   )}
                   {activeProcesses.slice(0, 30).map((p) => (
                     <button
@@ -327,7 +341,7 @@ export function LogsPage() {
                   ))}
                   {uniqueProcesses.length > 0 && activeProcesses.length === 0 && (
                     <>
-                      <div className="text-[10px] text-gray-600 px-3 pt-2 pb-1 font-medium uppercase tracking-wide">From Current Entries</div>
+                      <div className="text-[10px] text-gray-600 px-3 pt-2 pb-1 font-medium uppercase tracking-wide">{t("pages.logs.fromCurrentEntries")}</div>
                       {uniqueProcesses.slice(0, 30).map((p) => (
                         <button
                           key={p}
@@ -356,8 +370,8 @@ export function LogsPage() {
             <button
               type="button"
               onClick={() => setProcessFilter("")}
-              aria-label="Clear source filter"
-              title="Clear source filter"
+              aria-label={t("pages.logs.clearSourceFilterAriaLabel")}
+              title={t("pages.logs.clearSourceFilterAriaLabel")}
               className="hover:text-purple-300 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/60"
             >
               <X className="w-3 h-3" aria-hidden="true" />
@@ -373,7 +387,7 @@ export function LogsPage() {
           onScroll={handleScroll}
           tabIndex={0}
           role="region"
-          aria-label="Log entries"
+          aria-label={t("pages.logs.logEntriesAriaLabel")}
           className="h-full overflow-y-auto p-2 space-y-0.5 font-mono text-[11px] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-500/40 rounded-2xl"
         >
           {filtered.map((entry) => (
@@ -386,8 +400,8 @@ export function LogsPage() {
           {filtered.length === 0 && (
             <div className="flex items-center justify-center h-full text-gray-600 text-sm">
               {entries.length === 0
-                ? "Waiting for log entries..."
-                : "No logs match your filters"}
+                ? t("pages.logs.waitingForEntries")
+                : t("pages.logs.noMatchingLogs")}
             </div>
           )}
         </div>
@@ -404,7 +418,7 @@ export function LogsPage() {
               className="absolute bottom-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/20 text-cyan-400 text-xs font-medium backdrop-blur-sm ring-1 ring-cyan-500/30 hover:bg-cyan-500/30 transition-colors"
             >
               <ArrowDown className="w-3 h-3" aria-hidden="true" />
-              {newCount} new
+              {tn("pages.logs.newCount", newCount)}
             </motion.button>
           )}
         </AnimatePresence>
@@ -429,7 +443,7 @@ const LogLine = memo(function LogLine({
     >
       <span className="text-gray-600 flex-shrink-0 w-20 truncate">
         {entry.timestamp.split(" ").pop()?.split(".")[0] ||
-          new Date(entry.timestamp).toLocaleTimeString()}
+          formatTime(entry.timestamp)}
       </span>
       <span
         className={cn(

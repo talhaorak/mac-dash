@@ -1,4 +1,235 @@
 import type { enList } from "./list.en";
 
 export const trList: Record<keyof typeof enList, string> = {
+  // header
+  "list.header.title": "Servisler",
+  "list.header.viewLabel": "Görünüm",
+  "list.header.newJob": "Yeni iş",
+  "list.header.searchAria": "İşlerde ara",
+  "list.header.searchPlaceholder": "Etiket, program, not, anahtar sözcüklerde ara…",
+  "list.header.changesButton": "Değişiklikler",
+  "list.header.unseenChanges.one": "{count} yeni iş değişikliği",
+  "list.header.unseenChanges.other": "{count} yeni iş değişikliği",
+  "list.header.summary": "{total} · {running} · {failed}",
+
+  // counts
+  "list.count.jobs.one": "{count} iş",
+  "list.count.jobs.other": "{count} iş",
+  "list.count.shownOfTotal.one": "{count} iş içinden {shown} tanesi",
+  "list.count.shownOfTotal.other": "{count} iş içinden {shown} tanesi",
+  "list.count.matchOfTotal.one": "{count} iş içinden {shown} tanesi eşleşiyor",
+  "list.count.matchOfTotal.other": "{count} iş içinden {shown} tanesi eşleşiyor",
+  "list.count.showMore.one": "{count} tane daha göster",
+  "list.count.showMore.other": "{count} tane daha göster",
+  "list.count.andMore.one": "ve {count} tane daha",
+  "list.count.andMore.other": "ve {count} tane daha",
+  "list.count.hiddenTotal": "{count} gizli",
+  "list.count.running": "{count} çalışıyor",
+  "list.count.failed": "{count} başarısız",
+
+  // shared status
+  "list.status.readingLaunchd": "launchd okunuyor…",
+  "list.status.readingPlists": "İş plist dosyaları okunuyor…",
+  "list.status.noMatch": "Hiçbir iş filtrelere uymuyor.",
+
+  // filters
+  "list.filters.statusLabel": "Durum filtresi",
+  "list.filters.ownerLabel": "Kaynak filtresi",
+  "list.filters.tagLabel": "Anahtar sözcük filtresi",
+  "list.filters.smartFoldersLabel": "Akıllı klasör çubuğu",
+  "list.filters.startupCardLabel": "Diğer başlangıç mekanizmaları",
+  "list.filters.powerCardLabel": "Güç zamanlaması",
+  "list.filters.hiddenBanner": "Görünür denetimi olmayan bir filtre etkin: {list}.",
+  "list.filters.hiddenStatus": "durum {value}",
+  "list.filters.hiddenOwner": "kaynak {value}",
+  "list.filters.hiddenTag": "anahtar sözcük #{value}",
+  "list.filters.hiddenSmartFolder": 'akıllı klasör "{value}"',
+
+  // owner
+  "list.owner.apple": "Apple",
+  "list.owner.thirdParty": "Üçüncü taraf",
+
+  // views
+  "list.views.groups": "Gruplar",
+  "list.views.list": "Liste",
+  "list.views.grid": "Izgara",
+  "list.views.timeline": "Zaman çizelgesi",
+
+  // toasts
+  "list.toast.jobNotFound": "{label} iş listesinde yok.",
+  "list.toast.movedToTrash": "{label} Çöp Sepeti'ne taşındı",
+  "list.toast.actionError": "{label}: {message}",
+  "list.toast.started": "{label} başlatıldı",
+  "list.toast.stopped": "{label} durduruldu",
+  "list.toast.restarted": "{label} yeniden başlatıldı",
+  "list.toast.loaded": "{label} yüklendi",
+  "list.toast.unloaded": "{label} kaldırıldı",
+  "list.toast.enabled": "{label} etkinleştirildi",
+  "list.toast.disabled": "{label} devre dışı bırakıldı",
+
+  // errors
+  "list.errors.metaReadFailed": "Notlar, anahtar sözcükler ve simgeler okunamadı.",
+  "list.errors.plistsRereadFailed": "İş plist dosyaları yeniden okunamadı. Akıllı klasör son kopyayı kullanıyor.",
+  "list.errors.plistsReadFailed": "İş plist dosyaları okunamadı. Akıllı klasör boş kalıyor.",
+  "list.errors.plistsRereadFailedKeyFolders": "İş plist dosyaları yeniden okunamadı. launchd anahtarı kullanan klasörler son kopyayı kullanıyor.",
+  "list.errors.plistsReadFailedKeyFolders": "İş plist dosyaları okunamadı. launchd anahtarı kuralı olan klasörler boş kalıyor.",
+  "list.errors.plistsRereadFailedPreview": "İş plist dosyaları yeniden okunamadı. Önizleme son kopyayı kullanıyor.",
+  "list.errors.plistsReadFailedPreview": "İş plist dosyaları okunamadı. Dosyalar okunana kadar launchd anahtarı kuralı hiçbir işle eşleşmez.",
+
+  // shared badges
+  "list.badge.unreadableShort": "okunamayan plist",
+  "list.badge.quarantinedShort": "karantinadaki plist",
+  "list.badge.unreadableTitle": "plist ayrıştırılamıyor",
+  "list.badge.quarantinedTitle": "plist karantinada",
+
+  // shared words
+  "list.common.readOnly": "Salt okunur",
+  "list.common.scope": "Kapsam",
+  "list.common.triggers": "Tetikleyiciler",
+
+  // row actions
+  "list.actions.openDetailsAria": "{text}. Ayrıntıları aç",
+  "list.actions.stopLabel": "{label} işini durdur",
+  "list.actions.confirmStopLabel": "{label} işini durdurmayı onayla",
+  "list.actions.confirmStopTitle": "Durdurmak için tekrar tıkla",
+  "list.actions.restartLabel": "{label} işini yeniden başlat",
+  "list.actions.runNowLabel": "{label} işini şimdi çalıştır",
+  "list.actions.runNowTitle": "Şimdi çalıştır",
+  "list.actions.enableLabel": "{label} işini etkinleştir",
+  "list.actions.enableTitle": "Etkinleştir ve yükle",
+  "list.actions.disableLabel": "{label} işini devre dışı bırak",
+  "list.actions.confirmDisableLabel": "{label} işini devre dışı bırakmayı onayla",
+  "list.actions.disableTitle": "Devre dışı bırak ve kaldır",
+  "list.actions.confirmDisableTitle": "Devre dışı bırakmak için tekrar tıkla",
+  "list.actions.editLabel": "{label} işini düzenle",
+  "list.actions.viewLabel": "{label} işini görüntüle",
+  "list.actions.viewPlistTitle": "Plist'i görüntüle",
+  "list.actions.duplicateLabel": "{label} işini çoğalt",
+
+  // list view (table)
+  "list.columns.pid": "PID",
+  "list.columns.lastExit": "Son çıkış",
+  "list.list.sortBy": "Sırala: {column}",
+  "list.list.columnsButton": "Sütunlar",
+  "list.list.columnsMenuLabel": "Görünür sütunlar",
+  "list.list.tableCaption": "launchd işleri. Sütun başlığı düğmeleri tabloyu sıralar.",
+  "list.list.failedSuffix": " (başarısız)",
+
+  // grid view
+  "list.grid.tileSizeLabel": "Kutucuk boyutu",
+  "list.grid.sizeSmall": "Küçük",
+  "list.grid.sizeMedium": "Orta",
+  "list.grid.sizeLarge": "Büyük",
+  "list.grid.ariaLabel": "launchd işleri",
+  "list.grid.hint": "Ok tuşları kutucuklar arasında gezinir. Enter bir işin ayrıntılarını açar.",
+  "list.grid.onDemand": "İsteğe bağlı",
+  "list.grid.noPlistFile": "plist dosyası yok",
+  "list.grid.triggerPlusMore": "{first} +{count}",
+  "list.grid.readOnlyInline": "salt okunur",
+
+  // smart folders: bar and editor chrome
+  "list.smartFolders.groupLabel": "Akıllı klasörler",
+  "list.smartFolders.countUnknown": ", sayı bilinmiyor",
+  "list.smartFolders.counting": ", sayılıyor",
+  "list.smartFolders.editAria": "{name} akıllı klasörünü düzenle",
+  "list.smartFolders.editOrDelete": "Düzenle veya sil",
+  "list.smartFolders.newFolder": "Yeni akıllı klasör…",
+  "list.smartFolders.savedToast": '"{name}" akıllı klasörü kaydedildi',
+  "list.smartFolders.deletedToast": '"{name}" akıllı klasörü silindi',
+  "list.smartFolders.editTitle": "Akıllı klasörü düzenle",
+  "list.smartFolders.newTitle": "Yeni akıllı klasör",
+  "list.smartFolders.subtitle": "Akıllı klasör, kaydedilmiş bir filtredir. Arama kutusu ve diğer filtrelerle birlikte çalışır.",
+  "list.smartFolders.namePlaceholder": "Gece yedekleri",
+  "list.smartFolders.enterName": "Bir ad girin.",
+  "list.smartFolders.rulesLegend": "Kurallar",
+  "list.smartFolders.matchIntro": "Bir iş, klasöre şu durumda dahil olur:",
+  "list.smartFolders.matchAll": "tüm kurallar",
+  "list.smartFolders.matchAny": "herhangi bir kural",
+  "list.smartFolders.addRule": "Kural ekle",
+  "list.smartFolders.previewLabel": "Önizleme",
+  "list.smartFolders.confirmDelete": "Silmek için tekrar tıkla",
+  "list.smartFolders.deleteFolder": "Klasörü sil",
+  "list.smartFolders.saveFolder": "Klasörü kaydet",
+  "list.smartFolders.ruleFieldAria": "Kural {n}: alan",
+  "list.smartFolders.ruleKeyAria": "Kural {n}: launchd anahtarı",
+  "list.smartFolders.ruleOperatorAria": "Kural {n}: operatör",
+  "list.smartFolders.ruleValueAria": "Kural {n}: değer",
+  "list.smartFolders.removeRuleAria": "{n}. kuralı kaldır",
+  "list.smartFolders.plistRuleHelp":
+    "Anahtar, işin plist dosyasından gelir. Bir nokta bir sözlüğün içine iner: KeepAlive.SuccessfulExit. Değer metin olarak karşılaştırılır, bir boole true veya false olur ve bir liste bir öğe eşleştiğinde eşleşir.",
+
+  // smart folders: built-in folder names
+  "list.smartFolders.builtin.failed": "Başarısız",
+  "list.smartFolders.builtin.thirdPartyDaemons": "Üçüncü taraf daemonlar",
+  "list.smartFolders.builtin.scheduledToday": "Bugün zamanlanmış",
+
+  // smart folders: rule field titles
+  "list.smartFolders.field.label": "Etiket",
+  "list.smartFolders.field.program": "Program",
+  "list.smartFolders.field.trigger": "Tetikleyici metni",
+  "list.smartFolders.field.tag": "Anahtar sözcük",
+  "list.smartFolders.field.owner": "Kaynak",
+  "list.smartFolders.field.loaded": "Yüklü",
+  "list.smartFolders.field.runsAsRoot": "Root olarak çalışır",
+  "list.smartFolders.field.hasSchedule": "Zamanlaması var",
+  "list.smartFolders.field.runsSoon": "Sonraki 24 saat içinde çalışır",
+  "list.smartFolders.field.keepAlive": "Çalışır durumda tut",
+  "list.smartFolders.field.unreadable": "Okunamayan plist",
+  "list.smartFolders.field.quarantined": "Karantinada",
+  "list.smartFolders.field.writable": "Yazılabilir",
+  "list.smartFolders.field.lastExitStatus": "Son çıkış durumu",
+  "list.smartFolders.field.launchdKey": "launchd anahtarı",
+
+  // smart folders: enum option titles
+  "list.smartFolders.option.agent": "Agent",
+  "list.smartFolders.option.daemon": "Daemon",
+
+  // smart folders: operators
+  "list.smartFolders.operator.is": "eşittir",
+  "list.smartFolders.operator.isNot": "eşit değildir",
+  "list.smartFolders.operator.contains": "içerir",
+  "list.smartFolders.operator.notContains": "içermez",
+  "list.smartFolders.operator.startsWith": "ile başlar",
+  "list.smartFolders.operator.eq": "=",
+  "list.smartFolders.operator.neq": "≠",
+  "list.smartFolders.operator.exists": "var",
+  "list.smartFolders.operator.notExists": "yok",
+  "list.smartFolders.operator.plistEquals": "eşittir",
+  "list.smartFolders.operator.plistNotEquals": "eşit değildir",
+
+  // smart folders: rule problems
+  "list.smartFolders.problem.unknownField": "Alan bilinmiyor.",
+  "list.smartFolders.problem.operatorMismatch": "Operatör bu alana uygun değil.",
+  "list.smartFolders.problem.enterText": "Metin girin.",
+  "list.smartFolders.problem.chooseValue": "Bir değer seçin.",
+  "list.smartFolders.problem.chooseYesNo": "Evet ya da hayır seçin.",
+  "list.smartFolders.problem.enterWholeNumber": "Tam sayı girin.",
+  "list.smartFolders.problem.enterKey": "launchd anahtarı girin.",
+  "list.smartFolders.problem.keyTooLong": "Anahtar çok uzun.",
+  "list.smartFolders.problem.enterValue": "Bir değer girin.",
+
+  // view options menu
+  "list.viewOptions.buttonLabel": "Görünüm seçenekleri",
+  "list.viewOptions.buttonTitle": "Bu sayfanın bölümlerini göster veya gizle",
+  "list.viewOptions.menuLabel": "Servisler sayfasının görünür bölümleri",
+  "list.viewOptions.showEverything": "Her şeyi göster",
+
+  // job icon
+  "list.icon.noCanvas": "Tarayıcının 2D canvas'ı yok.",
+  "list.icon.notImage": "Dosya bir görsel değil.",
+  "list.icon.tooLargeSource": "Görsel 20 MB'tan büyük.",
+  "list.icon.empty": "Görsel boş.",
+  "list.icon.canvasBlocked": "Tarayıcı bu görseli canvas üzerinde işlemeye izin vermiyor.",
+  "list.icon.pngFailed": "Tarayıcı bu görselden PNG oluşturamadı.",
+  "list.icon.tooLargeResult": "Simge yeniden boyutlandırıldıktan sonra 48 KB'tan büyük. Daha basit bir görsel seçin.",
+  "list.icon.cannotRead": "Tarayıcı bu görseli okuyamıyor.",
+  "list.icon.readFailed": "Görsel okunamadı.",
+  "list.icon.dropNoImage": "Bırakılan öğede görsel dosyası yok.",
+  "list.icon.legend": "Simge",
+  "list.icon.emojiLabel": "Emoji",
+  "list.icon.dropZoneAria": "Görsel simge. Buraya bir görsel yapıştırın veya bırakın.",
+  "list.icon.resizing": "Görsel yeniden boyutlandırılıyor…",
+  "list.icon.pasteOrDrop": "Bir görsel yapıştırın veya bırakın",
+  "list.icon.chooseImage": "Görsel seç…",
+  "list.icon.hint": "Bir görsel, en fazla 48 KB boyutunda {pixels}×{pixels} PNG'ye dönüşür. Simge yoksa iş renkli bir harfle gösterilir.",
 };

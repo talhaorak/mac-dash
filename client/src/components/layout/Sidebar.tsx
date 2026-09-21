@@ -18,6 +18,7 @@ import { backend } from "@/lib/backend";
 import { api } from "@/lib/api";
 import { formatRoute, routeForPage } from "@/lib/router";
 import { useWindowDrag } from "@/lib/window-drag";
+import { useT, type TKey } from "@/i18n";
 
 interface SidebarProps {
   version: string | null;
@@ -31,12 +32,12 @@ interface PluginInfo {
   icon?: string;
 }
 
-const navItems = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "services", label: "Services", icon: Cog },
-  { id: "processes", label: "Processes", icon: Activity },
-  { id: "logs", label: "Logs", icon: ScrollText },
-  { id: "plugins", label: "Plugins", icon: Puzzle },
+const navItems: { id: string; labelKey: TKey; icon: typeof LayoutDashboard }[] = [
+  { id: "dashboard", labelKey: "app.nav.dashboard", icon: LayoutDashboard },
+  { id: "services", labelKey: "app.nav.services", icon: Cog },
+  { id: "processes", labelKey: "app.nav.processes", icon: Activity },
+  { id: "logs", labelKey: "app.nav.logs", icon: ScrollText },
+  { id: "plugins", labelKey: "app.nav.plugins", icon: Puzzle },
 ];
 
 // Map plugin icon names to lucide components
@@ -45,6 +46,7 @@ const pluginIconMap: Record<string, any> = {
 };
 
 export function Sidebar({ version }: SidebarProps) {
+  const { t, tn } = useT();
   const currentPage = useNavStore((s) => s.currentPage);
   const setPage = useNavStore((s) => s.setPage);
   const sidebarCollapsed = useNavStore((s) => s.sidebarCollapsed);
@@ -75,12 +77,8 @@ export function Sidebar({ version }: SidebarProps) {
     lastDataAt !== null && Date.now() - lastDataAt < 10000;
 
   const statusText = isReceivingData
-    ? dataSource === "ws"
-      ? "Live (WS)"
-      : "Live (Poll)"
-    : wsConnected
-      ? "Connected"
-      : "No data";
+    ? t(dataSource === "ws" ? "app.sidebar.liveWs" : "app.sidebar.livePoll")
+    : t(wsConnected ? "app.sidebar.connected" : "app.sidebar.noData");
 
   const statusColor = isReceivingData
     ? "text-green-400 bg-green-500/5"
@@ -127,26 +125,27 @@ export function Sidebar({ version }: SidebarProps) {
               mac-dash
             </span>
             <span className="text-[10px] text-gray-500">
-              {version ? `v${version}` : "system manager"}
+              {version ? `v${version}` : t("app.sidebar.systemManager")}
             </span>
           </div>
         )}
       </div>
 
       {/* Navigation */}
-      <nav aria-label="Main" className="flex-1 p-2 space-y-1">
+      <nav aria-label={t("app.nav.main")} className="flex-1 p-2 space-y-1">
         {navItems.map((item) => {
           const isActive = currentPage === item.id;
           // launchd job changes that the user has not opened yet
           const badge = item.id === "services" && unseenJobEvents > 0 ? unseenJobEvents : 0;
+          const label = t(item.labelKey);
           return (
             <a
               key={item.id}
               href={formatRoute(routeForPage(item.id))}
               draggable={false}
               onClick={(e) => followLink(e, item.id)}
-              aria-label={badge ? `${item.label}, ${badge} new job changes` : item.label}
-              title={item.label}
+              aria-label={badge ? tn("app.sidebar.newJobChanges", badge, { label }) : label}
+              title={label}
               aria-current={isActive ? "page" : undefined}
               className={cn(
                 "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60",
@@ -160,7 +159,7 @@ export function Sidebar({ version }: SidebarProps) {
                 className={cn("w-[18px] h-[18px] flex-shrink-0", isActive && "drop-shadow-[0_0_4px_rgba(6,182,212,0.5)]")}
               />
               {!sidebarCollapsed && (
-                <span className="font-medium">{item.label}</span>
+                <span className="font-medium">{label}</span>
               )}
               {badge > 0 && (
                 <span
@@ -182,7 +181,7 @@ export function Sidebar({ version }: SidebarProps) {
           <>
             {!sidebarCollapsed && (
               <div className="text-[10px] text-gray-600 uppercase tracking-wider px-3 pt-3 pb-1 font-medium">
-                Plugins
+                {t("app.nav.plugins")}
               </div>
             )}
             {sidebarPlugins.map((plugin) => {
@@ -223,7 +222,7 @@ export function Sidebar({ version }: SidebarProps) {
       <div className="p-3 space-y-2 border-t border-white/[0.06]">
         {/* Connection status */}
         <div
-          title={`Connection: ${statusText}`}
+          title={t("app.sidebar.connectionTitle", { status: statusText })}
           className={cn(
             "flex items-center gap-2 px-3 py-2 rounded-lg text-xs",
             statusColor
@@ -241,8 +240,8 @@ export function Sidebar({ version }: SidebarProps) {
         <button
           type="button"
           onClick={toggleSidebar}
-          aria-label="Toggle sidebar"
-          title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={t("app.sidebar.toggle")}
+          title={t(sidebarCollapsed ? "app.sidebar.expand" : "app.sidebar.collapse")}
           aria-expanded={!sidebarCollapsed}
           className="w-full flex items-center justify-center py-1.5 rounded-lg text-gray-500 hover:text-gray-300 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
         >

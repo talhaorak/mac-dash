@@ -6,6 +6,7 @@ import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { toast } from "@/components/ui/Toast";
 import { backend, type BackgroundItem, type LoginItem, type StartupExtras } from "@/lib/backend";
 import { cn } from "@/lib/utils";
+import { t, useT } from "@/i18n";
 
 // ── Shared pieces (also used by PowerSchedulePanel) ──────────────────
 
@@ -26,7 +27,7 @@ export function useLoader<T>(fn: () => Promise<T>): Loader<T> {
       const data = await fn();
       setState({ data, error: null, loading: false });
     } catch (e) {
-      setState((s) => ({ data: s.data, error: (e as Error).message || "The request failed.", loading: false }));
+      setState((s) => ({ data: s.data, error: (e as Error).message || t("detail.common.requestFailed"), loading: false }));
     }
   }, [fn]);
   return { ...state, load };
@@ -58,7 +59,7 @@ export function InlineError({ title, message, onRetry, retrying = false, classNa
         className="inline-flex items-center gap-1 flex-shrink-0 px-2.5 py-1 rounded-lg text-xs text-gray-200 bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-40 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
       >
         <RotateCw className={cn("w-3 h-3", retrying && "animate-spin")} aria-hidden />
-        {retrying ? "Retrying…" : "Retry"}
+        {retrying ? t("detail.common.retrying") : t("common.retry")}
       </button>
     </div>
   );
@@ -116,6 +117,7 @@ const loadBackgroundItems = () => backend.getBackgroundItems();
 
 /** cron, helper tools, legacy startup items, login items and the Background Task Management records. */
 export function StartupExtrasCard() {
+  useT(); // subscribe: re-render when the language changes
   const extras = useLoader<StartupExtras>(loadExtras);
   const background = useLoader<BackgroundItem[]>(loadBackgroundItems);
 
@@ -128,16 +130,22 @@ export function StartupExtrasCard() {
   const hasExtras = !(extras.error && !e);
 
   return (
-    <CollapsibleCard title="Other startup mechanisms" summary="cron, helper tools, login items, background items" onFirstOpen={loadAll}>
+    <CollapsibleCard title={t("detail.startup.title")} summary={t("detail.startup.summary")} onFirstOpen={loadAll}>
       <div className="p-2 space-y-4">
         {extras.error && (
-          <InlineError title="cron, helper tools and startup items could not be read." message={extras.error} onRetry={extras.load} retrying={extras.loading} />
+          <InlineError title={t("detail.startup.extrasError")} message={extras.error} onRetry={extras.load} retrying={extras.loading} />
         )}
         <div className="grid gap-4 md:grid-cols-2">
-          {hasExtras && <ExtrasGroup title="cron" hint="Your crontab (crontab -l)" rows={e?.cron.map((line) => ({ main: line })) ?? null} />}
+          {hasExtras && (
+            <ExtrasGroup title={t("detail.startup.cronTitle")} hint={t("detail.startup.cronHint")} rows={e?.cron.map((line) => ({ main: line })) ?? null} />
+          )}
           {hasExtras && <HelperToolsSection tools={e?.helperTools ?? null} onChanged={extras.load} />}
           {hasExtras && (
-            <ExtrasGroup title="Startup items" hint="Legacy /Library/StartupItems" rows={e?.startupItems.map((h) => ({ main: h.name, sub: h.path })) ?? null} />
+            <ExtrasGroup
+              title={t("detail.startup.legacyTitle")}
+              hint={t("detail.startup.legacyHint")}
+              rows={e?.startupItems.map((h) => ({ main: h.name, sub: h.path })) ?? null}
+            />
           )}
           <LoginItemsSection />
         </div>
@@ -155,9 +163,9 @@ function ExtrasGroup({ title, hint, rows }: { title: string; hint: string; rows:
       </h3>
       <p className="text-[11px] text-gray-600">{hint}</p>
       {rows === null ? (
-        <p className="text-[11px] text-gray-600">Loading…</p>
+        <p className="text-[11px] text-gray-600">{t("common.loading")}</p>
       ) : rows.length === 0 ? (
-        <p className="text-[11px] text-gray-600">None.</p>
+        <p className="text-[11px] text-gray-600">{t("detail.startup.none")}</p>
       ) : (
         <ul className="space-y-0.5">
           {rows.map((r, i) => (
@@ -196,10 +204,10 @@ function HelperToolsSection({ tools, onChanged }: { tools: StartupExtras["helper
     setFailure(null);
     try {
       await backend.deleteHelperTool(name, permanent);
-      toast.success(permanent ? `Helper tool "${name}" deleted permanently` : `Helper tool "${name}" moved to the Trash`);
+      toast.success(permanent ? t("detail.startup.helperDeletedPermanent", { name }) : t("detail.startup.helperMovedToTrash", { name }));
       onChanged();
     } catch (e) {
-      const message = (e as Error).message || "The request failed.";
+      const message = (e as Error).message || t("detail.common.requestFailed");
       if (!permanent && message === NEEDS_PERMANENT_DELETE) {
         setLastAsked(name);
         setAskPermanent(name);
@@ -214,13 +222,13 @@ function HelperToolsSection({ tools, onChanged }: { tools: StartupExtras["helper
   return (
     <div className="space-y-1.5 min-w-0">
       <h3 className="text-xs font-semibold text-gray-400">
-        Privileged helper tools {tools && <span className="text-gray-600 font-normal">({tools.length})</span>}
+        {t("detail.startup.helperToolsTitle", { count: tools?.length ?? 0 })}
       </h3>
-      <p className="text-[11px] text-gray-600">/Library/PrivilegedHelperTools. A delete moves the tool to the Trash and asks for an administrator password.</p>
+      <p className="text-[11px] text-gray-600">{t("detail.startup.helperToolsHint")}</p>
 
       {failure && (
         <InlineError
-          title={`The helper tool "${failure.name}" could not be deleted.`}
+          title={t("detail.startup.helperDeleteErrorTitle", { name: failure.name })}
           message={failure.message}
           onRetry={() => remove(failure.name, failure.permanent)}
           retrying={deleting === failure.name}
@@ -228,9 +236,9 @@ function HelperToolsSection({ tools, onChanged }: { tools: StartupExtras["helper
       )}
 
       {tools === null ? (
-        <p className="text-[11px] text-gray-600">Loading…</p>
+        <p className="text-[11px] text-gray-600">{t("common.loading")}</p>
       ) : tools.length === 0 ? (
-        <p className="text-[11px] text-gray-600">None.</p>
+        <p className="text-[11px] text-gray-600">{t("detail.startup.none")}</p>
       ) : (
         <ul className="space-y-0.5">
           {tools.map((tool) => (
@@ -241,13 +249,15 @@ function HelperToolsSection({ tools, onChanged }: { tools: StartupExtras["helper
               <ConfirmButton
                 onConfirm={() => remove(tool.name, false)}
                 disabled={deleting !== null}
-                confirmLabel="Click again to delete"
-                title="Delete this helper tool"
+                confirmLabel={t("detail.startup.confirmDeleteHelper")}
+                title={t("detail.startup.deleteHelperTitle")}
                 className={rowDeleteButton}
                 armedClassName="bg-red-500/20 text-red-300! px-2"
               >
                 <Trash2 className="w-3 h-3" aria-hidden />
-                <span className="sr-only">{deleting === tool.name ? `Deleting helper tool ${tool.name}` : `Delete helper tool ${tool.name}`}</span>
+                <span className="sr-only">
+                  {deleting === tool.name ? t("detail.startup.deletingHelper", { name: tool.name }) : t("detail.startup.deleteHelperSr", { name: tool.name })}
+                </span>
               </ConfirmButton>
             </li>
           ))}
@@ -257,11 +267,10 @@ function HelperToolsSection({ tools, onChanged }: { tools: StartupExtras["helper
       <Dialog open={askPermanent !== null} onClose={() => setAskPermanent(null)} labelledBy={titleId} describedBy={textId} initialFocusRef={cancelRef} className="max-w-md!">
         <div className="p-6 space-y-4">
           <h2 id={titleId} className="text-lg font-bold text-white">
-            Delete permanently?
+            {t("detail.startup.deletePermTitle")}
           </h2>
           <p id={textId} className="text-sm text-gray-300">
-            macOS cannot copy <span className="font-mono text-xs break-all">{lastAsked}</span> to the Trash. If you continue, the file is deleted and you
-            cannot restore it.
+            {t("detail.startup.cannotCopy", { path: lastAsked })}
           </p>
           <div className="flex justify-end gap-2">
             <button
@@ -270,7 +279,7 @@ function HelperToolsSection({ tools, onChanged }: { tools: StartupExtras["helper
               onClick={() => setAskPermanent(null)}
               className="px-3 py-2 rounded-xl text-xs text-gray-300 bg-white/[0.04] hover:bg-white/[0.08] focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
             >
-              Keep the tool
+              {t("detail.startup.keepTool")}
             </button>
             <button
               type="button"
@@ -281,7 +290,7 @@ function HelperToolsSection({ tools, onChanged }: { tools: StartupExtras["helper
               }}
               className="px-3 py-2 rounded-xl text-xs font-semibold text-red-100 bg-red-500/30 hover:bg-red-500/40 border border-red-500/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
             >
-              Delete permanently
+              {t("detail.startup.deletePermButton")}
             </button>
           </div>
         </div>
@@ -300,7 +309,7 @@ function LoginItemsSection() {
     setDeleting(item.name);
     try {
       await backend.deleteLoginItem(item.name);
-      toast.success(`Login item "${item.name}" removed`);
+      toast.success(t("detail.startup.loginItemRemoved", { name: item.name }));
     } catch (e) {
       toast.error(`${item.name}: ${(e as Error).message}`);
     } finally {
@@ -312,13 +321,11 @@ function LoginItemsSection() {
   return (
     <div className="space-y-1.5 min-w-0">
       <h3 className="text-xs font-semibold text-gray-400">
-        Login items {items.data && <span className="text-gray-600 font-normal">({items.data.length})</span>}
+        {t("detail.startup.loginItemsTitle", { count: items.data?.length ?? 0 })}
       </h3>
-      <p className="text-[11px] text-gray-600">
-        System Settings &gt; General &gt; Login Items. Reading and removing goes through System Events. macOS asks for Automation permission the first time.
-      </p>
+      <p className="text-[11px] text-gray-600">{t("detail.startup.loginItemsHint")}</p>
 
-      {items.error && <InlineError title="The login items could not be read." message={items.error} onRetry={items.load} retrying={items.loading} />}
+      {items.error && <InlineError title={t("detail.startup.loginItemsError")} message={items.error} onRetry={items.load} retrying={items.loading} />}
 
       {items.data === null ? (
         !items.error && (
@@ -328,11 +335,11 @@ function LoginItemsSection() {
             onClick={items.load}
             className="px-2.5 py-1 rounded-lg text-xs bg-white/[0.06] text-gray-300 hover:bg-white/[0.1] disabled:opacity-40 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
           >
-            {items.loading ? "Reading…" : "Read login items"}
+            {items.loading ? t("detail.startup.reading") : t("detail.startup.readLoginItems")}
           </button>
         )
       ) : items.data.length === 0 ? (
-        <p className="text-[11px] text-gray-600">None.</p>
+        <p className="text-[11px] text-gray-600">{t("detail.startup.none")}</p>
       ) : (
         <ul className="space-y-0.5">
           {items.data.map((item) => (
@@ -340,7 +347,11 @@ function LoginItemsSection() {
               <div className="min-w-0 flex-1">
                 <div className="text-xs font-mono text-gray-300 truncate">
                   {item.name}
-                  {item.hidden && <span className="ml-1.5 px-1.5 py-px rounded text-[9px] font-sans font-medium bg-white/[0.06] text-gray-400">hidden</span>}
+                  {item.hidden && (
+                    <span className="ml-1.5 px-1.5 py-px rounded text-[9px] font-sans font-medium bg-white/[0.06] text-gray-400">
+                      {t("detail.startup.hiddenBadge")}
+                    </span>
+                  )}
                 </div>
                 <div className="text-[10px] font-mono text-gray-600 truncate" title={item.path}>
                   {item.path}
@@ -349,13 +360,13 @@ function LoginItemsSection() {
               <ConfirmButton
                 onConfirm={() => remove(item)}
                 disabled={deleting !== null}
-                confirmLabel="Click again to remove"
-                title="Remove this login item"
+                confirmLabel={t("detail.startup.confirmRemoveLoginItem")}
+                title={t("detail.startup.removeLoginItemTitle")}
                 className="flex-shrink-0 inline-flex items-center gap-1 p-1.5 rounded-lg text-[11px] text-gray-500 hover:text-red-400 hover:bg-red-500/10 disabled:opacity-40 focus:outline-none focus-visible:ring-1 focus-visible:ring-red-500/50"
                 armedClassName="bg-red-500/20 text-red-300! px-2"
               >
                 <Trash2 className="w-3 h-3" aria-hidden />
-                <span className="sr-only">Remove login item {item.name}</span>
+                <span className="sr-only">{t("detail.startup.removeLoginItemSr", { name: item.name })}</span>
               </ConfirmButton>
             </li>
           ))}
@@ -402,18 +413,21 @@ function BackgroundItemsSection({ loader }: { loader: Loader<BackgroundItem[]> }
   const visible = filtered.slice(0, limit);
 
   return (
-    <section aria-label="Background items" className="space-y-2 border-t border-white/[0.06] pt-3">
+    <section aria-label={t("detail.startup.backgroundItemsAria")} className="space-y-2 border-t border-white/[0.06] pt-3">
       <div className="flex items-center gap-2 flex-wrap">
         <h3 className="text-xs font-semibold text-gray-400">
-          Background items {all && <span className="text-gray-600 font-normal">({filtered.length === all.length ? all.length : `${filtered.length} of ${all.length}`})</span>}
+          {all &&
+            (filtered.length === all.length
+              ? t("detail.startup.backgroundItemsTitle", { count: all.length })
+              : t("detail.startup.backgroundItemsFiltered", { shown: filtered.length, total: all.length }))}
         </h3>
         <div className="ml-auto flex items-center gap-2">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" aria-hidden />
             <input
               type="search"
-              aria-label="Search background items"
-              placeholder="Name, developer, identifier…"
+              aria-label={t("detail.startup.searchAria")}
+              placeholder={t("detail.startup.searchPlaceholder")}
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
@@ -431,7 +445,7 @@ function BackgroundItemsSection({ loader }: { loader: Loader<BackgroundItem[]> }
               onlyEnabled ? "bg-cyan-500/15 text-cyan-400 ring-1 ring-cyan-500/30" : "text-gray-500 hover:text-gray-300 hover:bg-white/[0.04]"
             )}
           >
-            Only enabled
+            {t("detail.startup.onlyEnabled")}
           </button>
           <button
             type="button"
@@ -440,22 +454,19 @@ function BackgroundItemsSection({ loader }: { loader: Loader<BackgroundItem[]> }
             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-gray-500 hover:text-red-400 hover:bg-red-500/10 focus:outline-none focus-visible:ring-1 focus-visible:ring-red-500/50"
           >
             <RotateCcw className="w-3 h-3" aria-hidden />
-            Reset…
+            {t("detail.startup.resetEllipsis")}
           </button>
         </div>
       </div>
-      <p className="text-[11px] text-gray-600">
-        These records come from the macOS Background Task Management database, which System Settings &gt; General &gt; Login Items &amp; Extensions shows. A single
-        record cannot be changed here. "Reset…" clears the whole database.
-      </p>
+      <p className="text-[11px] text-gray-600">{t("detail.startup.backgroundItemsHint")}</p>
       <ResetBackgroundItemsDialog open={resetOpen} onClose={() => setResetOpen(false)} onDone={loader.load} />
 
-      {loader.error && <InlineError title="The background items could not be read." message={loader.error} onRetry={loader.load} retrying={loader.loading} />}
+      {loader.error && <InlineError title={t("detail.startup.backgroundItemsError")} message={loader.error} onRetry={loader.load} retrying={loader.loading} />}
 
       {all === null ? (
-        !loader.error && <p className="text-[11px] text-gray-600">{loader.loading ? "Reading the background items…" : "Not loaded."}</p>
+        !loader.error && <p className="text-[11px] text-gray-600">{loader.loading ? t("detail.startup.readingBackground") : t("detail.common.notLoaded")}</p>
       ) : filtered.length === 0 ? (
-        <p className="text-[11px] text-gray-600">{all.length === 0 ? "macOS reports no background items." : "No background item matches."}</p>
+        <p className="text-[11px] text-gray-600">{all.length === 0 ? t("detail.startup.noBackgroundItems") : t("detail.startup.noBackgroundMatch")}</p>
       ) : (
         <>
           <ul className="grid gap-1.5 lg:grid-cols-2">
@@ -471,11 +482,11 @@ function BackgroundItemsSection({ loader }: { loader: Loader<BackgroundItem[]> }
                   ))}
                 </div>
                 <dl className="text-[10px] text-gray-500 space-y-px">
-                  <BackgroundFact term="Developer" value={item.developerName} mono={false} />
-                  <BackgroundFact term="Identifier" value={item.identifier} />
-                  <BackgroundFact term="Executable" value={item.executablePath} />
-                  <BackgroundFact term="Team" value={item.teamIdentifier} />
-                  <BackgroundFact term="User" value={item.uid === 0 ? "root (uid 0)" : `uid ${item.uid}`} mono={false} />
+                  <BackgroundFact term={t("detail.startup.factDeveloper")} value={item.developerName} mono={false} />
+                  <BackgroundFact term={t("detail.startup.factIdentifier")} value={item.identifier} />
+                  <BackgroundFact term={t("detail.startup.factExecutable")} value={item.executablePath} />
+                  <BackgroundFact term={t("detail.startup.factTeam")} value={item.teamIdentifier} />
+                  <BackgroundFact term={t("detail.startup.factUser")} value={item.uid === 0 ? "root (uid 0)" : `uid ${item.uid}`} mono={false} />
                 </dl>
               </li>
             ))}
@@ -486,7 +497,7 @@ function BackgroundItemsSection({ loader }: { loader: Loader<BackgroundItem[]> }
               onClick={() => setLimit((n) => n + BACKGROUND_WINDOW)}
               className="w-full py-2 text-xs text-cyan-400 hover:bg-white/[0.03] rounded-lg focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
             >
-              Show {Math.min(BACKGROUND_WINDOW, filtered.length - visible.length)} more
+              {t("detail.startup.showMore", { count: Math.min(BACKGROUND_WINDOW, filtered.length - visible.length) })}
             </button>
           )}
         </>
@@ -534,11 +545,11 @@ function ResetBody({
     setError(null);
     try {
       await backend.resetBackgroundItems();
-      toast.success("The background items are reset. Restart the Mac now.");
+      toast.success(t("detail.startup.resetSuccess"));
       onDone();
       onClose();
     } catch (e) {
-      setError((e as Error).message || "The request failed.");
+      setError((e as Error).message || t("detail.common.requestFailed"));
     } finally {
       setRunning(false);
     }
@@ -554,9 +565,9 @@ function ResetBody({
     >
       <div className="flex items-start justify-between gap-3">
         <h2 id={titleId} className="text-lg font-bold text-white">
-          Reset the background items?
+          {t("detail.startup.resetTitle")}
         </h2>
-        <button type="button" aria-label="Close" onClick={onClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50">
+        <button type="button" aria-label={t("common.close")} onClick={onClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50">
           <X className="w-4 h-4" aria-hidden />
         </button>
       </div>
@@ -565,20 +576,16 @@ function ResetBody({
         <p className="flex gap-2 rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3 text-xs text-red-200/90">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 text-red-400" aria-hidden />
           <span>
-            <span className="font-semibold">Warning: </span>macOS forgets the approval of EVERY app, not only of the items in this list. There is no undo.
+            <span className="font-semibold">{t("common.warning")}: </span>
+            {t("detail.startup.resetWarningBody")}
           </span>
         </p>
-        <p>
-          Every login item, launch agent and launch daemon that you allowed or switched off under System Settings &gt; General &gt; Login Items &amp; Extensions goes
-          back to its default. macOS asks again for each app, and apps can show their "background item added" notification again.
-        </p>
-        <p>The reset asks for an administrator password. macOS needs a restart before the new state is complete.</p>
+        <p>{t("detail.startup.resetExplanation1")}</p>
+        <p>{t("detail.startup.resetExplanation2")}</p>
       </div>
 
       <label className="block space-y-1">
-        <span className="text-xs font-medium text-gray-400">
-          Type <span className="font-mono text-gray-200">{RESET_WORD}</span> to continue
-        </span>
+        <span className="text-xs font-medium text-gray-400">{t("detail.startup.typeToContinue", { word: RESET_WORD })}</span>
         <input
           ref={inputRef}
           type="text"
@@ -592,7 +599,7 @@ function ResetBody({
         />
       </label>
 
-      {error && <InlineError title="The background items could not be reset." message={error} onRetry={run} retrying={running} />}
+      {error && <InlineError title={t("detail.startup.resetError")} message={error} onRetry={run} retrying={running} />}
 
       <div className="flex justify-end gap-2">
         <button
@@ -600,14 +607,14 @@ function ResetBody({
           onClick={onClose}
           className="px-3 py-2 rounded-xl text-xs text-gray-300 bg-white/[0.04] hover:bg-white/[0.08] focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
         >
-          Cancel
+          {t("common.cancel")}
         </button>
         <button
           type="submit"
           disabled={!armed || running}
           className="px-3 py-2 rounded-xl text-xs font-semibold text-red-100 bg-red-500/30 hover:bg-red-500/40 border border-red-500/40 disabled:opacity-40 disabled:hover:bg-red-500/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
         >
-          {running ? "Resetting…" : "Reset every approval"}
+          {running ? t("detail.startup.resetting") : t("detail.startup.resetSubmit")}
         </button>
       </div>
     </form>

@@ -1,4 +1,5 @@
 import { useId, useMemo } from "react";
+import { useT } from "@/i18n";
 
 // Dependency-free area sparkline. The y domain is fixed to 0–100 (percent values).
 // The SVG stretches to the container width: the viewBox is scaled without keeping the aspect ratio,
@@ -61,12 +62,17 @@ export function sparklinePaths(values: number[], width: number, height: number, 
   return { line, area: `${line}L${fmt(width)},${fmt(height)}L0,${fmt(height)}Z` };
 }
 
-export function MiniChart({ data, color = "#06b6d4", height = 40, label = "Trend" }: MiniChartProps) {
+export function MiniChart({ data, color = "#06b6d4", height = 40, label }: MiniChartProps) {
+  const { t } = useT();
   // useId() contains characters that are not safe inside url(#…) in every React version.
   const gradientId = `minichart-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
   const paths = useMemo(() => sparklinePaths(data.map((d) => d.value), VIEW_WIDTH, height), [data, height]);
   const last = data.length > 0 ? data[data.length - 1].value : null;
-  const name = last === null || !Number.isFinite(last) ? `${label}: no data yet` : `${label}: latest ${Math.round(last)}%, scale 0 to 100%`;
+  const chartLabel = label ?? t("app.miniChart.trendLabel");
+  const name =
+    last === null || !Number.isFinite(last)
+      ? t("app.miniChart.noData", { label: chartLabel })
+      : t("app.miniChart.summary", { label: chartLabel, value: Math.round(last) });
 
   return (
     <svg

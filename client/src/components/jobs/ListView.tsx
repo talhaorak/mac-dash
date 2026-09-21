@@ -6,7 +6,9 @@ import type { JobEditorTarget } from "@/components/jobs/JobEditor";
 import { metaKey, type JobMeta, type ServiceAction } from "@/lib/backend";
 import type { ServiceInfo } from "@/stores/app";
 import { cn } from "@/lib/utils";
-import { JOB_SCOPES, explainExitStatus, scopeFor } from "@shared/launchd";
+import { formatNumber, t, useT, type TKey } from "@/i18n";
+import { localizeExitStatus, localizeTriggers, scopeTitle } from "@/i18n/launchd";
+import { JOB_SCOPES } from "@shared/launchd";
 import { JobIcon } from "./JobIcon";
 import { JobRowActions, serviceKey, type ArmedAction } from "./ListJobRowActions";
 
@@ -17,7 +19,6 @@ type SortDirection = "asc" | "desc";
 
 interface ColumnSpec {
   id: JobListColumn;
-  title: string;
   /** Tailwind width of the column. The name column takes the rest. */
   width: string;
   /** Sort value. `null` sorts last in both directions. */
@@ -28,16 +29,30 @@ const SCOPE_RANK = new Map<string, number>(JOB_SCOPES.map((s, i) => [s.category,
 const STATUS_RANK: Record<ServiceInfo["status"], number> = { running: 0, error: 1, stopped: 2, unknown: 3 };
 
 const COLUMNS: ColumnSpec[] = [
-  { id: "name", title: "Name", width: "", value: (s) => s.label },
-  { id: "scope", title: "Scope", width: "w-32", value: (s) => SCOPE_RANK.get(s.category) ?? 99 },
-  { id: "status", title: "Status", width: "w-24", value: (s) => STATUS_RANK[s.status] },
-  { id: "enabled", title: "Enabled", width: "w-24", value: (s) => (s.disabled ? 1 : 0) },
-  { id: "triggers", title: "Triggers", width: "w-56", value: (s) => (s.triggers.length > 0 ? s.triggers.join(" · ") : null) },
-  { id: "pid", title: "PID", width: "w-20", value: (s) => s.pid },
-  { id: "lastExit", title: "Last exit", width: "w-24", value: (s) => s.lastExitStatus },
+  { id: "name", width: "", value: (s) => s.label },
+  { id: "scope", width: "w-32", value: (s) => SCOPE_RANK.get(s.category) ?? 99 },
+  { id: "status", width: "w-24", value: (s) => STATUS_RANK[s.status] },
+  { id: "enabled", width: "w-24", value: (s) => (s.disabled ? 1 : 0) },
+  { id: "triggers", width: "w-56", value: (s) => (s.triggers.length > 0 ? s.triggers.join(" · ") : null) },
+  { id: "pid", width: "w-20", value: (s) => s.pid },
+  { id: "lastExit", width: "w-24", value: (s) => s.lastExitStatus },
 ];
 
 const COLUMN_IDS = new Set<string>(COLUMNS.map((c) => c.id));
+
+const COLUMN_TITLE_KEYS: Record<JobListColumn, TKey> = {
+  name: "common.name",
+  scope: "list.common.scope",
+  status: "common.status",
+  enabled: "status.enabled",
+  triggers: "list.common.triggers",
+  pid: "list.columns.pid",
+  lastExit: "list.columns.lastExit",
+};
+
+function columnTitle(id: JobListColumn): string {
+  return t(COLUMN_TITLE_KEYS[id]);
+}
 
 // ── Persisted view state ─────────────────────────────────────────────
 
@@ -98,6 +113,7 @@ export interface JobListViewProps {
 
 /** Flat table of jobs with sortable columns and a column chooser. */
 export function JobListView({ services, meta, loading, busyKey, isArmed, onAction, onSelect, onEdit }: JobListViewProps) {
+  const { t, tn } = useT();
   const [prefs, setPrefs] = useState(loadPrefs);
   const [limit, setLimit] = useState(WINDOW);
 
@@ -141,21 +157,23 @@ export function JobListView({ services, meta, loading, busyKey, isArmed, onActio
     updatePrefs({ sort, hidden });
   };
 
-  if (loading && services.length === 0) return <p className="text-sm text-gray-500 text-center py-10">Reading launchd…</p>;
-  if (services.length === 0) return <p className="text-sm text-gray-500 text-center py-10">No job matches the filters.</p>;
+  if (loading && services.length === 0) return <p className="text-sm text-gray-500 text-center py-10">{t("list.status.readingLaunchd")}</p>;
+  if (services.length === 0) return <p className="text-sm text-gray-500 text-center py-10">{t("list.status.noMatch")}</p>;
 
   return (
     <GlowCard padding="sm">
       <div className="flex items-center gap-2 px-2 pb-2">
         <p className="text-xs text-gray-500 flex-1" aria-live="polite">
-          {rows.length < sorted.length ? `${rows.length} of ${sorted.length} jobs` : `${sorted.length} jobs`}
+          {rows.length < sorted.length
+            ? tn("list.count.shownOfTotal", sorted.length, { shown: formatNumber(rows.length) })
+            : tn("list.count.jobs", sorted.length)}
         </p>
         <ColumnMenu hidden={prefs.hidden} onToggle={toggleColumn} />
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] table-fixed border-collapse text-xs">
-          <caption className="sr-only">launchd jobs. The column header buttons sort the table.</caption>
+          <caption className="sr-only">{t("list.list.tableCaption")}</caption>
           <thead>
             <tr className="border-b border-white/[0.06]">
               {visibleColumns.map((c) => {
@@ -171,21 +189,21 @@ export function JobListView({ services, meta, loading, busyKey, isArmed, onActio
                     <button
                       type="button"
                       onClick={() => sortBy(c.id)}
-                      title={`Sort by ${c.title.toLowerCase()}`}
+                      title={t("list.list.sortBy", { column: columnTitle(c.id) })}
                       className={cn(
                         "w-full inline-flex items-center gap-1 px-2 py-2 rounded-lg text-[11px] uppercase tracking-wide transition-colors",
                         "hover:bg-white/[0.04] focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50",
                         active ? "text-cyan-400" : "text-gray-500 hover:text-gray-300"
                       )}
                     >
-                      <span className="truncate">{c.title}</span>
+                      <span className="truncate">{columnTitle(c.id)}</span>
                       <SortIcon className={cn("w-3 h-3 flex-shrink-0", !active && "opacity-40")} aria-hidden />
                     </button>
                   </th>
                 );
               })}
               <th scope="col" className="w-40 px-2 py-2 text-right text-[11px] uppercase tracking-wide font-medium text-gray-500">
-                Actions
+                {t("common.actions")}
               </th>
             </tr>
           </thead>
@@ -217,7 +235,7 @@ export function JobListView({ services, meta, loading, busyKey, isArmed, onActio
           onClick={() => setLimit((n) => n + WINDOW)}
           className="w-full mt-1 py-2 text-xs text-cyan-400 hover:bg-white/[0.03] rounded-lg focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
         >
-          Show {Math.min(WINDOW, sorted.length - rows.length)} more ({sorted.length - rows.length} hidden)
+          {tn("list.count.showMore", Math.min(WINDOW, sorted.length - rows.length))} ({t("list.count.hiddenTotal", { count: formatNumber(sorted.length - rows.length) })})
         </button>
       )}
     </GlowCard>
@@ -247,7 +265,9 @@ const JobListRow = memo(function JobListRow({
   onSelect: (key: string) => void;
   onEdit: (target: JobEditorTarget) => void;
 }) {
+  const { t } = useT();
   const open = () => onSelect(serviceKey(service));
+  const localizedTriggers = service.triggers.length > 0 ? localizeTriggers(service.triggers).join(" · ") : "";
 
   const cell = (column: JobListColumn) => {
     switch (column) {
@@ -264,20 +284,20 @@ const JobListRow = memo(function JobListRow({
                     e.stopPropagation();
                     open();
                   }}
-                  aria-label={`${service.label}. Open details`}
+                  aria-label={t("list.actions.openDetailsAria", { text: service.label })}
                   className="min-w-0 truncate text-left font-mono text-[12px] font-medium text-gray-200 rounded hover:text-cyan-300 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
                 >
                   {service.label}
                 </button>
                 {(service.unreadable || service.quarantined) && (
-                  <span title={service.unreadable ? "The plist cannot be parsed" : "The plist is quarantined"} className="text-red-400 flex-shrink-0">
+                  <span title={service.unreadable ? t("list.badge.unreadableTitle") : t("list.badge.quarantinedTitle")} className="text-red-400 flex-shrink-0">
                     <ShieldAlert className="w-3.5 h-3.5" aria-hidden />
-                    <span className="sr-only">{service.unreadable ? "unreadable plist" : "quarantined plist"}</span>
+                    <span className="sr-only">{service.unreadable ? t("list.badge.unreadableShort") : t("list.badge.quarantinedShort")}</span>
                   </span>
                 )}
-                {tags?.map((t) => (
-                  <span key={t} className="flex-shrink-0 px-1.5 py-px rounded text-[9px] font-medium bg-white/[0.06] text-gray-400">
-                    #{t}
+                {tags?.map((tag) => (
+                  <span key={tag} className="flex-shrink-0 px-1.5 py-px rounded text-[9px] font-medium bg-white/[0.06] text-gray-400">
+                    #{tag}
                   </span>
                 ))}
               </div>
@@ -290,19 +310,19 @@ const JobListRow = memo(function JobListRow({
           </div>
         );
       case "scope":
-        return <span className="text-gray-400">{scopeFor(service.category)?.title ?? service.category}</span>;
+        return <span className="text-gray-400">{scopeTitle(service.category)}</span>;
       case "status":
         return <StatusBadge status={service.status} size="sm" />;
       case "enabled":
         return service.disabled ? (
-          <span className="px-1.5 py-px rounded text-[10px] font-medium bg-amber-500/15 text-amber-400">Disabled</span>
+          <span className="px-1.5 py-px rounded text-[10px] font-medium bg-amber-500/15 text-amber-400">{t("status.disabled")}</span>
         ) : (
-          <span className="text-gray-400">Enabled</span>
+          <span className="text-gray-400">{t("status.enabled")}</span>
         );
       case "triggers":
         return service.triggers.length > 0 ? (
-          <span className="block truncate text-cyan-500/70" title={service.triggers.join(" · ")}>
-            {service.triggers.join(" · ")}
+          <span className="block truncate text-cyan-500/70" title={localizedTriggers}>
+            {localizedTriggers}
           </span>
         ) : (
           <Empty />
@@ -312,11 +332,11 @@ const JobListRow = memo(function JobListRow({
       case "lastExit":
         return service.lastExitStatus !== null ? (
           <span
-            title={explainExitStatus(service.lastExitStatus) ?? undefined}
+            title={localizeExitStatus(service.lastExitStatus) ?? undefined}
             className={cn("font-mono", service.lastExitStatus === 0 ? "text-gray-400" : "text-red-400")}
           >
             {service.lastExitStatus}
-            {service.lastExitStatus !== 0 && <span className="sr-only"> (failed)</span>}
+            {service.lastExitStatus !== 0 && <span className="sr-only">{t("list.list.failedSuffix")}</span>}
           </span>
         ) : (
           <Empty />
@@ -349,10 +369,11 @@ const JobListRow = memo(function JobListRow({
 });
 
 function Empty() {
+  const { t } = useT();
   return (
     <span className="text-gray-700">
       <span aria-hidden>–</span>
-      <span className="sr-only">none</span>
+      <span className="sr-only">{t("common.none")}</span>
     </span>
   );
 }
@@ -360,6 +381,7 @@ function Empty() {
 // ── Column chooser ───────────────────────────────────────────────────
 
 function ColumnMenu({ hidden, onToggle }: { hidden: JobListColumn[]; onToggle: (column: JobListColumn) => void }) {
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -409,11 +431,11 @@ function ColumnMenu({ hidden, onToggle }: { hidden: JobListColumn[]; onToggle: (
         className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-gray-400 hover:text-gray-200 hover:bg-white/[0.06] focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/50"
       >
         <Columns3 className="w-3.5 h-3.5" aria-hidden />
-        Columns
-        {hidden.length > 0 && <span className="text-gray-600">({hidden.length} hidden)</span>}
+        {t("list.list.columnsButton")}
+        {hidden.length > 0 && <span className="text-gray-600">({t("list.count.hiddenTotal", { count: formatNumber(hidden.length) })})</span>}
       </button>
       {open && (
-        <div role="menu" aria-label="Visible columns" className="absolute right-0 mt-1 w-44 z-30 glass rounded-xl border border-white/[0.08] p-1 shadow-2xl">
+        <div role="menu" aria-label={t("list.list.columnsMenuLabel")} className="absolute right-0 mt-1 w-44 z-30 glass rounded-xl border border-white/[0.08] p-1 shadow-2xl">
           {COLUMNS.filter((c) => c.id !== "name").map((c) => {
             const visible = !hidden.includes(c.id);
             return (
@@ -426,7 +448,7 @@ function ColumnMenu({ hidden, onToggle }: { hidden: JobListColumn[]; onToggle: (
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-gray-300 text-left hover:bg-white/[0.06] focus:outline-none focus-visible:bg-white/[0.08]"
               >
                 <span className="w-3.5 flex-shrink-0">{visible && <Check className="w-3.5 h-3.5 text-cyan-400" aria-hidden />}</span>
-                {c.title}
+                {columnTitle(c.id)}
               </button>
             );
           })}

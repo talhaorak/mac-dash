@@ -2,6 +2,7 @@ import { useId, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PlistData, PlistReal, isPlistDict, serializePlist, type PlistDict, type PlistValue } from "@shared/plist";
+import { t, tn, type TKey } from "@/i18n";
 
 // Recursive editor for any property list value. The form uses it for the nested launchd keys
 // (Sockets, MachServices, LaunchEvents…) and for keys it has no schema for.
@@ -12,6 +13,8 @@ import { PlistData, PlistReal, isPlistDict, serializePlist, type PlistDict, type
 export const PLIST_TYPES = ["string", "integer", "real", "boolean", "date", "data", "array", "dict"] as const;
 export type PlistType = (typeof PLIST_TYPES)[number];
 
+// Kept in English: JobForm.tsx renders this map directly (`PLIST_TYPE_LABELS[t]`), outside this
+// file's scope. `plistTypeLabel()` below is the localised equivalent used within this file.
 export const PLIST_TYPE_LABELS: Record<PlistType, string> = {
   string: "String",
   integer: "Integer",
@@ -22,6 +25,22 @@ export const PLIST_TYPE_LABELS: Record<PlistType, string> = {
   array: "Array",
   dict: "Dictionary",
 };
+
+const PLIST_TYPE_LABEL_KEYS: Record<PlistType, TKey> = {
+  string: "fields.plistTree.type.string",
+  integer: "fields.plistTree.type.integer",
+  real: "fields.plistTree.type.real",
+  boolean: "fields.plistTree.type.boolean",
+  date: "fields.plistTree.type.date",
+  data: "fields.plistTree.type.data",
+  array: "fields.plistTree.type.array",
+  dict: "fields.plistTree.type.dict",
+};
+
+/** Localised display name of a plist type, for use within this file. */
+function plistTypeLabel(type: PlistType): string {
+  return t(PLIST_TYPE_LABEL_KEYS[type]);
+}
 
 /** Containers deeper than this are shown as XML and edited in Expert mode. The root value has depth 0. */
 export const MAX_TREE_DEPTH = 12;
@@ -169,8 +188,7 @@ export function plistSignature(value: PlistValue | undefined): string {
 
 export function describeContainer(value: PlistValue[] | PlistDict): string {
   const n = Array.isArray(value) ? value.length : Object.keys(value).length;
-  if (Array.isArray(value)) return n === 1 ? "1 item" : `${n} items`;
-  return n === 1 ? "1 entry" : `${n} entries`;
+  return Array.isArray(value) ? tn("fields.plistTree.items", n) : tn("fields.plistTree.entries", n);
 }
 
 // ── Rows ─────────────────────────────────────────────────────────────
@@ -267,7 +285,7 @@ export function presetsForKey(key: string, jobLabel?: string): TreePreset[] {
     case "Sockets":
       return [
         {
-          label: "Add socket",
+          label: t("fields.plistTree.preset.addSocket"),
           apply: (current) => {
             const dict = asDict(current);
             return { ...dict, [uniqueKey("Listeners", Object.keys(dict))]: { SockServiceName: "8080", SockType: "stream", SockFamily: "IPv4" } };
@@ -277,7 +295,7 @@ export function presetsForKey(key: string, jobLabel?: string): TreePreset[] {
     case "MachServices":
       return [
         {
-          label: "Add service",
+          label: t("fields.plistTree.preset.addService"),
           apply: (current) => {
             const dict = asDict(current);
             return { ...dict, [uniqueKey(jobLabel?.trim() || "com.example.service", Object.keys(dict))]: true };
@@ -287,7 +305,7 @@ export function presetsForKey(key: string, jobLabel?: string): TreePreset[] {
     case "LaunchEvents":
       return [
         {
-          label: "Add IOKit matching event",
+          label: t("fields.plistTree.preset.addIokitEvent"),
           apply: (current) => {
             const dict = asDict(current);
             const stream = asDict(dict["com.apple.iokit.matching"]);
@@ -307,7 +325,7 @@ export function presetsForKey(key: string, jobLabel?: string): TreePreset[] {
         },
       ];
     case "inetdCompatibility":
-      return [{ label: "Add Wait", apply: (current) => ({ Wait: false, ...asDict(current) }) }];
+      return [{ label: t("fields.plistTree.preset.addWait"), apply: (current) => ({ Wait: false, ...asDict(current) }) }];
     default:
       return [];
   }
@@ -328,12 +346,17 @@ const treeButton =
   "inline-flex items-center gap-1 px-1.5 py-1 rounded-md text-xs text-gray-400 hover:text-gray-200 hover:bg-white/[0.06] transition-colors " +
   "focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400";
 
-const SCALAR_HINTS: Partial<Record<PlistType, string>> = {
-  integer: "Enter a whole number.",
-  real: "Enter a number, for example 1.5.",
-  date: "Enter a UTC time, for example 2026-01-31T09:00:00Z.",
-  data: "Enter base64 text.",
+const SCALAR_HINT_KEYS: Partial<Record<PlistType, TKey>> = {
+  integer: "fields.plistTree.hint.integer",
+  real: "fields.plistTree.hint.real",
+  date: "fields.plistTree.hint.date",
+  data: "fields.plistTree.hint.data",
 };
+
+function scalarHint(type: PlistType): string | undefined {
+  const key = SCALAR_HINT_KEYS[type];
+  return key === undefined ? undefined : t(key);
+}
 
 function xmlPreview(value: PlistValue): string {
   return serializePlist(value).split("\n").slice(3, -2).join("\n");
@@ -354,7 +377,7 @@ function TypeSelect({
 }) {
   const type = plistTypeOf(value);
   // A container cannot be created where it could not be edited.
-  const types = PLIST_TYPES.filter((t) => t === type || depth < MAX_TREE_DEPTH || (t !== "array" && t !== "dict"));
+  const types = PLIST_TYPES.filter((pt) => pt === type || depth < MAX_TREE_DEPTH || (pt !== "array" && pt !== "dict"));
   return (
     <select
       data-tree-type
@@ -364,9 +387,9 @@ function TypeSelect({
       onChange={(e) => onChange(convertValue(value, e.target.value as PlistType))}
       className={cn(treeInput, "w-[6.5rem] flex-shrink-0 font-sans")}
     >
-      {types.map((t) => (
-        <option key={t} value={t}>
-          {PLIST_TYPE_LABELS[t]}
+      {types.map((pt) => (
+        <option key={pt} value={pt}>
+          {plistTypeLabel(pt)}
         </option>
       ))}
     </select>
@@ -454,10 +477,10 @@ function ScalarInput({
       />
       {invalid ? (
         <span id={hintId} role="alert" className="block text-[11px] text-amber-400">
-          Not saved: {SCALAR_HINTS[type]}
+          {t("fields.plistTree.notSaved", { hint: scalarHint(type) ?? "" })}
         </span>
       ) : type === "data" ? (
-        <span className="block text-[11px] text-gray-600">{base64Bytes(canonical)} bytes</span>
+        <span className="block text-[11px] text-gray-600">{tn("fields.plistTree.bytes", base64Bytes(canonical))}</span>
       ) : null}
     </span>
   );
@@ -548,7 +571,9 @@ function ContainerNode({ value, onChange, depth, disabled, name, keyOptions, chi
         </datalist>
       )}
 
-      {rows.length === 0 && <p className="text-[11px] text-gray-600">{isArray ? "Empty array." : "Empty dictionary."}</p>}
+      {rows.length === 0 && (
+        <p className="text-[11px] text-gray-600">{isArray ? t("fields.plistTree.emptyArray") : t("fields.plistTree.emptyDict")}</p>
+      )}
 
       {rows.map((row, i) => (
         <RowView
@@ -571,13 +596,13 @@ function ContainerNode({ value, onChange, depth, disabled, name, keyOptions, chi
 
       {duplicates.length > 0 && (
         <p role="alert" className="text-[11px] text-amber-400">
-          Duplicate key: {duplicates.join(", ")}. Only the last one is saved.
+          {t("fields.common.duplicateKey", { keys: duplicates.join(", ") })}
         </p>
       )}
 
       <button type="button" data-tree-add disabled={disabled || hasEmptyKey} onClick={add} className={treeButton}>
         <Plus className="w-3.5 h-3.5" aria-hidden />
-        {isArray ? "Add item" : "Add entry"}
+        {isArray ? t("fields.plistTree.addItem") : t("fields.plistTree.addEntry")}
       </button>
     </div>
   );
@@ -616,7 +641,9 @@ function RowView({
   const container = isContainer(row.value);
   const [open, setOpen] = useState(depth <= 3);
   const bodyId = useId();
-  const shortName = isArray ? `item ${index + 1}` : row.key || `entry ${index + 1}`;
+  const shortName = isArray
+    ? t("fields.plistTree.itemIndex", { index: index + 1 })
+    : row.key || t("fields.plistTree.entryIndex", { index: index + 1 });
   const name = `${parentName}, ${shortName}`;
 
   return (
@@ -627,7 +654,7 @@ function RowView({
             type="button"
             aria-expanded={open}
             aria-controls={bodyId}
-            aria-label={`${open ? "Collapse" : "Expand"} ${name}`}
+            aria-label={t(open ? "fields.plistTree.collapse" : "fields.plistTree.expand", { name })}
             onClick={() => setOpen(!open)}
             className={cn(treeButton, "px-0.5")}
           >
@@ -645,36 +672,43 @@ function RowView({
           <input
             type="text"
             data-tree-key
-            aria-label={`Key ${index + 1} of ${parentName}`}
+            aria-label={t("fields.plistTree.keyOfParent", { index: index + 1, parent: parentName })}
             aria-invalid={row.key === ""}
             list={listId}
             value={row.key}
             disabled={disabled}
             spellCheck={false}
-            placeholder="Key"
+            placeholder={t("fields.plistTree.keyPlaceholder")}
             onChange={(e) => onKey(e.target.value)}
             className={cn(treeInput, "flex-[2] basis-24")}
           />
         )}
 
-        <TypeSelect value={row.value} depth={depth} disabled={disabled} label={`Type of ${name}`} onChange={onValue} />
+        <TypeSelect value={row.value} depth={depth} disabled={disabled} label={t("fields.plistTree.typeOf", { name })} onChange={onValue} />
 
         {container ? (
           <span className="flex-[3] basis-24 pt-1.5 text-[11px] text-gray-500">{describeContainer(row.value as PlistValue[] | PlistDict)}</span>
         ) : (
-          <ScalarInput value={row.value} disabled={disabled} label={`Value of ${name}`} onChange={onValue} />
+          <ScalarInput value={row.value} disabled={disabled} label={t("fields.common.valueOf", { name })} onChange={onValue} />
         )}
 
         <span className="flex flex-shrink-0">
           {isArray && (
             <>
-              <button type="button" data-move="up" aria-label={`Move ${name} up`} disabled={disabled || index === 0} onClick={() => onMove(-1)} className={treeButton}>
+              <button
+                type="button"
+                data-move="up"
+                aria-label={t("fields.plistTree.moveUp", { name })}
+                disabled={disabled || index === 0}
+                onClick={() => onMove(-1)}
+                className={treeButton}
+              >
                 <ArrowUp className="w-3.5 h-3.5" aria-hidden />
               </button>
               <button
                 type="button"
                 data-move="down"
-                aria-label={`Move ${name} down`}
+                aria-label={t("fields.plistTree.moveDown", { name })}
                 disabled={disabled || index === count - 1}
                 onClick={() => onMove(1)}
                 className={treeButton}
@@ -683,7 +717,7 @@ function RowView({
               </button>
             </>
           )}
-          <button type="button" aria-label={`Remove ${name}`} disabled={disabled} onClick={onRemove} className={treeButton}>
+          <button type="button" aria-label={t("fields.common.removeNamed", { name })} disabled={disabled} onClick={onRemove} className={treeButton}>
             <X className="w-3.5 h-3.5" aria-hidden />
           </button>
         </span>
@@ -700,12 +734,14 @@ function RowView({
 
 function TreeNode(props: NodeProps) {
   const { value, depth } = props;
-  if (!isContainer(value)) return <ScalarInput value={value} disabled={props.disabled} label={`Value of ${props.name}`} onChange={props.onChange} />;
+  if (!isContainer(value)) {
+    return <ScalarInput value={value} disabled={props.disabled} label={t("fields.common.valueOf", { name: props.name })} onChange={props.onChange} />;
+  }
   if (depth >= MAX_TREE_DEPTH) {
     return (
       <div className="space-y-1">
         <pre className="max-h-40 overflow-auto rounded-lg bg-black/30 p-2 text-[11px] font-mono text-gray-400">{xmlPreview(value)}</pre>
-        <p className="text-[11px] text-gray-600">This value is nested more than {MAX_TREE_DEPTH} levels deep. Edit it in Expert mode.</p>
+        <p className="text-[11px] text-gray-600">{t("fields.plistTree.tooDeep", { depth: MAX_TREE_DEPTH })}</p>
       </div>
     );
   }
@@ -750,11 +786,11 @@ export function PlistTreeEditor({
   if (value === undefined) {
     return (
       <div className="flex flex-wrap items-center gap-1 pt-1">
-        <span className="pr-1 text-[11px] text-gray-600">Not set.</span>
+        <span className="pr-1 text-[11px] text-gray-600">{t("fields.plistTree.notSet")}</span>
         {presetButtons}
         <button type="button" disabled={disabled} onClick={() => onChange(defaultForType(defaultType))} className={treeButton}>
           <Plus className="w-3.5 h-3.5" aria-hidden />
-          Add empty {PLIST_TYPE_LABELS[defaultType].toLowerCase()}
+          {t("fields.plistTree.addEmpty", { type: plistTypeLabel(defaultType).toLowerCase() })}
         </button>
       </div>
     );
@@ -762,19 +798,19 @@ export function PlistTreeEditor({
 
   const container = isContainer(value);
   return (
-    <div role="group" aria-label={`${name} value`} className="rounded-lg border border-white/[0.06] bg-black/20 p-2.5 space-y-2">
+    <div role="group" aria-label={t("fields.plistTree.valueGroupLabel", { name })} className="rounded-lg border border-white/[0.06] bg-black/20 p-2.5 space-y-2">
       <div className="flex flex-wrap items-start gap-1.5">
-        <TypeSelect value={value} depth={0} disabled={disabled} label={`Type of ${name}`} onChange={onChange} />
+        <TypeSelect value={value} depth={0} disabled={disabled} label={t("fields.plistTree.typeOf", { name })} onChange={onChange} />
         {container ? (
           <span className="pt-1.5 text-[11px] text-gray-500">{describeContainer(value)}</span>
         ) : (
-          <ScalarInput value={value} disabled={disabled} label={`Value of ${name}`} onChange={onChange} />
+          <ScalarInput value={value} disabled={disabled} label={t("fields.common.valueOf", { name })} onChange={onChange} />
         )}
         <span className="ml-auto flex flex-wrap gap-1">
           {presetButtons}
           <button type="button" disabled={disabled} onClick={() => onChange(undefined)} className={treeButton}>
             <X className="w-3.5 h-3.5" aria-hidden />
-            Remove key
+            {t("fields.common.removeKey")}
           </button>
         </span>
       </div>

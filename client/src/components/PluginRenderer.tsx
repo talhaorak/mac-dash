@@ -1,5 +1,6 @@
 import { useState, useEffect, type ComponentType } from "react";
 import { Loader2, AlertTriangle, RefreshCw } from "lucide-react";
+import { t, useT } from "@/i18n";
 
 interface PluginRendererProps {
   pluginId: string;
@@ -15,6 +16,7 @@ type LoadState =
  * Shows loading/error states while the plugin JS is fetched and evaluated.
  */
 export function PluginRenderer({ pluginId }: PluginRendererProps) {
+  const { t: translate } = useT();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   // Incremented by the Retry button to run the load effect again
   const [attempt, setAttempt] = useState(0);
@@ -40,7 +42,7 @@ export function PluginRenderer({ pluginId }: PluginRendererProps) {
         console.error(`[PluginRenderer] Failed to load "${pluginId}":`, e);
         setState({
           status: "error",
-          message: e?.message || "Failed to load plugin",
+          message: e?.message || t("app.plugin.loadFailed"),
         });
       });
 
@@ -56,7 +58,7 @@ export function PluginRenderer({ pluginId }: PluginRendererProps) {
         className="flex flex-col items-center justify-center h-64 gap-3"
       >
         <Loader2 className="w-6 h-6 text-cyan-400 animate-spin" aria-hidden="true" />
-        <p className="text-xs text-gray-500">Loading plugin...</p>
+        <p className="text-xs text-gray-500">{translate("app.plugin.loading")}</p>
       </div>
     );
   }
@@ -79,7 +81,7 @@ export function PluginRenderer({ pluginId }: PluginRendererProps) {
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-white/[0.04] text-gray-400 hover:text-gray-200 hover:bg-white/[0.08] transition-all mt-2"
         >
           <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
-          Retry
+          {translate("common.retry")}
         </button>
       </div>
     );

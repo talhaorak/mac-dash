@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-21
+
+### Added
+- **Lingon parity, second round** ([docs/lingon-parity.md](docs/lingon-parity.md)): grid view, job icons, tree editor for nested keys (Sockets, MachServices, LaunchEvents), undo/redo and "Discard changes", a path picker for every path field, automatic PATH for new jobs, per-job system log tab, editor colour themes, smart-folder rules over any launchd key, view options, helper tool delete, background-item reset, file drop to create a job (desktop).
+- **Deep links**: every view, filter, job and editor has its own URL. Browser tabs and reloads restore their state. Desktop: New Window (Cmd+N).
+- **Light, dark and system appearance.**
+- **English and Turkish** user interface with a language switch.
+- **Access token** for servers that listen beyond loopback (`HOST=0.0.0.0`): login screen, `~/.macdash/token`.
+- `bun run test:e2e`: an end-to-end test of the HTTP backend against real launchd, part of CI.
+- `bun run media`: regenerates the README and website screenshots and the demo GIF from fictional data.
+- README and website: real screenshots and a demo.
+
+### Changed
+- The background-item dump is cached for two minutes and runs once at a time (`sfltool dumpbtm` needs up to a minute on a busy Mac). HTTP idle timeout 120 s.
+- A click on a browser notification opens the job.
+
+### Fixed
+- Production builds answered 404 for deep links.
+
 ## [1.1.0] - 2026-09-21
 
 ### Added
