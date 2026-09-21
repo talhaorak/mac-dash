@@ -4,7 +4,7 @@
   "description": "Beautiful macOS system dashboard — monitor services, processes, resources and logs in real-time",
   "type": "module",
   "bin": {
-    "macdash": "./bin/macdash.mjs"
+    "macdash": "bin/macdash.mjs"
   },
   "main": "server/index.ts",
   "files": [
