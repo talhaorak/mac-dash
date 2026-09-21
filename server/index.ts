@@ -9,15 +9,58 @@ import processesRoutes from "./routes/processes";
 import logsRoutes from "./routes/logs";
 import systemRoutes from "./routes/system";
 import pluginsRoutes, { setRootApp } from "./routes/plugins";
-import { wsHandler, startPolling, type WsData } from "./ws/hub";
+import { wsHandler, startPolling, stopPolling, type WsData } from "./ws/hub";
 import { discoverPlugins, loadPluginServer } from "./plugins/registry";
+import { getClientDir } from "./plugins/paths";
+import { shutdownLogReader } from "./core/log-reader";
+import { startJobMonitor, stopJobMonitor } from "./core/job-monitor";
 
-const app = new Hono();
+const app = new Hono({ strict: false }); // the client calls some routes with a trailing slash
 const PORT = parseInt(process.env.PORT || "7227");
+const HOST = process.env.HOST || "127.0.0.1";
 const isDev = process.env.NODE_ENV !== "production";
+const DEV_CLIENT_PORT = parseInt(process.env.MACDASH_DEV_PORT || "7228"); // Vite dev server, see client/vite.config.ts
+
+// ── Access control ───────────────────────────────────────────────────
+// This API can kill processes and install launchd jobs, and it has no login.
+// It therefore only answers requests that come from its own pages:
+//   - Host must be a loopback name (blocks DNS rebinding), unless HOST was opened up on purpose.
+//   - A request that carries an Origin must come from an allowed origin (blocks other web pages).
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const isLoopbackBind = LOOPBACK_HOSTS.has(HOST) || HOST === "::1";
+const extraHosts = new Set((process.env.MACDASH_ALLOWED_HOSTS || "").split(",").map((h) => h.trim()).filter(Boolean));
+const extraOrigins = (process.env.MACDASH_ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
+const allowedOrigins = new Set([
+  ...["localhost", "127.0.0.1", "[::1]"].map((h) => `http://${h}:${PORT}`),
+  ...(isDev ? [`http://localhost:${DEV_CLIENT_PORT}`, `http://127.0.0.1:${DEV_CLIENT_PORT}`] : []),
+  ...extraOrigins,
+]);
+
+function hostnameOf(hostHeader: string | null): string {
+  if (!hostHeader) return "";
+  return hostHeader.startsWith("[") ? hostHeader.slice(0, hostHeader.indexOf("]") + 1) : hostHeader.split(":")[0];
+}
+
+function isAllowed(req: Request): boolean {
+  const host = req.headers.get("host");
+  if (isLoopbackBind && !LOOPBACK_HOSTS.has(hostnameOf(host)) && !extraHosts.has(hostnameOf(host))) return false;
+
+  const origin = req.headers.get("origin");
+  if (!origin) return true; // same-origin GET, curl, native clients
+  if (allowedOrigins.has(origin)) return true;
+  try {
+    return !isLoopbackBind && new URL(origin).host === host; // LAN mode: same-origin only
+  } catch {
+    return false;
+  }
+}
 
 // Middleware
-app.use("*", cors());
+app.use("*", async (c, next) => {
+  if (!isAllowed(c.req.raw)) return c.json({ ok: false, error: "Forbidden origin" }, 403);
+  await next();
+});
+app.use("*", cors({ origin: (origin) => (allowedOrigins.has(origin) ? origin : null) }));
 if (isDev) {
   app.use("*", logger());
 }
@@ -39,30 +82,43 @@ app.get("/api/health", (c) =>
 
 // Production: serve built client
 if (!isDev) {
-  const clientDir = join(import.meta.dir, "../dist/client");
+  const clientDir = getClientDir(); // also correct inside a compiled binary
   app.use("/*", serveStatic({ root: clientDir }));
   app.get("*", serveStatic({ path: join(clientDir, "index.html") }));
+}
+
+// `bun --watch` reloads in place and keeps the pid, so a `log stream` child of the previous
+// run would survive every reload. Reap our own leftover children before starting.
+if (isDev) {
+  Bun.spawnSync(["pkill", "-P", String(process.pid), "-f", "log stream --style compact"]);
 }
 
 // Initialize
 console.log(`\n  macdash starting...`);
 console.log(`  Mode: ${isDev ? "development" : "production"}`);
 
-// Log stream is now lazy — starts only when a client subscribes to "logs"
+// Log stream is lazy — starts only when a client subscribes to "logs"
 console.log("  Log stream: on-demand (lazy)");
 
 // Discover and load plugins
-discoverPlugins().then(async (plugins) => {
-  console.log(`  Discovered ${plugins.length} plugin(s)`);
-  for (const plugin of plugins) {
-    if (plugin.enabled) {
-      const loaded = await loadPluginServer(plugin.manifest.id, app);
-      if (loaded) {
-        console.log(`  Loaded plugin: ${plugin.manifest.name}`);
+discoverPlugins()
+  .then(async (plugins) => {
+    console.log(`  Discovered ${plugins.length} plugin(s)`);
+    for (const plugin of plugins) {
+      if (plugin.enabled) {
+        const loaded = await loadPluginServer(plugin.manifest.id, app);
+        if (loaded) {
+          console.log(`  Loaded plugin: ${plugin.manifest.name}`);
+        }
       }
     }
-  }
-});
+  })
+  .catch((e) => console.error("  Plugin discovery failed:", e));
+
+// Watch the launchd folders for the whole lifetime of the server
+startJobMonitor()
+  .then(() => console.log("  launchd job monitor started"))
+  .catch((e) => console.error("  launchd job monitor failed to start:", e));
 
 // Start WebSocket polling
 startPolling();
@@ -70,13 +126,15 @@ console.log("  WebSocket polling started");
 
 // Start server with WebSocket support
 const server = Bun.serve<WsData>({
+  hostname: HOST,
   port: PORT,
-  idleTimeout: 30, // seconds — avoid premature timeouts during first plist cache build
+  idleTimeout: 30, // seconds
   fetch(req, server) {
     const url = new URL(req.url);
 
     // WebSocket upgrade
     if (url.pathname === "/ws") {
+      if (!isAllowed(req)) return new Response("Forbidden origin", { status: 403 });
       const upgraded = server.upgrade(req, {
         data: { subscriptions: new Set() },
       });
@@ -90,6 +148,19 @@ const server = Bun.serve<WsData>({
   websocket: wsHandler,
 });
 
-console.log(`  Server listening on http://localhost:${server.port}`);
-console.log(`  WebSocket on ws://localhost:${server.port}/ws`);
+function shutdown() {
+  stopPolling();
+  stopJobMonitor();
+  shutdownLogReader();
+  server.stop(true);
+  process.exit(0);
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
+console.log(`  Server listening on http://${HOST}:${server.port}`);
+console.log(`  WebSocket on ws://${HOST}:${server.port}/ws`);
+if (!isLoopbackBind) {
+  console.warn(`  WARNING: HOST=${HOST} exposes an unauthenticated admin API to your network.`);
+}
 console.log(`\n  Ready!\n`);

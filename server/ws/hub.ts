@@ -8,6 +8,7 @@ import {
   stopLogStream,
   type LogEntry,
 } from "../core/log-reader";
+import { notifyNatively, onJobEvent } from "../core/job-monitor";
 
 export type WsData = {
   subscriptions: Set<string>;
@@ -20,6 +21,7 @@ let pollingIntervals: Timer[] = [];
 let logUnsubscribe: (() => void) | null = null;
 
 // ── Caching: avoid re-serialising and re-sending identical data ──────
+let lastSystemJson = "";
 let lastServicesJson = "";
 let lastProcessesJson = "";
 
@@ -83,8 +85,36 @@ function ensureLogStream() {
   }
 }
 
+async function pushServices() {
+  if (!hasSubscribers("services")) return;
+  try {
+    const services = await listServices();
+    const json = JSON.stringify(services);
+    if (json !== lastServicesJson) {
+      lastServicesJson = json;
+      broadcast("services", "snapshot", services);
+    }
+  } catch (e) {
+    console.error("Services poll error:", e);
+  }
+}
+
+/** Push a fresh services snapshot right after a mutation instead of waiting for the next poll. */
+let refreshTimer: Timer | null = null;
+export function refreshServices() {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(pushServices, 300);
+}
+
 /** Start all polling loops for real-time data */
 export function startPolling() {
+  // ── launchd job changes — pushed as they happen ───────────────────
+  onJobEvent((event) => {
+    if (hasSubscribers("job-events")) broadcast("job-events", "update", event);
+    else notifyNatively(event);
+    refreshServices();
+  });
+
   // ── System stats — every 5s (was 2s) ──────────────────────────────
   // Uses vm_stat + iostat instead of heavy `top -l 1`
   pollingIntervals.push(
@@ -92,7 +122,11 @@ export function startPolling() {
       if (!hasSubscribers("system")) return;
       try {
         const stats = await getSystemStats();
-        broadcast("system", "snapshot", stats);
+        const json = JSON.stringify(stats);
+        if (json !== lastSystemJson) {
+          lastSystemJson = json;
+          broadcast("system", "snapshot", stats);
+        }
       } catch (e) {
         console.error("System poll error:", e);
       }
@@ -101,21 +135,7 @@ export function startPolling() {
 
   // ── Services — every 10s (was 3s) ─────────────────────────────────
   // Services rarely change; only broadcast when data actually differs
-  pollingIntervals.push(
-    setInterval(async () => {
-      if (!hasSubscribers("services")) return;
-      try {
-        const services = await listServices();
-        const json = JSON.stringify(services);
-        if (json !== lastServicesJson) {
-          lastServicesJson = json;
-          broadcast("services", "snapshot", services);
-        }
-      } catch (e) {
-        console.error("Services poll error:", e);
-      }
-    }, 10000)
-  );
+  pollingIntervals.push(setInterval(pushServices, 10000));
 
   // ── Processes — every 5s (was 3s) ──────────────────────────────────
   pollingIntervals.push(
@@ -172,8 +192,12 @@ export const wsHandler = {
             ? msg.topics
             : [msg.topic];
           for (const t of topics) {
-            ws.data.subscriptions.add(t);
+            if (typeof t === "string" && t.length <= 64) ws.data.subscriptions.add(t);
           }
+          // A new subscriber has no snapshot yet: make the next poll send one.
+          if (topics.includes("system")) lastSystemJson = "";
+          if (topics.includes("services")) lastServicesJson = "";
+          if (topics.includes("processes")) lastProcessesJson = "";
           ws.send(
             JSON.stringify({
               type: "subscribed",
@@ -213,7 +237,3 @@ export const wsHandler = {
     ensureLogStream();
   },
 };
-
-export function getClientCount(): number {
-  return clients.size;
-}

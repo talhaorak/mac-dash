@@ -2,9 +2,12 @@ import { Hono } from "hono";
 import { readdir, readFile } from "fs/promises";
 import { join } from "path";
 import type { LoadedPlugin, PluginManifest, ServerPlugin } from "./types";
+import { getPluginsDir } from "./paths";
 
 const plugins = new Map<string, LoadedPlugin>();
-const PLUGINS_DIR = join(import.meta.dir, "../../plugins");
+// Not `join(import.meta.dir, "../../plugins")`: that is `/plugins` inside a
+// `bun build --compile` executable (see ./paths.ts).
+const PLUGINS_DIR = getPluginsDir();
 
 export async function discoverPlugins(): Promise<LoadedPlugin[]> {
   try {

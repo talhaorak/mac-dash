@@ -1,3 +1,6 @@
+import os from "os";
+import { statfs } from "fs/promises";
+
 export interface SystemStats {
   cpu: {
     user: number;
@@ -49,75 +52,91 @@ async function exec(cmd: string[]): Promise<string> {
 }
 
 // ── Cached static values (fetched once) ──────────────────────────────
+// CPU model, core count and memory size come from the `os` module.
+// Only the macOS product version needs a subprocess (`os.release()` is the
+// Darwin kernel version, not "15.2").
 let cachedCpuModel = "";
 let cachedCpuCores = 0;
 let cachedMemTotal = 0;
-let cachedHostname = "";
 let cachedOsVersion = "";
 let staticCached = false;
 
 async function ensureStaticCache(): Promise<void> {
   if (staticCached) return;
-  // Batch all sysctl keys in a single call
-  const output = await exec([
-    "sysctl",
-    "-n",
-    "machdep.cpu.brand_string",
-    "hw.ncpu",
-    "hw.memsize",
-  ]);
-  const lines = output.split("\n");
-  cachedCpuModel = lines[0]?.trim() || "Unknown";
-  cachedCpuCores = parseInt(lines[1]?.trim()) || 1;
-  cachedMemTotal = parseInt(lines[2]?.trim()) || 0;
 
-  const [hostname, osVersion] = await Promise.all([
-    exec(["hostname"]),
-    exec(["sw_vers", "-productVersion"]),
-  ]);
-  cachedHostname = hostname || "localhost";
-  cachedOsVersion = osVersion || "unknown";
+  const cpus = os.cpus();
+  cachedCpuModel = cpus[0]?.model?.trim() || "Unknown";
+  cachedCpuCores = cpus.length || 1;
+  cachedMemTotal = os.totalmem();
+
+  cachedOsVersion = (await exec(["sw_vers", "-productVersion"])) || "unknown";
   staticCached = true;
 }
 
-// ── Lightweight CPU usage via ps + sysctl ─────────────────────────────
-// Instead of `top -l 1` (heavy, enumerates all processes) or
-// `iostat -c 2` (takes ~1s sampling window), we use:
-// - `ps -A -o %cpu` to sum all process CPU usage (instant)
-// - Divide by core count to approximate system-wide utilisation
-// This is a rough approximation but extremely lightweight (~50ms).
-let lastCpuIdle = 100;
-let lastCpuUser = 0;
-let lastCpuSys = 0;
-
-async function getCpuUsage(): Promise<{
+// ── CPU usage from os.cpus() tick deltas (no subprocess) ─────────────
+// os.cpus() reports cumulative per-core times.  Usage over an interval is
+// the delta between two samples: (user+nice), (sys+irq) and idle as a
+// share of the total delta.  This is what `top` reports, unlike the old
+// sum of `ps -A -o %cpu` with a guessed 60/40 user/sys split.
+interface CpuSample {
   user: number;
   sys: number;
   idle: number;
-}> {
-  try {
-    const output = await exec(["ps", "-A", "-o", "%cpu"]);
-    const lines = output.split("\n").slice(1); // skip header
-    let totalCpu = 0;
-    for (const line of lines) {
-      const val = parseFloat(line.trim());
-      if (!isNaN(val)) totalCpu += val;
-    }
-    // totalCpu is the sum of per-process CPU % (can exceed 100% on multi-core)
-    // Normalise to 0-100 range by dividing by core count
-    const cores = cachedCpuCores || 1;
-    const usedPercent = Math.min(totalCpu / cores, 100);
-    // Approximate user/sys split (typically ~60/40 on macOS)
-    const user = Math.round(usedPercent * 0.6 * 10) / 10;
-    const sys = Math.round(usedPercent * 0.4 * 10) / 10;
-    const idle = Math.round((100 - usedPercent) * 10) / 10;
+  at: number;
+}
 
-    lastCpuUser = user;
-    lastCpuSys = sys;
-    lastCpuIdle = idle;
-    return { user, sys, idle };
+interface CpuUsage {
+  user: number;
+  sys: number;
+  idle: number;
+}
+
+const CPU_MIN_SAMPLE_GAP_MS = 250; // below this the delta is mostly noise
+const CPU_FIRST_SAMPLE_WAIT_MS = 200;
+let lastCpuSample: CpuSample | null = null;
+let lastCpuUsage: CpuUsage = { user: 0, sys: 0, idle: 100 };
+
+function sampleCpu(): CpuSample {
+  // Read the numbers right now: the delta needs values frozen at sample time.
+  let user = 0;
+  let sys = 0;
+  let idle = 0;
+  for (const cpu of os.cpus()) {
+    user += cpu.times.user + cpu.times.nice;
+    sys += cpu.times.sys + cpu.times.irq;
+    idle += cpu.times.idle;
+  }
+  return { user, sys, idle, at: Date.now() };
+}
+
+const round1 = (n: number): number => Math.round(n * 10) / 10;
+
+async function getCpuUsage(): Promise<CpuUsage> {
+  try {
+    if (!lastCpuSample) {
+      // First call: no previous sample, so take a short one-off window.
+      lastCpuSample = sampleCpu();
+      await Bun.sleep(CPU_FIRST_SAMPLE_WAIT_MS);
+    } else if (Date.now() - lastCpuSample.at < CPU_MIN_SAMPLE_GAP_MS) {
+      return lastCpuUsage;
+    }
+
+    const prev = lastCpuSample;
+    const next = sampleCpu();
+    const user = next.user - prev.user;
+    const sys = next.sys - prev.sys;
+    const idle = next.idle - prev.idle;
+    const total = user + sys + idle;
+    if (total <= 0) return lastCpuUsage; // counters did not advance
+
+    lastCpuSample = next;
+    lastCpuUsage = {
+      user: round1((user / total) * 100),
+      sys: round1((sys / total) * 100),
+      idle: round1((idle / total) * 100),
+    };
   } catch {}
-  return { user: lastCpuUser, sys: lastCpuSys, idle: lastCpuIdle };
+  return lastCpuUsage;
 }
 
 // ── Memory via vm_stat (single lightweight call) ─────────────────────
@@ -156,95 +175,60 @@ async function getMemoryStats(
   }
 }
 
-// ── Load average & process/thread counts from sysctl ─────────────────
-async function getLoadAndProcessCounts(): Promise<{
-  loadAvg: [number, number, number];
-  processCount: number;
-  threadCount: number;
+// ── Load average, uptime, hostname: `os` module, no subprocess ───────
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+function getLoadAvg(): [number, number, number] {
+  const [one = 0, five = 0, fifteen = 0] = os.loadavg();
+  return [round2(one), round2(five), round2(fifteen)];
+}
+
+function getUptime(): string {
+  const upSeconds = Math.floor(os.uptime());
+  if (!Number.isFinite(upSeconds) || upSeconds < 0) return "unknown";
+
+  const days = Math.floor(upSeconds / 86400);
+  const hours = Math.floor((upSeconds % 86400) / 3600);
+  const mins = Math.floor((upSeconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h ${mins}m`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
+
+function getHostname(): string {
+  return os.hostname() || "localhost";
+}
+
+// ── Disk via statfs(2) (no subprocess) ───────────────────────────────
+// used = total - available, the same formula as the desktop backend.
+// (`df -k /` reports only the sealed APFS system volume as "Used".)
+const DISK_MOUNT_POINT = "/";
+
+async function getDiskStats(): Promise<{
+  total: number;
+  used: number;
+  free: number;
 }> {
   try {
-    const output = await exec(["sysctl", "-n", "vm.loadavg", "kern.proc.all"]);
-    // vm.loadavg: "{ 2.45 3.12 2.98 }"
-    const loadMatch = output.match(
-      /\{\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\}/
-    );
-    const loadAvg: [number, number, number] = loadMatch
-      ? [
-          parseFloat(loadMatch[1]),
-          parseFloat(loadMatch[2]),
-          parseFloat(loadMatch[3]),
-        ]
-      : [0, 0, 0];
-
-    // kern.proc.all is not always available; fallback to ps count
-    return { loadAvg, processCount: 0, threadCount: 0 };
+    const stats = await statfs(DISK_MOUNT_POINT);
+    const total = stats.blocks * stats.bsize;
+    const free = stats.bavail * stats.bsize;
+    return { total, used: Math.max(total - free, 0), free };
   } catch {
-    return { loadAvg: [0, 0, 0], processCount: 0, threadCount: 0 };
+    return { total: 0, used: 0, free: 0 };
   }
 }
 
-async function getLoadAvg(): Promise<[number, number, number]> {
-  try {
-    const output = await exec(["sysctl", "-n", "vm.loadavg"]);
-    const match = output.match(/\{\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\}/);
-    if (match) {
-      return [
-        parseFloat(match[1]),
-        parseFloat(match[2]),
-        parseFloat(match[3]),
-      ];
-    }
-  } catch {}
-  return [0, 0, 0];
-}
-
-// ── Uptime from sysctl (no subprocess needed) ────────────────────────
-async function getUptime(): Promise<string> {
-  try {
-    const output = await exec(["sysctl", "-n", "kern.boottime"]);
-    // kern.boottime: "{ sec = 1707834567, usec = 123456 } ..."
-    const match = output.match(/sec\s*=\s*(\d+)/);
-    if (match) {
-      const bootTime = parseInt(match[1]);
-      const upSeconds = Math.floor(Date.now() / 1000 - bootTime);
-      const days = Math.floor(upSeconds / 86400);
-      const hours = Math.floor((upSeconds % 86400) / 3600);
-      const mins = Math.floor((upSeconds % 3600) / 60);
-      if (days > 0) return `${days}d ${hours}h ${mins}m`;
-      if (hours > 0) return `${hours}h ${mins}m`;
-      return `${mins}m`;
-    }
-  } catch {}
-  return "unknown";
-}
-
-/** Get real-time system statistics — OPTIMIZED: no more `top` */
+/** Get real-time system statistics — one subprocess per call (`vm_stat`) */
 export async function getSystemStats(): Promise<SystemStats> {
   // Ensure static info is cached
   await ensureStaticCache();
 
-  // Run lightweight commands in parallel
-  const [cpu, mem, loadAvg, dfOutput, uptime] = await Promise.all([
+  const [cpu, mem, disk] = await Promise.all([
     getCpuUsage(),
     getMemoryStats(cachedMemTotal),
-    getLoadAvg(),
-    exec(["df", "-k", "/"]),
-    getUptime(),
+    getDiskStats(),
   ]);
-
-  // Parse disk usage
-  let diskTotal = 0,
-    diskUsed = 0,
-    diskFree = 0;
-  const dfLines = dfOutput.split("\n");
-  if (dfLines.length > 1) {
-    const parts = dfLines[1].trim().split(/\s+/);
-    if (parts.length >= 4) {
-      diskTotal = parseInt(parts[1]) * 1024;
-      diskUsed = parseInt(parts[2]) * 1024;
-      diskFree = parseInt(parts[3]) * 1024;
-    }
-  }
 
   return {
     cpu: {
@@ -253,7 +237,7 @@ export async function getSystemStats(): Promise<SystemStats> {
       idle: cpu.idle,
       model: cachedCpuModel,
       cores: cachedCpuCores,
-      loadAvg,
+      loadAvg: getLoadAvg(),
     },
     memory: {
       total: cachedMemTotal,
@@ -265,14 +249,14 @@ export async function getSystemStats(): Promise<SystemStats> {
         cachedMemTotal > 0 ? (mem.used / cachedMemTotal) * 100 : 0,
     },
     disk: {
-      total: diskTotal,
-      used: diskUsed,
-      free: diskFree,
-      usedPercent: diskTotal > 0 ? (diskUsed / diskTotal) * 100 : 0,
-      mountPoint: "/",
+      total: disk.total,
+      used: disk.used,
+      free: disk.free,
+      usedPercent: disk.total > 0 ? (disk.used / disk.total) * 100 : 0,
+      mountPoint: DISK_MOUNT_POINT,
     },
-    uptime,
-    hostname: cachedHostname,
+    uptime: getUptime(),
+    hostname: getHostname(),
     osVersion: cachedOsVersion,
     processCount: 0, // We get this from process list instead now
     threadCount: 0,
@@ -291,7 +275,7 @@ export async function getHardwareInfo(): Promise<HardwareInfo> {
     cores: cachedCpuCores,
     memory: cachedMemTotal,
     osVersion: cachedOsVersion,
-    hostname: cachedHostname,
+    hostname: getHostname(),
     serialNumber: null,
   };
 }

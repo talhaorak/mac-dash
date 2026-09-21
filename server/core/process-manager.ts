@@ -114,25 +114,99 @@ export async function listProcesses(): Promise<ProcessInfo[]> {
   return processes.sort((a, b) => b.cpu - a.cpu);
 }
 
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+export type KillFailureReason =
+  | "invalid"
+  | "protected"
+  | "not-permitted"
+  | "not-found"
+  | "failed";
+
+export interface KillResult {
+  ok: boolean;
+  error?: string;
+  /** Machine-readable failure class; the route maps it to an HTTP status */
+  reason?: KillFailureReason;
+}
+
+/**
+ * Refuse PIDs that must never be signalled from the dashboard:
+ * launchd (1), the kernel (0), this server and the process that spawned it.
+ */
+function checkKillTarget(pid: number): KillResult | null {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return { ok: false, reason: "invalid", error: "Invalid PID" };
+  }
+  if (pid === 1) {
+    return {
+      ok: false,
+      reason: "protected",
+      error: "Refusing to kill PID 1 (launchd)",
+    };
+  }
+  if (pid === process.pid) {
+    return {
+      ok: false,
+      reason: "protected",
+      error: `Refusing to kill PID ${pid}: it is the mac-dash server itself`,
+    };
+  }
+  if (pid === process.ppid) {
+    return {
+      ok: false,
+      reason: "protected",
+      error: `Refusing to kill PID ${pid}: it is the parent of the mac-dash server`,
+    };
+  }
+  return null;
+}
+
 /** Kill a process by PID */
 export async function killProcess(
   pid: number,
   signal: "TERM" | "KILL" = "TERM"
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<KillResult> {
+  const rejected = checkKillTarget(pid);
+  if (rejected) return rejected;
+
   try {
     const sig = signal === "KILL" ? "-9" : "-15";
     const proc = Bun.spawn(["kill", sig, String(pid)], {
       stdout: "pipe",
       stderr: "pipe",
     });
-    await proc.exited;
-    if (proc.exitCode !== 0) {
-      const err = await new Response(proc.stderr).text();
-      return { ok: false, error: err.trim() || `Failed to kill PID ${pid}` };
+    const [exitCode, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stderr).text(),
+    ]);
+    if (exitCode === 0) return { ok: true };
+
+    // `kill` prints "kill: <pid>: <strerror>"
+    const err = stderr.trim();
+    if (/operation not permitted/i.test(err)) {
+      return {
+        ok: false,
+        reason: "not-permitted",
+        error: `Cannot kill PID ${pid}: the process belongs to another user or to root`,
+      };
     }
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
+    if (/no such process/i.test(err)) {
+      return {
+        ok: false,
+        reason: "not-found",
+        error: `Cannot kill PID ${pid}: no such process`,
+      };
+    }
+    return {
+      ok: false,
+      reason: "failed",
+      error: err || `Failed to kill PID ${pid} (exit code ${exitCode})`,
+    };
+  } catch (e: unknown) {
+    return { ok: false, reason: "failed", error: errorMessage(e) };
   }
 }
 
@@ -152,33 +226,47 @@ export async function getProcessCwd(pid: number): Promise<string | null> {
   }
 }
 
-/** Get the parent chain of a process */
+/** Upper bound for the ancestor walk; real chains are a handful of entries */
+const MAX_CHAIN_DEPTH = 64;
+
+/**
+ * Get the parent chain of a process.
+ * Takes ONE `ps` snapshot of every process and walks the pid → ppid map in
+ * memory, instead of spawning one `ps` per ancestor.
+ */
 export async function getProcessChain(pid: number): Promise<ProcessChainEntry[]> {
-  const chain: ProcessChainEntry[] = [];
-  let currentPid = pid;
+  const output = await exec(["ps", "-axo", "pid=,ppid=,user=,args="]);
 
-  while (currentPid > 1) {
-    const output = await exec([
-      "ps", "-p", String(currentPid), "-o", "pid=,ppid=,user=,args=",
-    ]);
-    const line = output.trim();
-    if (!line) break;
-
+  const byPid = new Map<number, ProcessChainEntry>();
+  for (const line of output.split("\n")) {
     const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
-    if (!match) break;
+    if (!match) continue;
 
     const [, pidStr, ppidStr, user, argsStr] = match;
     const { name } = parseExecutableFromArgs(argsStr.trim());
-    chain.push({
-      pid: parseInt(pidStr),
+    const entryPid = parseInt(pidStr);
+    byPid.set(entryPid, {
+      pid: entryPid,
       ppid: parseInt(ppidStr),
       user,
       command: name,
     });
+  }
 
-    const nextPid = parseInt(ppidStr);
-    if (nextPid === currentPid || nextPid <= 0) break;
-    currentPid = nextPid;
+  const chain: ProcessChainEntry[] = [];
+  const visited = new Set<number>();
+  let currentPid = pid;
+
+  while (currentPid > 1 && chain.length < MAX_CHAIN_DEPTH) {
+    if (visited.has(currentPid)) break; // pid reuse could form a cycle
+    visited.add(currentPid);
+
+    const entry = byPid.get(currentPid);
+    if (!entry) break;
+    chain.push(entry);
+
+    if (entry.ppid === currentPid || entry.ppid <= 0) break;
+    currentPid = entry.ppid;
   }
 
   return chain;

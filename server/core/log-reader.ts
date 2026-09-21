@@ -31,6 +31,41 @@ const MAX_BUFFER = 1000;
 // the stream.  We only actually stop when all callers have stopped.
 let streamRefCount = 0;
 
+// ── Restart policy for an unexpectedly exited `log stream` ───────────
+// Exponential backoff (1s, 2s, 4s … capped at 30s) so a child that dies
+// immediately cannot turn into a hot restart loop.  A run that survives
+// STABLE_RUN_MS resets the backoff.
+const RESTART_BASE_DELAY_MS = 1_000;
+const RESTART_MAX_DELAY_MS = 30_000;
+const STABLE_RUN_MS = 60_000;
+let restartTimer: Timer | null = null;
+let restartAttempts = 0;
+
+// ── Limits for `log show` queries ────────────────────────────────────
+export const MAX_QUERY_MINUTES = 1440; // 24h
+export const MAX_PREDICATE_LENGTH = 500;
+export const MAX_PROCESS_NAME_LENGTH = 128;
+const MAX_QUERY_ENTRIES = 500;
+const QUERY_TIMEOUT_MS = 20_000;
+const QUERY_MAX_OUTPUT_BYTES = 128 * 1024 * 1024;
+const MAX_CONCURRENT_QUERIES = 3;
+const activeQueries = new Set<Subprocess>();
+
+export interface LogQueryResult {
+  entries: LogEntry[];
+  /** true when the child was killed before it finished (see truncatedBy) */
+  truncated: boolean;
+  truncatedBy: "timeout" | "output-limit" | null;
+}
+
+/** Thrown when too many `log show` children are already running */
+export class LogQueryBusyError extends Error {
+  constructor() {
+    super("Too many log queries are running. Try again in a few seconds.");
+    this.name = "LogQueryBusyError";
+  }
+}
+
 function parseLogLevel(level: string): LogEntry["level"] {
   const l = level.toLowerCase();
   if (l.includes("error") || l.includes("fault")) return "error";
@@ -40,9 +75,17 @@ function parseLogLevel(level: string): LogEntry["level"] {
   return "default";
 }
 
+// "Ty" column of `--style compact`
+const COMPACT_LEVELS: Record<string, LogEntry["level"]> = {
+  E: "error",
+  F: "error",
+  I: "info",
+  Db: "debug",
+  Df: "default",
+};
+
 function parseCompactLogLine(line: string): LogEntry | null {
-  // Compact format: "timestamp processName[pid] message"
-  // or NDJSON format
+  // NDJSON, `--style compact`, or syslog-like lines
   try {
     // Try NDJSON first
     if (line.startsWith("{")) {
@@ -59,7 +102,27 @@ function parseCompactLogLine(line: string): LogEntry | null {
     }
   } catch {}
 
-  // Compact format parsing
+  // `--style compact`: "2026-01-31 12:00:00.123 Df process name[123:1a2b] message"
+  const compact = line.match(
+    /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+)\s+([A-Za-z]{1,2})\s+(.+?)\[(\d+):[0-9a-fA-F]+\]\s?(.*)$/
+  );
+  if (compact) {
+    const [, timestamp, type, process, pid, message] = compact;
+    return {
+      timestamp,
+      level: COMPACT_LEVELS[type] ?? "default",
+      process: process.trim(),
+      pid: parseInt(pid),
+      message,
+      subsystem: null,
+      category: null,
+    };
+  }
+
+  // Column header printed once by `log show` / `log stream`
+  if (/^Timestamp\s+Ty\s+Process\[/.test(line)) return null;
+
+  // syslog-like format: "timestamp+zone host process[pid] <Level> message"
   const match = line.match(
     /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+[+-]\d{4})\s+\S+\s+(\S+)\[(\d+)\](?:\s+<(\w+)>)?\s+(.+)$/
   );
@@ -92,77 +155,153 @@ function parseCompactLogLine(line: string): LogEntry | null {
   return null;
 }
 
-/** Start the macOS log stream process (ref-counted) */
-export function startLogStream(): void {
-  streamRefCount++;
-  if (streamProcess) return; // already running
+function handleLogLine(line: string): void {
+  const entry = parseCompactLogLine(line);
+  if (!entry) return;
 
+  logBuffer.push(entry);
+  if (logBuffer.length > MAX_BUFFER) {
+    logBuffer = logBuffer.slice(-MAX_BUFFER);
+  }
+  for (const cb of listeners) {
+    try {
+      cb(entry);
+    } catch {}
+  }
+}
+
+/** Schedule a restart with capped exponential backoff */
+function scheduleRestart(): void {
+  if (restartTimer || streamRefCount === 0) return;
+
+  const delay = Math.min(
+    RESTART_BASE_DELAY_MS * 2 ** restartAttempts,
+    RESTART_MAX_DELAY_MS
+  );
+  restartAttempts++;
+  console.error(`Log stream: restarting in ${delay}ms (attempt ${restartAttempts})`);
+
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    if (streamRefCount > 0 && !streamProcess) spawnLogStream();
+  }, delay);
+}
+
+/** Spawn the `log stream` child and wire up its stdout / exit handling */
+function spawnLogStream(): void {
+  let proc: Subprocess<"ignore", "pipe", "pipe">;
   try {
-    streamProcess = Bun.spawn(
+    proc = Bun.spawn(
       ["log", "stream", "--style", "compact", "--level", "info"],
       {
         stdout: "pipe",
         stderr: "pipe",
       }
     );
-
-    const stdout = streamProcess.stdout;
-    if (!stdout || typeof stdout === "number") return;
-    const reader = (stdout as ReadableStream<Uint8Array>).getReader();
-
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    (async () => {
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            const entry = parseCompactLogLine(line);
-            if (entry) {
-              logBuffer.push(entry);
-              if (logBuffer.length > MAX_BUFFER) {
-                logBuffer = logBuffer.slice(-MAX_BUFFER);
-              }
-              for (const cb of listeners) {
-                try {
-                  cb(entry);
-                } catch {}
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.error("Log stream error:", e);
-      }
-    })();
   } catch (e) {
     console.error("Failed to start log stream:", e);
+    streamProcess = null;
+    scheduleRestart();
+    return;
   }
+
+  streamProcess = proc;
+  const startedAt = Date.now();
+
+  // stdout → parsed entries
+  (async () => {
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) handleLogLine(line);
+      }
+    } catch (e) {
+      console.error("Log stream error:", e);
+    }
+  })();
+
+  // stderr must be drained or a chatty child blocks on a full pipe.
+  // Keep only a short tail for the exit diagnostic.
+  let stderrTail = "";
+  (async () => {
+    try {
+      const decoder = new TextDecoder();
+      for await (const chunk of proc.stderr) {
+        stderrTail = (stderrTail + decoder.decode(chunk, { stream: true })).slice(-500);
+      }
+    } catch {}
+  })();
+
+  proc.exited.then((exitCode) => {
+    // stopLogStream()/shutdownLogReader() clear `streamProcess` before they
+    // kill the child, so a mismatch means this exit was requested.
+    if (streamProcess !== proc) return;
+
+    streamProcess = null;
+    if (Date.now() - startedAt >= STABLE_RUN_MS) restartAttempts = 0;
+    console.error(
+      `Log stream exited unexpectedly (code ${exitCode})${
+        stderrTail.trim() ? `: ${stderrTail.trim()}` : ""
+      }`
+    );
+    scheduleRestart();
+  });
+}
+
+/** Kill the child (if any) and cancel a pending restart */
+function killLogStream(): void {
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+  restartAttempts = 0;
+
+  const proc = streamProcess;
+  streamProcess = null; // mark the exit as intentional before killing
+  if (proc) {
+    try {
+      proc.kill();
+    } catch {}
+  }
+}
+
+/** Start the macOS log stream process (ref-counted) */
+export function startLogStream(): void {
+  streamRefCount++;
+  if (streamProcess || restartTimer) return; // already running or restarting
+  spawnLogStream();
 }
 
 /** Stop the log stream (ref-counted — only stops when all callers release) */
 export function stopLogStream(): void {
   streamRefCount = Math.max(0, streamRefCount - 1);
-  if (streamRefCount === 0 && streamProcess) {
-    streamProcess.kill();
-    streamProcess = null;
-  }
+  if (streamRefCount === 0) killLogStream();
 }
 
-/** Force-stop the log stream regardless of ref count */
-export function forceStopLogStream(): void {
+/**
+ * Release everything this module owns, regardless of ref count: the
+ * `log stream` child, the restart timer and in-flight `log show` children.
+ * Call it from the SIGINT/SIGTERM handler so no `log` process is orphaned.
+ */
+export function shutdownLogReader(): void {
   streamRefCount = 0;
-  if (streamProcess) {
-    streamProcess.kill();
-    streamProcess = null;
+  killLogStream();
+
+  for (const proc of activeQueries) {
+    try {
+      proc.kill("SIGKILL");
+    } catch {}
   }
+  activeQueries.clear();
 }
 
 /** Subscribe to real-time log entries */
@@ -175,19 +314,43 @@ export function onLogEntry(callback: LogCallback): () => void {
 
 /** Get buffered recent logs */
 export function getRecentLogs(count: number = 100): LogEntry[] {
-  return logBuffer.slice(-count);
+  const safeCount = Number.isFinite(count)
+    ? Math.min(Math.max(Math.trunc(count), 1), MAX_BUFFER)
+    : 100;
+  return logBuffer.slice(-safeCount);
 }
 
-/** Query historical logs using `log show` */
+/**
+ * Query historical logs using `log show`.
+ *
+ * Guards: `lastMinutes` is clamped to 1..MAX_QUERY_MINUTES, the predicate is
+ * length-capped, the child is killed after QUERY_TIMEOUT_MS or once it has
+ * produced QUERY_MAX_OUTPUT_BYTES, and stdout is consumed as a stream that
+ * keeps only the newest MAX_QUERY_ENTRIES lines (memory stays bounded no
+ * matter how much the child prints).
+ */
 export async function queryLogs(
   lastMinutes: number = 5,
   predicate?: string
-): Promise<LogEntry[]> {
+): Promise<LogQueryResult> {
+  if (predicate && predicate.length > MAX_PREDICATE_LENGTH) {
+    throw new RangeError(
+      `Predicate is too long (max ${MAX_PREDICATE_LENGTH} characters)`
+    );
+  }
+  if (activeQueries.size >= MAX_CONCURRENT_QUERIES) {
+    throw new LogQueryBusyError();
+  }
+
+  const minutes = Number.isFinite(lastMinutes)
+    ? Math.min(Math.max(Math.trunc(lastMinutes), 1), MAX_QUERY_MINUTES)
+    : 5;
+
   const args = [
     "log",
     "show",
     "--last",
-    `${lastMinutes}m`,
+    `${minutes}m`,
     "--style",
     "compact",
   ];
@@ -195,20 +358,64 @@ export async function queryLogs(
     args.push("--predicate", predicate);
   }
 
+  let proc: Subprocess<"ignore", "pipe", "ignore">;
   try {
-    const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
-    const output = await new Response(proc.stdout).text();
-    const entries: LogEntry[] = [];
-
-    for (const line of output.split("\n")) {
-      const entry = parseCompactLogLine(line);
-      if (entry) entries.push(entry);
-    }
-
-    return entries.slice(-500); // cap at 500
+    proc = Bun.spawn(args, { stdout: "pipe", stderr: "ignore" });
   } catch {
-    return [];
+    return { entries: [], truncated: false, truncatedBy: null };
   }
+
+  activeQueries.add(proc);
+  let truncatedBy: LogQueryResult["truncatedBy"] = null;
+  const timeout = setTimeout(() => {
+    truncatedBy = "timeout";
+    proc.kill("SIGKILL");
+  }, QUERY_TIMEOUT_MS);
+
+  // Newest raw lines only; parsing is deferred to the survivors.
+  let tail: string[] = [];
+  try {
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let bytes = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      bytes += value.byteLength;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (line.trim().length > 0) tail.push(line);
+      }
+      if (tail.length > MAX_QUERY_ENTRIES * 2) {
+        tail = tail.slice(-MAX_QUERY_ENTRIES);
+      }
+
+      if (bytes > QUERY_MAX_OUTPUT_BYTES) {
+        truncatedBy = "output-limit";
+        proc.kill("SIGKILL");
+        break;
+      }
+    }
+    if (buffer.trim().length > 0) tail.push(buffer);
+  } catch {
+    // reader fails when the child is killed mid-read; keep what we have
+  } finally {
+    clearTimeout(timeout);
+    activeQueries.delete(proc);
+  }
+
+  const entries: LogEntry[] = [];
+  for (const line of tail.slice(-MAX_QUERY_ENTRIES)) {
+    const entry = parseCompactLogLine(line);
+    if (entry) entries.push(entry);
+  }
+
+  return { entries, truncated: truncatedBy !== null, truncatedBy };
 }
 
 /** List available log files in /var/log and ~/Library/Logs */
@@ -265,7 +472,15 @@ export function getActiveLogProcesses(): { name: string; count: number; lastSeen
 export async function queryLogsByProcess(
   processName: string,
   lastMinutes: number = 5
-): Promise<LogEntry[]> {
-  const predicate = `process == "${processName}"`;
+): Promise<LogQueryResult> {
+  if (processName.length === 0 || processName.length > MAX_PROCESS_NAME_LENGTH) {
+    throw new RangeError(
+      `Process name must be 1..${MAX_PROCESS_NAME_LENGTH} characters`
+    );
+  }
+  // Escape for an NSPredicate string literal so the name cannot close the
+  // quotes and append its own predicate clauses.
+  const escaped = processName.replace(/[\\"]/g, "\\$&");
+  const predicate = `process == "${escaped}"`;
   return queryLogs(lastMinutes, predicate);
 }

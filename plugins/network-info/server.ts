@@ -1,4 +1,6 @@
-import { Hono } from "hono";
+// Type-only: the import is erased, so the plugin also loads next to a compiled
+// binary where no node_modules/hono exists on disk.
+import type { Hono } from "hono";
 
 interface NetworkInterface {
   name: string;
@@ -20,7 +22,6 @@ interface ConnectionStats {
 interface CachedSummary {
   interfaces: NetworkInterface[];
   connections: ConnectionStats;
-  externalIp: string | null;
   fetchedAt: number;
 }
 
@@ -107,17 +108,55 @@ async function getConnectionStats(): Promise<ConnectionStats> {
   return stats;
 }
 
-async function getExternalIp(): Promise<string | null> {
+// ── External IP ──────────────────────────────────────────────────────
+// Asking a third party (api.ipify.org) reveals the user's address to it, so
+// the lookup runs ONLY when a client calls `/external-ip` explicitly.
+// `/summary` never triggers it; it reports the cached value or null.
+const EXTERNAL_IP_URL = "https://api.ipify.org";
+const EXTERNAL_IP_TIMEOUT_MS = 5_000;
+const EXTERNAL_IP_TTL = 5 * 60_000; // 5 minutes
+
+let cachedExternalIp: { ip: string | null; fetchedAt: number } | null = null;
+let externalIpInFlight: Promise<string | null> | null = null;
+
+function getCachedExternalIp(): string | null {
+  if (!cachedExternalIp) return null;
+  if (Date.now() - cachedExternalIp.fetchedAt >= EXTERNAL_IP_TTL) return null;
+  return cachedExternalIp.ip;
+}
+
+async function fetchExternalIp(): Promise<string | null> {
   try {
-    const proc = Bun.spawn(
-      ["curl", "-s", "-m", "3", "https://api.ipify.org"],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    const ip = (await new Response(proc.stdout).text()).trim();
-    return /^\d+\.\d+\.\d+\.\d+$/.test(ip) ? ip : null;
+    const res = await fetch(EXTERNAL_IP_URL, {
+      signal: AbortSignal.timeout(EXTERNAL_IP_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const ip = (await res.text()).trim();
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip) ? ip : null;
   } catch {
-    return null;
+    return null; // offline, timeout, DNS failure
   }
+}
+
+/** Cached for 5 minutes (failures too); concurrent callers share one request */
+async function getExternalIp(): Promise<string | null> {
+  if (
+    cachedExternalIp &&
+    Date.now() - cachedExternalIp.fetchedAt < EXTERNAL_IP_TTL
+  ) {
+    return cachedExternalIp.ip;
+  }
+  if (externalIpInFlight) return externalIpInFlight;
+
+  externalIpInFlight = fetchExternalIp()
+    .then((ip) => {
+      cachedExternalIp = { ip, fetchedAt: Date.now() };
+      return ip;
+    })
+    .finally(() => {
+      externalIpInFlight = null;
+    });
+  return externalIpInFlight;
 }
 
 // ── Cache: summary is valid for 15s to avoid redundant subprocess spawns ─
@@ -129,13 +168,12 @@ async function getSummary(): Promise<CachedSummary> {
     return cachedSummary;
   }
 
-  const [interfaces, connections, externalIp] = await Promise.all([
+  const [interfaces, connections] = await Promise.all([
     getNetworkInterfaces(),
     getConnectionStats(),
-    getExternalIp(),
   ]);
 
-  cachedSummary = { interfaces, connections, externalIp, fetchedAt: Date.now() };
+  cachedSummary = { interfaces, connections, fetchedAt: Date.now() };
   return cachedSummary;
 }
 
@@ -150,9 +188,9 @@ export function register(app: Hono) {
     return c.json(summary.connections);
   });
 
+  // The only endpoint that contacts the third-party service
   app.get("/api/plugins/network-info/external-ip", async (c) => {
-    const summary = await getSummary();
-    return c.json({ ip: summary.externalIp });
+    return c.json({ ip: await getExternalIp() });
   });
 
   app.get("/api/plugins/network-info/summary", async (c) => {
@@ -160,11 +198,13 @@ export function register(app: Hono) {
     return c.json({
       interfaces: summary.interfaces,
       connections: summary.connections,
-      externalIp: summary.externalIp,
+      // Cache only: null until a client has asked `/external-ip`
+      externalIp: getCachedExternalIp(),
     });
   });
 }
 
 export function cleanup() {
   cachedSummary = null;
+  cachedExternalIp = null;
 }

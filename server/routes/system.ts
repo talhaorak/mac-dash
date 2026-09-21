@@ -1,18 +1,14 @@
 import { Hono } from "hono";
 import { getSystemStats, getHardwareInfo } from "../core/system-info";
-import { readFileSync } from "fs";
-import { join } from "path";
+// Static import: the bundler inlines the JSON, so the version is also correct
+// inside a `bun build --compile` executable, where package.json does not exist
+// on disk.  (No `with { type: "json" }`: tsconfig uses `module: ES2022`, and
+// TypeScript only accepts import attributes with esnext/nodenext/preserve.)
+import pkg from "../../package.json";
 
 const app = new Hono();
 
-// Read version from package.json at startup
-let appVersion = "0.1.0";
-try {
-  const pkg = JSON.parse(
-    readFileSync(join(import.meta.dir, "../../package.json"), "utf-8")
-  );
-  appVersion = pkg.version || appVersion;
-} catch {}
+const appVersion: string = pkg.version || "0.0.0";
 
 app.get("/stats", async (c) => {
   const stats = await getSystemStats();

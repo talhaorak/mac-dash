@@ -60,12 +60,12 @@ app.get("/:id/client.js", async (c) => {
   const plugin = getPlugin(id);
 
   if (!plugin || !plugin.enabled || !plugin.hasClient) {
-    return c.json({ error: "Plugin client not found" }, 404);
+    return c.json({ ok: false, error: "Plugin client not found" }, 404);
   }
 
   const code = await bundlePluginClient(plugin);
   if (!code) {
-    return c.json({ error: "Failed to bundle plugin client" }, 500);
+    return c.json({ ok: false, error: "Failed to bundle plugin client" }, 500);
   }
 
   return new Response(code, {
@@ -79,17 +79,19 @@ app.get("/:id/client.js", async (c) => {
 app.post("/:id/enable", async (c) => {
   const id = c.req.param("id");
   const ok = enablePlugin(id);
-  if (ok && rootApp) {
+  if (!ok) return c.json({ ok: false, error: `Plugin not found: ${id}` }, 404);
+  if (rootApp) {
     await loadPluginServer(id, rootApp);
   }
-  return c.json({ ok }, ok ? 200 : 404);
+  return c.json({ ok: true });
 });
 
 app.post("/:id/disable", async (c) => {
   const id = c.req.param("id");
   const ok = disablePlugin(id);
-  if (ok) clearBundleCache(id);
-  return c.json({ ok }, ok ? 200 : 404);
+  if (!ok) return c.json({ ok: false, error: `Plugin not found: ${id}` }, 404);
+  clearBundleCache(id);
+  return c.json({ ok: true });
 });
 
 export default app;
