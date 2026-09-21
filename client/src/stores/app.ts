@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import type { JobCategory } from "@shared/launchd";
+import type { JobEvent } from "@/lib/backend";
 
 // System stats store
 interface SystemStats {
@@ -57,12 +59,22 @@ export interface ServiceInfo {
   pid: number | null;
   lastExitStatus: number | null;
   status: "running" | "stopped" | "error" | "unknown";
-  category: string;
+  category: JobCategory;
   plistPath: string | null;
   program: string | null;
   programArguments: string[] | null;
   runAtLoad: boolean | null;
   enabled: boolean;
+  loaded: boolean;
+  disabled: boolean;
+  triggers: string[];
+  writable: boolean;
+  needsAdmin: boolean;
+  userName: string | null;
+  unreadable: boolean;
+  quarantined: boolean;
+  startInterval: number | null;
+  calendar: Record<string, number>[];
 }
 
 interface ServicesStore {
@@ -77,6 +89,28 @@ export const useServicesStore = create<ServicesStore>((set) => ({
   loading: true,
   setServices: (services) => set({ services, loading: false }),
   setLoading: (loading) => set({ loading }),
+}));
+
+// launchd job change history (docs/backend-contract.md, "Monitor")
+interface JobEventsStore {
+  events: JobEvent[]; // newest first
+  unseen: number;
+  setEvents: (events: JobEvent[]) => void;
+  addEvent: (event: JobEvent) => void;
+  markSeen: () => void;
+}
+
+export const useJobEventsStore = create<JobEventsStore>((set) => ({
+  events: [],
+  unseen: 0,
+  setEvents: (events) => set({ events }),
+  addEvent: (event) =>
+    set((s) =>
+      s.events.some((e) => e.id === event.id)
+        ? s
+        : { events: [event, ...s.events].slice(0, 500), unseen: s.unseen + 1 }
+    ),
+  markSeen: () => set({ unseen: 0 }),
 }));
 
 // Processes store
@@ -123,7 +157,7 @@ interface LogsStore {
   entries: LogEntry[];
   paused: boolean;
   maxEntries: number;
-  addEntry: (entry: LogEntry) => void;
+  addEntries: (batch: LogEntry[]) => void;
   setEntries: (entries: LogEntry[]) => void;
   setPaused: (paused: boolean) => void;
   clear: () => void;
@@ -133,11 +167,9 @@ export const useLogsStore = create<LogsStore>((set, get) => ({
   entries: [],
   paused: false,
   maxEntries: 500,
-  addEntry: (entry) => {
-    if (get().paused) return;
-    set((state) => ({
-      entries: [...state.entries.slice(-(state.maxEntries - 1)), entry],
-    }));
+  addEntries: (batch) => {
+    if (get().paused || batch.length === 0) return;
+    set((state) => ({ entries: [...state.entries, ...batch].slice(-state.maxEntries) }));
   },
   setEntries: (entries) => set({ entries }),
   setPaused: (paused) => set({ paused }),

@@ -1,4 +1,11 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import {
+  useState,
+  useMemo,
+  useEffect,
+  useCallback,
+  useId,
+  useRef,
+} from "react";
 import {
   useProcessesStore,
   useServicesStore,
@@ -7,7 +14,10 @@ import {
 } from "@/stores/app";
 import { GlowCard } from "@/components/ui/GlowCard";
 import { CopyButton } from "@/components/ui/CopyButton";
-import { backend } from "@/lib/backend";
+import { Dialog } from "@/components/ui/Dialog";
+import { ConfirmButton, useConfirm } from "@/components/ui/ConfirmButton";
+import { toast } from "@/components/ui/Toast";
+import { backend, type ProcessChainEntry } from "@/lib/backend";
 import { cn, formatBytes } from "@/lib/utils";
 import {
   Search,
@@ -30,17 +40,12 @@ import {
   Cog,
   ExternalLink,
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+
+/** Rows rendered before the user asks for the full list. */
+const ROW_LIMIT = 150;
 
 type SortField = "cpu" | "mem" | "pid" | "name" | "rss";
 type SortDir = "asc" | "desc";
-
-interface ProcessChainEntry {
-  pid: number;
-  ppid: number;
-  user: string;
-  command: string;
-}
 
 interface ProcessExtended {
   cwd: string | null;
@@ -64,7 +69,9 @@ export function ProcessesPage() {
   const [selectedProcess, setSelectedProcess] = useState<ProcessInfo | null>(
     null
   );
-  const [killConfirm, setKillConfirm] = useState<number | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const killConfirm = useConfirm<number>();
+  const detailTitleId = useId();
   const [extendedInfo, setExtendedInfo] = useState<ProcessExtended | null>(
     null
   );
@@ -73,13 +80,17 @@ export function ProcessesPage() {
     []
   );
 
-  // Handle navigation from other pages (e.g. services)
+  // Handle navigation from other pages (e.g. services).
+  // Open the target once. Later process updates must not reopen a closed dialog.
+  const handledTargetPidRef = useRef<number | null>(null);
   useEffect(() => {
-    if (targetProcessPid && processes.length > 0) {
-      const proc = processes.find((p) => p.pid === targetProcessPid);
-      if (proc) {
-        setSelectedProcess(proc);
-      }
+    if (!targetProcessPid || handledTargetPidRef.current === targetProcessPid) {
+      return;
+    }
+    const proc = processes.find((p) => p.pid === targetProcessPid);
+    if (proc) {
+      handledTargetPidRef.current = targetProcessPid;
+      setSelectedProcess(proc);
     }
   }, [targetProcessPid, processes]);
 
@@ -89,17 +100,27 @@ export function ProcessesPage() {
       setExtendedInfo(null);
       return;
     }
+    // A slower response for a previously selected pid must not win.
+    let cancelled = false;
     setLoadingExtended(true);
-    fetch(`/api/processes/${selectedProcess.pid}`)
-      .then((r) => r.json())
-      .then((data: any) => {
+    backend
+      .getProcessDetail(selectedProcess.pid)
+      .then((data) => {
+        if (cancelled) return;
         setExtendedInfo({
           cwd: data.cwd ?? null,
           parentChain: data.parentChain ?? [],
         });
       })
-      .catch(() => setExtendedInfo(null))
-      .finally(() => setLoadingExtended(false));
+      .catch(() => {
+        if (!cancelled) setExtendedInfo(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingExtended(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedProcess?.pid]);
 
   // Find matching service for current process
@@ -214,22 +235,40 @@ export function ProcessesPage() {
     }
   };
 
-  const handleKill = async (pid: number, force = false) => {
+  const visible = useMemo(
+    () => (showAll ? sorted : sorted.slice(0, ROW_LIMIT)),
+    [sorted, showAll]
+  );
+
+  const openDetail = (proc: ProcessInfo) => {
+    setProcessHistory([]);
+    setSelectedProcess(proc);
+  };
+
+  const handleKill = async (
+    proc: Pick<ProcessInfo, "pid" | "command">,
+    force = false
+  ) => {
+    const signal = force ? "SIGKILL" : "SIGTERM";
+    const name = `${proc.command} (PID ${proc.pid})`;
+    killConfirm.disarm();
     try {
-      await backend.killProcess(pid, force);
-      setKillConfirm(null);
+      await backend.killProcess(proc.pid, force);
+      toast.success(`Sent ${signal} to ${name}`);
     } catch (e: any) {
-      console.error("Kill failed:", e.message);
+      toast.error(
+        `Failed to send ${signal} to ${name}: ${e?.message || "unknown error"}`
+      );
     }
   };
 
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field)
-      return <ArrowUpDown className="w-3 h-3 text-gray-600" />;
+      return <ArrowUpDown className="w-3 h-3 text-gray-600" aria-hidden="true" />;
     return sortDir === "desc" ? (
-      <ChevronDown className="w-3 h-3 text-cyan-400" />
+      <ChevronDown className="w-3 h-3 text-cyan-400" aria-hidden="true" />
     ) : (
-      <ChevronUp className="w-3 h-3 text-cyan-400" />
+      <ChevronUp className="w-3 h-3 text-cyan-400" aria-hidden="true" />
     );
   };
 
@@ -240,16 +279,22 @@ export function ProcessesPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Processes</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {processes.length} processes &middot; showing {sorted.length}
+            {processes.length} processes &middot; showing {visible.length}
+            {visible.length !== sorted.length && ` of ${sorted.length}`}
+            {search && " matching"}
           </p>
         </div>
       </div>
 
       {/* Search */}
       <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+        <Search
+          className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500"
+          aria-hidden="true"
+        />
         <input
           type="text"
+          aria-label="Search processes"
           placeholder="Search by name, PID, path, args, user..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -272,41 +317,59 @@ export function ProcessesPage() {
                 ].map(({ field, label, w }) => (
                   <th
                     key={field}
-                    className={cn(
-                      "text-left py-2.5 px-3 text-gray-500 font-medium cursor-pointer hover:text-gray-300 transition-colors select-none",
-                      w
-                    )}
-                    onClick={() => handleSort(field)}
+                    scope="col"
+                    aria-sort={
+                      sortField !== field
+                        ? "none"
+                        : sortDir === "desc"
+                        ? "descending"
+                        : "ascending"
+                    }
+                    className={cn("text-left py-1 px-1.5 font-medium", w)}
                   >
-                    <span className="inline-flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleSort(field)}
+                      className="inline-flex items-center gap-1 px-1.5 py-1.5 rounded-md text-gray-500 font-medium hover:text-gray-300 transition-colors select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+                    >
                       {label}
                       <SortIcon field={field} />
-                    </span>
+                    </button>
                   </th>
                 ))}
-                <th className="text-left py-2.5 px-3 text-gray-500 font-medium">
+                <th scope="col" className="text-left py-2.5 px-3 text-gray-500 font-medium">
                   User
                 </th>
-                <th className="text-left py-2.5 px-3 text-gray-500 font-medium">
+                <th scope="col" className="text-left py-2.5 px-3 text-gray-500 font-medium">
                   Time
                 </th>
-                <th className="py-2.5 px-3 w-20"></th>
+                <th scope="col" className="py-2.5 px-3 w-20">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {sorted.slice(0, 150).map((proc) => {
+              {visible.map((proc) => {
                 const isHot = proc.cpu > 50;
                 const isWarm = proc.cpu > 20;
                 return (
                   <tr
                     key={proc.pid}
+                    tabIndex={0}
+                    aria-label={`${proc.command}, PID ${proc.pid}. Open details`}
                     className={cn(
                       "border-b border-white/[0.03] hover:bg-white/[0.03] transition-colors cursor-pointer group",
+                      "focus:outline-none focus-visible:bg-white/[0.05] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-500/60",
                       isHot && "bg-red-500/[0.03]"
                     )}
-                    onClick={() => {
-                      setProcessHistory([]);
-                      setSelectedProcess(proc);
+                    onClick={() => openDetail(proc)}
+                    onKeyDown={(e) => {
+                      // Keys from the action buttons inside the row stay with them.
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openDetail(proc);
+                      }
                     }}
                   >
                     <td className="py-2 px-3 font-mono text-gray-500">
@@ -375,51 +438,62 @@ export function ProcessesPage() {
                     </td>
                     <td className="py-2 px-3">
                       <div className="flex items-center gap-1">
-                        {killConfirm === proc.pid ? (
+                        {killConfirm.isArmed(proc.pid) ? (
                           <div
                             className="flex gap-1"
                             onClick={(e) => e.stopPropagation()}
                           >
                             <button
-                              onClick={() => handleKill(proc.pid)}
-                              className="px-2 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 text-[10px] font-medium"
+                              type="button"
+                              onClick={() => handleKill(proc)}
+                              aria-label={`Send SIGTERM to ${proc.command}, PID ${proc.pid}`}
+                              className="px-2 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 text-[10px] font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
                             >
                               TERM
                             </button>
                             <button
-                              onClick={() => handleKill(proc.pid, true)}
-                              className="px-2 py-1 rounded bg-red-500/30 text-red-300 hover:bg-red-500/40 text-[10px] font-medium"
+                              type="button"
+                              onClick={() => handleKill(proc, true)}
+                              aria-label={`Send SIGKILL to ${proc.command}, PID ${proc.pid}`}
+                              className="px-2 py-1 rounded bg-red-500/30 text-red-300 hover:bg-red-500/40 text-[10px] font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
                             >
                               KILL
                             </button>
                             <button
-                              onClick={() => setKillConfirm(null)}
-                              className="px-1 py-1 rounded text-gray-500 hover:text-gray-300"
+                              type="button"
+                              onClick={killConfirm.disarm}
+                              aria-label="Cancel kill"
+                              title="Cancel"
+                              className="px-1 py-1 rounded text-gray-500 hover:text-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
                             >
-                              <X className="w-3 h-3" />
+                              <X className="w-3 h-3" aria-hidden="true" />
                             </button>
                           </div>
                         ) : (
                           <>
                             <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 navigateToLogs(proc.command);
                               }}
-                              className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-cyan-500/10 text-gray-600 hover:text-cyan-400 transition-all"
+                              className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-cyan-500/10 text-gray-600 hover:text-cyan-400 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
                               title="View Logs"
+                              aria-label={`View logs for ${proc.command}`}
                             >
-                              <ScrollText className="w-3.5 h-3.5" />
+                              <ScrollText className="w-3.5 h-3.5" aria-hidden="true" />
                             </button>
                             <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setKillConfirm(proc.pid);
+                                killConfirm.arm(proc.pid);
                               }}
-                              className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-500/10 text-gray-600 hover:text-red-400 transition-all"
+                              className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-red-500/10 text-gray-600 hover:text-red-400 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
                               title="Kill process"
+                              aria-label={`Kill ${proc.command}, PID ${proc.pid}`}
                             >
-                              <Skull className="w-3.5 h-3.5" />
+                              <Skull className="w-3.5 h-3.5" aria-hidden="true" />
                             </button>
                           </>
                         )}
@@ -431,33 +505,39 @@ export function ProcessesPage() {
             </tbody>
           </table>
         </div>
+        {sorted.length > ROW_LIMIT && (
+          <div className="flex items-center justify-center gap-3 pt-3 pb-1 text-xs text-gray-500">
+            <span>
+              Showing {visible.length} of {sorted.length}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowAll((v) => !v)}
+              aria-expanded={showAll}
+              className="px-3 py-1 rounded-lg bg-white/[0.04] text-cyan-400 hover:bg-cyan-500/10 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+            >
+              {showAll ? `Show first ${ROW_LIMIT}` : "Show all"}
+            </button>
+          </div>
+        )}
       </GlowCard>
 
       {/* Process Detail Modal */}
-      <AnimatePresence>
+      <Dialog
+        open={selectedProcess !== null}
+        onClose={closeModal}
+        labelledBy={detailTitleId}
+        className="p-6 space-y-4"
+      >
         {selectedProcess && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-8"
-            onClick={closeModal}
-          >
-            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
-            <motion.div
-              initial={{ scale: 0.95, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.95, y: 20 }}
-              className="relative glass rounded-2xl w-full max-w-xl p-6 space-y-4 max-h-[85vh] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
+          <>
               {/* Back button (when navigating process chain) */}
               {processHistory.length > 0 && (
                 <button
                   onClick={goBack}
                   className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-cyan-400 hover:bg-cyan-500/10 transition-colors -mt-1 mb-1"
                 >
-                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
                   Back to {processHistory[processHistory.length - 1].process.command}:
                   {processHistory[processHistory.length - 1].process.pid}
                 </button>
@@ -465,7 +545,10 @@ export function ProcessesPage() {
 
               <div className="flex items-start justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-white font-mono">
+                  <h2
+                    id={detailTitleId}
+                    className="text-lg font-bold text-white font-mono"
+                  >
                     {selectedProcess.command}
                   </h2>
                   <p className="text-xs text-gray-500 mt-0.5">
@@ -474,10 +557,13 @@ export function ProcessesPage() {
                   </p>
                 </div>
                 <button
+                  type="button"
                   onClick={closeModal}
-                  className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400"
+                  aria-label="Close process details"
+                  title="Close"
+                  className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-4 h-4" aria-hidden="true" />
                 </button>
               </div>
 
@@ -643,32 +729,47 @@ export function ProcessesPage() {
                   View Logs
                 </button>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      handleKill(selectedProcess.pid);
+                  <ConfirmButton
+                    onConfirm={() => {
+                      void handleKill(selectedProcess);
                       closeModal();
                     }}
-                    className="px-4 py-2 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500/20 text-sm font-medium transition-colors flex items-center gap-2"
+                    confirmLabel={
+                      <>
+                        <Skull className="w-4 h-4" aria-hidden="true" />
+                        Confirm SIGTERM
+                      </>
+                    }
+                    title="Ask the process to quit. Click twice to confirm."
+                    className="px-4 py-2 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500/20 text-sm font-medium transition-colors flex items-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
+                    armedClassName="ring-1 ring-red-400/60 !bg-red-500/30 !text-red-200"
                   >
-                    <Skull className="w-4 h-4" />
+                    <Skull className="w-4 h-4" aria-hidden="true" />
                     SIGTERM
-                  </button>
-                  <button
-                    onClick={() => {
-                      handleKill(selectedProcess.pid, true);
+                  </ConfirmButton>
+                  <ConfirmButton
+                    onConfirm={() => {
+                      void handleKill(selectedProcess, true);
                       closeModal();
                     }}
-                    className="px-4 py-2 rounded-xl bg-red-500/20 text-red-300 hover:bg-red-500/30 text-sm font-medium transition-colors flex items-center gap-2"
+                    confirmLabel={
+                      <>
+                        <AlertTriangle className="w-4 h-4" aria-hidden="true" />
+                        Confirm SIGKILL
+                      </>
+                    }
+                    title="Force-kill the process. Click twice to confirm."
+                    className="px-4 py-2 rounded-xl bg-red-500/20 text-red-300 hover:bg-red-500/30 text-sm font-medium transition-colors flex items-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
+                    armedClassName="ring-1 ring-red-400/60 !bg-red-500/40 !text-red-100"
                   >
-                    <AlertTriangle className="w-4 h-4" />
+                    <AlertTriangle className="w-4 h-4" aria-hidden="true" />
                     SIGKILL
-                  </button>
+                  </ConfirmButton>
                 </div>
               </div>
-            </motion.div>
-          </motion.div>
+          </>
         )}
-      </AnimatePresence>
+      </Dialog>
     </div>
   );
 }

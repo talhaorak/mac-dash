@@ -14,6 +14,15 @@ import {
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { backend } from "@/lib/backend";
+import { toast } from "@/components/ui/Toast";
+
+// The plugin runtime is a separate chunk. Do not pull it into the main bundle from here.
+const clearPluginModuleCache = (pluginId?: string) =>
+  import("@/lib/plugin-runtime").then((runtime) => runtime.clearPluginModuleCache(pluginId));
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error && e.message ? e.message : "unknown error";
+}
 
 interface PluginInfo {
   id: string;
@@ -30,16 +39,12 @@ interface PluginInfo {
 export function PluginsPage() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
+  /** Throws when the request fails. Callers decide how to report it. */
   const fetchPlugins = async () => {
-    try {
-      const res = await api.get<{ plugins: PluginInfo[] }>("/plugins");
-      setPlugins(res.plugins);
-    } catch {
-      // Plugins endpoint may not have data yet
-    } finally {
-      setLoading(false);
-    }
+    const res = await api.get<{ plugins: PluginInfo[] }>("/plugins");
+    setPlugins(res.plugins);
   };
 
   useEffect(() => {
@@ -48,29 +53,49 @@ export function PluginsPage() {
       setLoading(false);
       return;
     }
-    fetchPlugins();
+    let cancelled = false;
+    fetchPlugins()
+      .catch((e) => {
+        if (!cancelled) toast.error(`Failed to load plugins: ${errorMessage(e)}`);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleDiscover = async () => {
     setLoading(true);
     try {
       await api.post("/plugins/discover");
+      // A rescan can pick up changed plugin code. Drop every cached module.
+      clearPluginModuleCache();
       await fetchPlugins();
-    } catch {
+      toast.success("Plugin scan finished");
+    } catch (e) {
+      toast.error(`Plugin scan failed: ${errorMessage(e)}`);
     } finally {
       setLoading(false);
     }
   };
 
   const handleToggle = async (plugin: PluginInfo) => {
+    const action = plugin.enabled ? "disable" : "enable";
+    setTogglingId(plugin.id);
     try {
-      if (plugin.enabled) {
-        await api.post(`/plugins/${plugin.id}/disable`);
-      } else {
-        await api.post(`/plugins/${plugin.id}/enable`);
-      }
+      await api.post(`/plugins/${encodeURIComponent(plugin.id)}/${action}`);
+      // The server rebuilds the client bundle after a disable/enable cycle.
+      // Drop the cached module so the next render loads the fresh code.
+      clearPluginModuleCache(plugin.id);
       await fetchPlugins();
-    } catch {}
+      toast.success(`${plugin.name} ${plugin.enabled ? "disabled" : "enabled"}`);
+    } catch (e) {
+      toast.error(`Failed to ${action} ${plugin.name}: ${errorMessage(e)}`);
+    } finally {
+      setTogglingId(null);
+    }
   };
 
   // Desktop mode: Show info message instead
@@ -112,10 +137,15 @@ export function PluginsPage() {
         </div>
         <div className="flex gap-2">
           <button
+            type="button"
             onClick={handleDiscover}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-white/[0.04] text-gray-400 hover:text-gray-200 hover:bg-white/[0.08] transition-all"
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-white/[0.04] text-gray-400 hover:text-gray-200 hover:bg-white/[0.08] transition-all disabled:opacity-60"
           >
-            <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
+            <RefreshCw
+              className={cn("w-3.5 h-3.5", loading && "animate-spin")}
+              aria-hidden="true"
+            />
             Scan
           </button>
         </div>
@@ -158,23 +188,30 @@ export function PluginsPage() {
                         {plugin.name}
                       </h3>
                       <span className="text-[10px] text-gray-600 font-mono">
-                        v{plugin.version}
+                        v{plugin.version} &middot;{" "}
+                        {plugin.enabled ? "Enabled" : "Disabled"}
                       </span>
                     </div>
                   </div>
                   <button
+                    type="button"
+                    role="switch"
+                    aria-checked={plugin.enabled}
+                    aria-label={`${plugin.name} enabled`}
+                    title={plugin.enabled ? "Disable plugin" : "Enable plugin"}
+                    disabled={togglingId === plugin.id}
                     onClick={() => handleToggle(plugin)}
                     className={cn(
-                      "p-2 rounded-xl transition-all",
+                      "p-2 rounded-xl transition-all disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60",
                       plugin.enabled
                         ? "bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
                         : "bg-gray-500/10 text-gray-500 hover:bg-gray-500/20"
                     )}
                   >
                     {plugin.enabled ? (
-                      <Power className="w-4 h-4" />
+                      <Power className="w-4 h-4" aria-hidden="true" />
                     ) : (
-                      <PowerOff className="w-4 h-4" />
+                      <PowerOff className="w-4 h-4" aria-hidden="true" />
                     )}
                   </button>
                 </div>

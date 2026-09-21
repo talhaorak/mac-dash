@@ -2,9 +2,11 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { backend } from "@/lib/backend";
 
-// Desktop-specific: Disable text selection and context menu
-if (typeof window !== "undefined" && (window as any).__TAURI__) {
+// Desktop-specific: Disable text selection and context menu.
+// `backend.isDesktop()` also works when `withGlobalTauri` is off (no `window.__TAURI__`).
+if (backend.isDesktop()) {
   // Prevent right-click context menu
   document.addEventListener("contextmenu", (e) => e.preventDefault());
   

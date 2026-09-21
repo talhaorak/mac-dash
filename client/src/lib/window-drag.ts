@@ -1,79 +1,34 @@
+import { useCallback, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { PhysicalPosition } from "@tauri-apps/api/dpi";
+import { backend } from "@/lib/backend";
 
 /**
- * Start dragging the current desktop window.
- * We prefer app invoke (Rust command) to avoid frontend window permission issues.
+ * Window dragging in the desktop (Tauri) build.
+ *
+ * Primary mechanism: the `data-tauri-drag-region` attribute. Tauri handles it
+ * natively, but only when the attribute is on the event target itself. It does
+ * not apply to child elements.
+ *
+ * Fallback: `useWindowDrag()` returns a `mousedown` handler for a drag
+ * container. It covers non-interactive children (logo, labels) that do not
+ * carry the attribute, and calls the Rust command `begin_window_drag`.
  */
-export async function startDesktopWindowDrag(
-  startScreenX: number,
-  startScreenY: number
-): Promise<void> {
-  try {
-    await invoke("begin_window_drag");
-    return;
-  } catch {
-    // fallback to direct window API
-  }
 
-  try {
-    await getCurrentWindow().startDragging();
-    return;
-  } catch {
-    // fallback to manual move when start_dragging is unavailable
-  }
+const DRAG_REGION_ATTR = "data-tauri-drag-region";
 
-  const win = getCurrentWindow();
-  const startPos = await win.outerPosition();
-  const baseX = startPos.x;
-  const baseY = startPos.y;
+const NO_DRAG_SELECTOR =
+  "button, a, input, textarea, select, [role=button], [data-no-drag], .no-drag";
 
-  let raf: number | null = null;
-  let latestScreenX = startScreenX;
-  let latestScreenY = startScreenY;
-  let dragging = true;
-
-  const applyMove = async () => {
-    raf = null;
-    if (!dragging) return;
-    const dx = latestScreenX - startScreenX;
-    const dy = latestScreenY - startScreenY;
-    try {
-      await win.setPosition(new PhysicalPosition(baseX + dx, baseY + dy));
-    } catch {
-      cleanup();
-    }
-  };
-
-  const scheduleMove = () => {
-    if (raf !== null) return;
-    raf = window.requestAnimationFrame(() => {
-      void applyMove();
+export function useWindowDrag() {
+  return useCallback((e: MouseEvent<HTMLElement>) => {
+    if (e.button !== 0 || !backend.isDesktop()) return;
+    const target = e.target as Element;
+    // Tauri handles elements that carry the attribute.
+    if (target.hasAttribute(DRAG_REGION_ATTR)) return;
+    if (target.closest(NO_DRAG_SELECTOR)) return;
+    e.preventDefault();
+    invoke("begin_window_drag").catch(() => {
+      // The window stays in place when the command is unavailable.
     });
-  };
-
-  const onMouseMove = (event: MouseEvent) => {
-    latestScreenX = event.screenX;
-    latestScreenY = event.screenY;
-    scheduleMove();
-  };
-
-  const cleanup = () => {
-    if (!dragging) return;
-    dragging = false;
-    if (raf !== null) {
-      window.cancelAnimationFrame(raf);
-      raf = null;
-    }
-    window.removeEventListener("mousemove", onMouseMove, true);
-    window.removeEventListener("mouseup", cleanup, true);
-    window.removeEventListener("mouseleave", cleanup, true);
-    window.removeEventListener("blur", cleanup, true);
-  };
-
-  window.addEventListener("mousemove", onMouseMove, true);
-  window.addEventListener("mouseup", cleanup, true);
-  window.addEventListener("mouseleave", cleanup, true);
-  window.addEventListener("blur", cleanup, true);
+  }, []);
 }

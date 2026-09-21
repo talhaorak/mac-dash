@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import {
   LayoutDashboard,
   Cog,
@@ -13,10 +13,10 @@ import {
   Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useNavStore, useConnectionStore } from "@/stores/app";
+import { useNavStore, useConnectionStore, useJobEventsStore } from "@/stores/app";
 import { backend } from "@/lib/backend";
 import { api } from "@/lib/api";
-import { startDesktopWindowDrag } from "@/lib/window-drag";
+import { useWindowDrag } from "@/lib/window-drag";
 
 interface SidebarProps {
   version: string | null;
@@ -44,8 +44,11 @@ const pluginIconMap: Record<string, any> = {
 };
 
 export function Sidebar({ version }: SidebarProps) {
-  const { currentPage, setPage, sidebarCollapsed, toggleSidebar } =
-    useNavStore();
+  const currentPage = useNavStore((s) => s.currentPage);
+  const setPage = useNavStore((s) => s.setPage);
+  const sidebarCollapsed = useNavStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useNavStore((s) => s.toggleSidebar);
+  const unseenJobEvents = useJobEventsStore((s) => s.unseen);
   const wsConnected = useConnectionStore((s) => s.wsConnected);
   const lastDataAt = useConnectionStore((s) => s.lastDataAt);
   const dataSource = useConnectionStore((s) => s.dataSource);
@@ -67,7 +70,8 @@ export function Sidebar({ version }: SidebarProps) {
     return () => clearInterval(interval);
   }, []);
 
-  const isReceivingData = lastDataAt && Date.now() - lastDataAt < 10000;
+  const isReceivingData =
+    lastDataAt !== null && Date.now() - lastDataAt < 10000;
 
   const statusText = isReceivingData
     ? dataSource === "ws"
@@ -85,13 +89,7 @@ export function Sidebar({ version }: SidebarProps) {
 
   const StatusIcon = isReceivingData ? Radio : wsConnected ? Wifi : WifiOff;
 
-  const handleDrag = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest("button, a, input, textarea, select, [role=button], [data-no-drag], .no-drag")) return;
-    if (!backend.isDesktop()) return;
-    e.preventDefault();
-    void startDesktopWindowDrag(e.screenX, e.screenY);
-  }, []);
+  const handleDrag = useWindowDrag();
 
   return (
     <aside
@@ -100,20 +98,19 @@ export function Sidebar({ version }: SidebarProps) {
         sidebarCollapsed ? "w-16" : "w-56"
       )}
     >
-      {/* Native titlebar space (traffic lights area on macOS) */}
+      {/* Native titlebar space (traffic lights area on macOS). Empty, so the attribute is enough. */}
       {backend.isDesktop() && (
-        <div
-          onMouseDown={handleDrag}
-          className="h-8 w-full flex-shrink-0"
-        />
+        <div data-tauri-drag-region className="h-8 w-full flex-shrink-0" />
       )}
-      {/* Logo + drag region */}
+      {/* Logo + drag region. The attribute covers the row background.
+          The mousedown fallback covers the logo and the title text. */}
       <div
+        data-tauri-drag-region
         onMouseDown={handleDrag}
         className="flex items-center gap-3 px-4 h-12 border-b border-white/[0.06] select-none"
       >
         <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center flex-shrink-0">
-          <Activity className="w-4 h-4 text-white" />
+          <Activity className="w-4 h-4 text-white" aria-hidden="true" />
         </div>
         {!sidebarCollapsed && (
           <div className="flex flex-col">
@@ -128,25 +125,43 @@ export function Sidebar({ version }: SidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-2 space-y-1">
+      <nav aria-label="Main" className="flex-1 p-2 space-y-1">
         {navItems.map((item) => {
           const isActive = currentPage === item.id;
+          // launchd job changes that the user has not opened yet
+          const badge = item.id === "services" && unseenJobEvents > 0 ? unseenJobEvents : 0;
           return (
             <button
               key={item.id}
+              type="button"
               onClick={() => setPage(item.id)}
+              aria-label={badge ? `${item.label}, ${badge} new job changes` : item.label}
+              title={item.label}
+              aria-current={isActive ? "page" : undefined}
               className={cn(
-                "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200",
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60",
                 isActive
                   ? "bg-cyan-500/10 text-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.1)]"
                   : "text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]"
               )}
             >
               <item.icon
+                aria-hidden="true"
                 className={cn("w-[18px] h-[18px] flex-shrink-0", isActive && "drop-shadow-[0_0_4px_rgba(6,182,212,0.5)]")}
               />
               {!sidebarCollapsed && (
                 <span className="font-medium">{item.label}</span>
+              )}
+              {badge > 0 && (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "rounded-full bg-amber-400 text-[10px] font-bold text-amber-950 inline-flex items-center justify-center",
+                    sidebarCollapsed ? "absolute ml-5 -mt-5 h-2 w-2" : "ml-auto min-w-4 h-4 px-1"
+                  )}
+                >
+                  {!sidebarCollapsed && badge}
+                </span>
               )}
             </button>
           );
@@ -167,15 +182,20 @@ export function Sidebar({ version }: SidebarProps) {
               return (
                 <button
                   key={pageId}
+                  type="button"
                   onClick={() => setPage(pageId)}
+                  aria-label={plugin.name}
+                  title={plugin.name}
+                  aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200",
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/60",
                     isActive
                       ? "bg-purple-500/10 text-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.1)]"
                       : "text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]"
                   )}
                 >
                   <Icon
+                    aria-hidden="true"
                     className={cn("w-[18px] h-[18px] flex-shrink-0", isActive && "drop-shadow-[0_0_4px_rgba(168,85,247,0.5)]")}
                   />
                   {!sidebarCollapsed && (
@@ -192,26 +212,33 @@ export function Sidebar({ version }: SidebarProps) {
       <div className="p-3 space-y-2 border-t border-white/[0.06]">
         {/* Connection status */}
         <div
+          title={`Connection: ${statusText}`}
           className={cn(
             "flex items-center gap-2 px-3 py-2 rounded-lg text-xs",
             statusColor
           )}
         >
-          <StatusIcon className={cn("w-3.5 h-3.5 flex-shrink-0", isReceivingData && "animate-pulse")} />
-          {!sidebarCollapsed && (
-            <span>{statusText}</span>
-          )}
+          <StatusIcon
+            aria-hidden="true"
+            className={cn("w-3.5 h-3.5 flex-shrink-0", isReceivingData && "animate-pulse")}
+          />
+          {/* The text stays available to assistive technology when the sidebar is collapsed. */}
+          <span className={cn(sidebarCollapsed && "sr-only")}>{statusText}</span>
         </div>
 
         {/* Collapse toggle */}
         <button
+          type="button"
           onClick={toggleSidebar}
-          className="w-full flex items-center justify-center py-1.5 text-gray-500 hover:text-gray-300 transition-colors"
+          aria-label="Toggle sidebar"
+          title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!sidebarCollapsed}
+          className="w-full flex items-center justify-center py-1.5 rounded-lg text-gray-500 hover:text-gray-300 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
         >
           {sidebarCollapsed ? (
-            <ChevronRight className="w-4 h-4" />
+            <ChevronRight className="w-4 h-4" aria-hidden="true" />
           ) : (
-            <ChevronLeft className="w-4 h-4" />
+            <ChevronLeft className="w-4 h-4" aria-hidden="true" />
           )}
         </button>
       </div>

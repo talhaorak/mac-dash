@@ -59,6 +59,8 @@ export function initPluginRuntime() {
 // ── Dynamic plugin component loader ────────────────────────────────
 
 const moduleCache = new Map<string, PluginModule>();
+/** Loads in progress, so concurrent callers share one fetch + import. */
+const inflight = new Map<string, Promise<PluginModule>>();
 
 /**
  * Dynamically load a plugin's client component from the server.
@@ -67,15 +69,34 @@ const moduleCache = new Map<string, PluginModule>();
  *   1. Fetch bundled JS from `/api/plugins/{id}/client.js`
  *   2. Create a Blob URL from the response
  *   3. `import()` the Blob URL — the code references `globalThis.__macdash__`
- *   4. Return the module's default export (React component) + metadata
+ *   4. Revoke the Blob URL. The evaluated module stays alive without it.
+ *   5. Return the module's default export (React component) + metadata
  */
-export async function loadPluginModule(
-  pluginId: string
-): Promise<PluginModule> {
+export function loadPluginModule(pluginId: string): Promise<PluginModule> {
   const cached = moduleCache.get(pluginId);
-  if (cached) return cached;
+  if (cached) return Promise.resolve(cached);
 
-  const res = await fetch(`/api/plugins/${pluginId}/client.js`);
+  const pending = inflight.get(pluginId);
+  if (pending) return pending;
+
+  const promise = fetchPluginModule(pluginId)
+    .then((mod) => {
+      // Skip the cache when clearPluginModuleCache() ran during the load.
+      if (inflight.get(pluginId) === promise) moduleCache.set(pluginId, mod);
+      return mod;
+    })
+    .finally(() => {
+      if (inflight.get(pluginId) === promise) inflight.delete(pluginId);
+    });
+
+  inflight.set(pluginId, promise);
+  return promise;
+}
+
+async function fetchPluginModule(pluginId: string): Promise<PluginModule> {
+  const res = await fetch(
+    `/api/plugins/${encodeURIComponent(pluginId)}/client.js`
+  );
   if (!res.ok) {
     throw new Error(
       `Failed to load plugin "${pluginId}" client: ${res.status} ${res.statusText}`
@@ -95,15 +116,23 @@ export async function loadPluginModule(
       );
     }
 
-    moduleCache.set(pluginId, mod);
     return mod;
   } finally {
+    // The Blob URL is only needed until the import settles.
     URL.revokeObjectURL(url);
   }
 }
 
-/** Clear a cached plugin module (e.g. after plugin reload) */
+/**
+ * Drop a cached plugin module so the next render fetches fresh code.
+ * Call it when a plugin is enabled, disabled, or rescanned.
+ */
 export function clearPluginModuleCache(pluginId?: string) {
-  if (pluginId) moduleCache.delete(pluginId);
-  else moduleCache.clear();
+  if (pluginId) {
+    moduleCache.delete(pluginId);
+    inflight.delete(pluginId);
+  } else {
+    moduleCache.clear();
+    inflight.clear();
+  }
 }

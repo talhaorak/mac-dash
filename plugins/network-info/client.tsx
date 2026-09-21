@@ -53,6 +53,21 @@ export default function NetworkInfoPanel() {
     }
   };
 
+  const [externalIp, setExternalIp] = useState<string | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+
+  const lookUpExternalIp = async () => {
+    setLookingUp(true);
+    try {
+      const res = await api.get<{ ip: string | null }>("/plugins/network-info/external-ip");
+      setExternalIp(res.ip ?? "unavailable");
+    } catch {
+      setExternalIp("unavailable");
+    } finally {
+      setLookingUp(false);
+    }
+  };
+
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 30000);
@@ -108,9 +123,19 @@ export default function NetworkInfoPanel() {
             </div>
             <div>
               <div className="text-[10px] text-gray-500 uppercase tracking-wider">External IP</div>
-              <div className="text-lg font-mono font-bold text-white">
-                {data?.externalIp || "N/A"}
-              </div>
+              {data?.externalIp || externalIp ? (
+                <div className="text-lg font-mono font-bold text-white">{data?.externalIp || externalIp}</div>
+              ) : (
+                // The lookup asks api.ipify.org, so it only runs on request.
+                <button
+                  type="button"
+                  disabled={lookingUp}
+                  onClick={lookUpExternalIp}
+                  className="text-sm font-medium text-cyan-400 hover:underline disabled:opacity-50"
+                >
+                  {lookingUp ? "Looking up…" : "Look up (asks api.ipify.org)"}
+                </button>
+              )}
             </div>
           </div>
         </GlowCard>

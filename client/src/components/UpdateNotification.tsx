@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Download, X, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { backend } from "@/lib/backend";
+import { toast } from "@/components/ui/Toast";
 
 interface UpdateInfo {
   version: string;
@@ -9,51 +10,61 @@ interface UpdateInfo {
   body?: string;
 }
 
+/**
+ * Call a desktop command. `withGlobalTauri` is off, so `window.__TAURI__` does
+ * not exist. The module loads on demand, and only in the desktop build.
+ */
+async function desktopInvoke<T>(cmd: string): Promise<T> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(cmd);
+}
+
 export function UpdateNotification() {
   const [updateAvailable, setUpdateAvailable] = useState<UpdateInfo | null>(null);
-  const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const checkingRef = useRef(false);
+
+  const checkForUpdates = useCallback(async () => {
+    if (checkingRef.current || !backend.isDesktop()) return;
+
+    checkingRef.current = true;
+    try {
+      const result = await desktopInvoke<UpdateInfo | null>("check_for_updates");
+      if (result) {
+        setUpdateAvailable(result);
+        setDismissed(false);
+      }
+    } catch {
+      // The updater is unavailable (dev build, no network, no release feed).
+      // That is an expected state, so it stays silent.
+    } finally {
+      checkingRef.current = false;
+    }
+  }, []);
 
   useEffect(() => {
     // Only run in desktop mode
     if (!backend.isDesktop()) return;
 
     // Check for updates on mount
-    checkForUpdates();
+    void checkForUpdates();
 
     // Check again every 6 hours
     const interval = setInterval(checkForUpdates, 6 * 60 * 60 * 1000);
     return () => clearInterval(interval);
-  }, []);
-
-  const checkForUpdates = async () => {
-    if (checking || !backend.isDesktop()) return;
-    
-    setChecking(true);
-    try {
-      const result = await (window as any).__TAURI__.core.invoke("check_for_updates");
-      if (result) {
-        setUpdateAvailable(result);
-        setDismissed(false);
-      }
-    } catch (err) {
-      console.warn("Update check failed:", err);
-    } finally {
-      setChecking(false);
-    }
-  };
+  }, [checkForUpdates]);
 
   const installUpdate = async () => {
     if (installing) return;
-    
+
     setInstalling(true);
     try {
-      await (window as any).__TAURI__.core.invoke("install_update");
+      await desktopInvoke<void>("install_update");
       // App will restart automatically after update
     } catch (err) {
-      console.error("Update installation failed:", err);
-      alert(`Failed to install update: ${err}`);
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to install update: ${message}`);
       setInstalling(false);
     }
   };
@@ -66,13 +77,15 @@ export function UpdateNotification() {
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -20 }}
+        role="status"
+        aria-live="polite"
         className="fixed top-4 right-4 z-50 w-96 backdrop-blur-xl bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 rounded-2xl shadow-2xl overflow-hidden"
       >
         <div className="p-4">
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center">
-                <Download className="w-4 h-4 text-cyan-400" />
+                <Download className="w-4 h-4 text-cyan-400" aria-hidden="true" />
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-white">Update Available</h3>
@@ -80,11 +93,14 @@ export function UpdateNotification() {
               </div>
             </div>
             <button
+              type="button"
               onClick={() => setDismissed(true)}
-              className="text-gray-500 hover:text-gray-300 transition-colors"
+              aria-label="Dismiss update notification"
+              title="Dismiss"
+              className="text-gray-500 hover:text-gray-300 transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
               disabled={installing}
             >
-              <X className="w-4 h-4" />
+              <X className="w-4 h-4" aria-hidden="true" />
             </button>
           </div>
 
@@ -102,12 +118,12 @@ export function UpdateNotification() {
             >
               {installing ? (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
                   Installing...
                 </>
               ) : (
                 <>
-                  <Download className="w-3.5 h-3.5" />
+                  <Download className="w-3.5 h-3.5" aria-hidden="true" />
                   Install & Relaunch
                 </>
               )}

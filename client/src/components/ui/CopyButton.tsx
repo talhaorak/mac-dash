@@ -35,13 +35,15 @@ export function CopyButton({ text, className }: CopyButtonProps) {
 
   return (
     <button
+      type="button"
       onClick={handleCopy}
       className={cn(
-        "p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-white/[0.08] transition-all duration-200",
+        "p-1 rounded-md opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-white/[0.08] transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60",
         copied && "opacity-100",
         className
       )}
       title="Copy to clipboard"
+      aria-label={copied ? "Copied" : "Copy to clipboard"}
     >
       <AnimatePresence mode="wait" initial={false}>
         {copied ? (
@@ -52,7 +54,7 @@ export function CopyButton({ text, className }: CopyButtonProps) {
             exit={{ scale: 0, rotate: 90 }}
             transition={{ duration: 0.15 }}
           >
-            <Check className="w-3.5 h-3.5 text-green-400" />
+            <Check className="w-3.5 h-3.5 text-green-400" aria-hidden="true" />
           </motion.div>
         ) : (
           <motion.div
@@ -62,7 +64,7 @@ export function CopyButton({ text, className }: CopyButtonProps) {
             exit={{ scale: 0, rotate: -90 }}
             transition={{ duration: 0.15 }}
           >
-            <Copy className="w-3.5 h-3.5 text-gray-500" />
+            <Copy className="w-3.5 h-3.5 text-gray-500" aria-hidden="true" />
           </motion.div>
         )}
       </AnimatePresence>

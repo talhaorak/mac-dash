@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { memo, useState, useRef, useEffect, useMemo } from "react";
 import { useLogsStore, useNavStore, type LogEntry } from "@/stores/app";
 import { GlowCard } from "@/components/ui/GlowCard";
-import { api } from "@/lib/api";
+import { backend } from "@/lib/backend";
 import { cn } from "@/lib/utils";
 import {
   Search,
@@ -37,6 +37,20 @@ interface ActiveLogProcess {
   lastSeen: string;
 }
 
+// Stable React keys for log rows. The store keeps the same entry objects while
+// it trims the list from the top, so an id per object survives the trimming.
+const entryIds = new WeakMap<LogEntry, number>();
+let nextEntryId = 0;
+
+function getEntryKey(entry: LogEntry): number {
+  let id = entryIds.get(entry);
+  if (id === undefined) {
+    id = nextEntryId++;
+    entryIds.set(entry, id);
+  }
+  return id;
+}
+
 export function LogsPage() {
   const entries = useLogsStore((s) => s.entries);
   const paused = useLogsStore((s) => s.paused);
@@ -47,6 +61,9 @@ export function LogsPage() {
   const [levelFilter, setLevelFilter] = useState<Set<string>>(new Set());
   const [processFilter, setProcessFilter] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const pickerButtonRef = useRef<HTMLButtonElement>(null);
+  const lastSeenEntryRef = useRef<LogEntry | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [newCount, setNewCount] = useState(0);
   const [activeProcesses, setActiveProcesses] = useState<ActiveLogProcess[]>([]);
@@ -62,9 +79,13 @@ export function LogsPage() {
   // Fetch active log processes
   useEffect(() => {
     const fetchProcesses = () => {
-      api
-        .get<{ processes: ActiveLogProcess[] }>("/logs/active-processes")
-        .then((r) => setActiveProcesses(r.processes))
+      backend
+        .getActiveLogProcesses()
+        .then((r: any) => {
+          // The web API returns { processes }. The desktop command returns the array.
+          const list: ActiveLogProcess[] = Array.isArray(r) ? r : r?.processes;
+          setActiveProcesses(Array.isArray(list) ? list : []);
+        })
         .catch(() => {});
     };
     fetchProcesses();
@@ -72,15 +93,42 @@ export function LogsPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom, or count the entries that arrive while the user reads older ones
   useEffect(() => {
+    const prevLast = lastSeenEntryRef.current;
+    lastSeenEntryRef.current = entries[entries.length - 1] ?? null;
+
     if (autoScroll && !paused && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
       setNewCount(0);
-    } else if (paused) {
-      setNewCount((c) => c + 1);
+    } else if (!autoScroll) {
+      // Count by object identity. `entries.length` stops growing at `maxEntries`.
+      const prevIndex = prevLast ? entries.lastIndexOf(prevLast) : -1;
+      const added = prevIndex === -1 ? 0 : entries.length - 1 - prevIndex;
+      if (added > 0) setNewCount((c) => c + added);
     }
-  }, [entries.length, autoScroll, paused]);
+  }, [entries, autoScroll, paused]);
+
+  // Close the source picker on Escape and on a click outside it
+  useEffect(() => {
+    if (!showProcessPicker) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!pickerRef.current?.contains(e.target as Node)) {
+        setShowProcessPicker(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setShowProcessPicker(false);
+      pickerButtonRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showProcessPicker]);
 
   const handleScroll = () => {
     if (!scrollRef.current) return;
@@ -153,7 +201,9 @@ export function LogsPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={() => setPaused(!paused)}
+            title={paused ? "Resume the log stream" : "Pause the log stream"}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all",
               paused
@@ -161,14 +211,19 @@ export function LogsPage() {
                 : "bg-green-500/15 text-green-400 ring-1 ring-green-500/30"
             )}
           >
-            {paused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+            {paused ? (
+              <Play className="w-3 h-3" aria-hidden="true" />
+            ) : (
+              <Pause className="w-3 h-3" aria-hidden="true" />
+            )}
             {paused ? "Resume" : "Streaming"}
           </button>
           <button
+            type="button"
             onClick={clear}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-gray-500 hover:text-gray-300 hover:bg-white/[0.04] transition-all"
           >
-            <Trash2 className="w-3 h-3" />
+            <Trash2 className="w-3 h-3" aria-hidden="true" />
             Clear
           </button>
         </div>
@@ -177,9 +232,13 @@ export function LogsPage() {
       {/* Filters bar */}
       <div className="flex items-center gap-3 flex-shrink-0 flex-wrap">
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+          <Search
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500"
+            aria-hidden="true"
+          />
           <input
             type="text"
+            aria-label="Search logs"
             placeholder="Search logs..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -188,11 +247,13 @@ export function LogsPage() {
         </div>
 
         {/* Level chips */}
-        <div className="flex gap-1">
+        <div className="flex gap-1" role="group" aria-label="Filter by level">
           {["error", "warning", "info", "debug"].map((level) => (
             <button
               key={level}
+              type="button"
               onClick={() => toggleLevel(level)}
+              aria-pressed={levelFilter.has(level)}
               className={cn(
                 "px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all",
                 levelFilter.has(level)
@@ -207,9 +268,16 @@ export function LogsPage() {
         </div>
 
         {/* Process source picker */}
-        <div className="relative">
+        <div className="relative" ref={pickerRef}>
           <button
+            ref={pickerButtonRef}
+            type="button"
             onClick={() => setShowProcessPicker(!showProcessPicker)}
+            aria-expanded={showProcessPicker}
+            aria-controls="log-source-picker"
+            aria-label={
+              processFilter ? `Source filter: ${processFilter}` : "Filter by source"
+            }
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
               processFilter
@@ -217,14 +285,15 @@ export function LogsPage() {
                 : "text-gray-500 hover:text-gray-300 hover:bg-white/[0.04]"
             )}
           >
-            <Filter className="w-3 h-3" />
+            <Filter className="w-3 h-3" aria-hidden="true" />
             {processFilter || "Source"}
-            <ChevronDown className="w-3 h-3" />
+            <ChevronDown className="w-3 h-3" aria-hidden="true" />
           </button>
 
           <AnimatePresence>
             {showProcessPicker && (
               <motion.div
+                id="log-source-picker"
                 initial={{ opacity: 0, y: -5 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -5 }}
@@ -282,10 +351,16 @@ export function LogsPage() {
         {/* Active process filter badge */}
         {processFilter && (
           <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-500/10 text-purple-400 text-xs">
-            <Filter className="w-3 h-3" />
+            <Filter className="w-3 h-3" aria-hidden="true" />
             {processFilter}
-            <button onClick={() => setProcessFilter("")} className="hover:text-purple-300">
-              <X className="w-3 h-3" />
+            <button
+              type="button"
+              onClick={() => setProcessFilter("")}
+              aria-label="Clear source filter"
+              title="Clear source filter"
+              className="hover:text-purple-300 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/60"
+            >
+              <X className="w-3 h-3" aria-hidden="true" />
             </button>
           </div>
         )}
@@ -296,13 +371,16 @@ export function LogsPage() {
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="h-full overflow-y-auto p-2 space-y-0.5 font-mono text-[11px]"
+          tabIndex={0}
+          role="region"
+          aria-label="Log entries"
+          className="h-full overflow-y-auto p-2 space-y-0.5 font-mono text-[11px] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-500/40 rounded-2xl"
         >
-          {filtered.map((entry, i) => (
+          {filtered.map((entry) => (
             <LogLine
-              key={i}
+              key={getEntryKey(entry)}
               entry={entry}
-              onProcessClick={(p) => setProcessFilter(p)}
+              onProcessClick={setProcessFilter}
             />
           ))}
           {filtered.length === 0 && (
@@ -318,13 +396,14 @@ export function LogsPage() {
         <AnimatePresence>
           {!autoScroll && newCount > 0 && (
             <motion.button
+              type="button"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10 }}
               onClick={scrollToBottom}
               className="absolute bottom-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/20 text-cyan-400 text-xs font-medium backdrop-blur-sm ring-1 ring-cyan-500/30 hover:bg-cyan-500/30 transition-colors"
             >
-              <ArrowDown className="w-3 h-3" />
+              <ArrowDown className="w-3 h-3" aria-hidden="true" />
               {newCount} new
             </motion.button>
           )}
@@ -334,7 +413,7 @@ export function LogsPage() {
   );
 }
 
-function LogLine({
+const LogLine = memo(function LogLine({
   entry,
   onProcessClick,
 }: {
@@ -375,4 +454,4 @@ function LogLine({
       <span className="text-gray-400 truncate flex-1">{entry.message}</span>
     </div>
   );
-}
+});
