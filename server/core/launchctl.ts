@@ -352,11 +352,17 @@ interface DomainState {
   disabled: Map<string, boolean>;
 }
 
+/** launchctl answers in milliseconds. A hung call must not freeze the dashboard or the monitor. */
+const LAUNCHCTL_TIMEOUT_MS = 15_000;
+const lastDomainState = new Map<string, DomainState>();
+
 async function readDomain(domain: string): Promise<DomainState> {
   const [printed, overrides] = await Promise.all([
-    run(["launchctl", "print", domain]),
-    run(["launchctl", "print-disabled", domain]),
+    run(["launchctl", "print", domain], undefined, LAUNCHCTL_TIMEOUT_MS),
+    run(["launchctl", "print-disabled", domain], undefined, LAUNCHCTL_TIMEOUT_MS),
   ]);
+  // Timed out or failed: show the last known state instead of "nothing is loaded".
+  if (printed.code !== 0 && lastDomainState.has(domain)) return lastDomainState.get(domain)!;
 
   const services: DomainState["services"] = new Map();
   let inServices = false;
@@ -378,7 +384,9 @@ async function readDomain(domain: string): Promise<DomainState> {
     const m = line.match(/^\s*"(.+)" => (disabled|enabled|true|false)$/);
     if (m) disabled.set(m[1], m[2] === "disabled" || m[2] === "true");
   }
-  return { services, disabled };
+  const state = { services, disabled };
+  if (printed.code === 0) lastDomainState.set(domain, state);
+  return state;
 }
 
 function statusOf(state: { pid: number | null; status: number | null } | undefined): ServiceInfo["status"] {
@@ -478,7 +486,7 @@ export async function listServices(): Promise<ServiceInfo[]> {
 
 export async function getServiceDetail(label: string, category: JobCategory): Promise<ServiceDetail | null> {
   const domain = domainFor(category);
-  const printed = await run(["launchctl", "print", `${domain}/${label}`]);
+  const printed = await run(["launchctl", "print", `${domain}/${label}`], undefined, LAUNCHCTL_TIMEOUT_MS);
   if (printed.code !== 0 || !printed.stdout) return null;
 
   const detail: ServiceDetail = {
@@ -517,7 +525,7 @@ export async function getServiceDetail(label: string, category: JobCategory): Pr
 // ── Actions ──────────────────────────────────────────────────────────
 
 async function isLoaded(domain: string, label: string): Promise<boolean> {
-  return (await run(["launchctl", "print", `${domain}/${label}`])).code === 0;
+  return (await run(["launchctl", "print", `${domain}/${label}`], undefined, LAUNCHCTL_TIMEOUT_MS)).code === 0;
 }
 
 /** Steps for one action. Tolerant steps may fail without failing the action. */
@@ -586,7 +594,7 @@ export async function manageService(label: string, category: JobCategory, action
       await runPrivileged(steps, `mac-dash wants to ${action} the daemon "${promptLabel(label)}".`);
     } else {
       for (const step of steps) {
-        const result = await run(step.cmd);
+        const result = await run(step.cmd, undefined, 2 * LAUNCHCTL_TIMEOUT_MS);
         if (result.code !== 0 && !step.tolerant) throw new JobError(explainLaunchctlError(result));
       }
     }

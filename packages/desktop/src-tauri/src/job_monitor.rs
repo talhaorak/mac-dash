@@ -136,9 +136,10 @@ fn failed_event(file: &JobFile, exit_status: i64, now: u64) -> JobEvent {
 }
 
 /// One pass over the loaded jobs. Returns the new snapshot and the events. The first pass
-/// (`previous` is None) is the baseline and reports nothing.
-async fn status_pass(previous: Option<&StatusMap>) -> (StatusMap, Vec<JobEvent>) {
-    let loaded = loaded_exit_statuses().await;
+/// (`previous` is None) is the baseline and reports nothing. None: launchd gave no answer, so the
+/// pass does not count. An empty snapshot would turn every known failure into a new one next time.
+async fn status_pass(previous: Option<&StatusMap>) -> Option<(StatusMap, Vec<JobEvent>)> {
+    let loaded = loaded_exit_statuses().await?;
     let mut files: HashMap<(String, String), Arc<JobFile>> = HashMap::new();
     let mut current = StatusMap::new();
     for (file, status) in loaded {
@@ -154,7 +155,7 @@ async fn status_pass(previous: Option<&StatusMap>) -> (StatusMap, Vec<JobEvent>)
             .collect(),
         None => Vec::new(),
     };
-    (current, events)
+    Some((current, events))
 }
 
 // ── Settings ─────────────────────────────────────────────────────────
@@ -350,9 +351,11 @@ pub fn start(app: AppHandle) {
         let mut previous: Option<StatusMap> = None;
         loop {
             ticker.tick().await; // the first tick completes at once
-            let (current, events) = status_pass(previous.as_ref()).await;
-            previous = Some(current);
-            record_events(events).await;
+            // Every launchctl call inside has a timeout, so this task cannot stay stuck in a pass.
+            if let Some((current, events)) = status_pass(previous.as_ref()).await {
+                previous = Some(current);
+                record_events(events).await;
+            }
         }
     });
 }
@@ -471,10 +474,10 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_status_passes() {
-        let (baseline, events) = status_pass(None).await;
+        let (baseline, events) = status_pass(None).await.expect("launchd answers");
         println!("{} loaded jobs with a plist in a writable scope", baseline.len());
         assert!(events.is_empty(), "the first pass is the baseline");
-        let (_, events) = status_pass(Some(&baseline)).await;
+        let (_, events) = status_pass(Some(&baseline)).await.expect("launchd answers");
         assert!(events.iter().all(|e| e.kind == "failed" && e.exit_status.is_some_and(|s| s != 0)));
         println!("monitor settings: {:?}", get_monitor_settings().await);
     }

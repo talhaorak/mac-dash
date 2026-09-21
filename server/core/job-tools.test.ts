@@ -97,7 +97,7 @@ describe("checkScriptAppRequest", () => {
   });
 
   test("rejects relative paths, control characters and non-strings", () => {
-    for (const path of ["run.sh", "~/run.sh", "", `/tmp/a${String.fromCharCode(10)}b`, `/tmp/a${String.fromCharCode(0)}`, `/tmp/${String.fromCharCode(0x7f)}`, 5, undefined]) {
+    for (const path of ["run.sh", "~/run.sh", "", `/tmp/a${String.fromCharCode(10)}b`, `/tmp/a${String.fromCharCode(0)}`, `/tmp/${String.fromCharCode(0x7f)}`, `/tmp/a${String.fromCharCode(0x2028)}b.sh`, `/tmp/a${String.fromCharCode(0x2029)}b.sh`, 5, undefined]) {
       expect(() => checkScriptAppRequest(path, "App")).toThrow(JobError);
     }
   });

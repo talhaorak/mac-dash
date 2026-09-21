@@ -75,7 +75,8 @@ export async function getJobSignature(label: string, category: JobCategory): Pro
 // ── Script applet ────────────────────────────────────────────────────
 
 const APP_NAME = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
+// U+2028 and U+2029 are line breaks for AppleScript too: inside a string literal they would end the line.
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
 /** An AppleScript string literal. Only backslash and double quote are special inside it. */
 export function appleScriptString(text: string): string {

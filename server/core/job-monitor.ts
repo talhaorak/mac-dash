@@ -125,7 +125,11 @@ async function pollExitStatuses(): Promise<void> {
   if (exitPollRunning) return;
   exitPollRunning = true;
   try {
-    const { next, failed } = findNewFailures(exitStatuses, await listServices());
+    const services = await listServices();
+    // launchctl gave no answer at all: skip the pass. An empty baseline would turn every
+    // known failure into a new event on the next pass.
+    if (!services.some((s) => s.loaded)) return;
+    const { next, failed } = findNewFailures(exitStatuses, services);
     exitStatuses = next;
     if (failed.length > 0) {
       await append(

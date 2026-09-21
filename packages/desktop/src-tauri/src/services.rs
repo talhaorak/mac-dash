@@ -39,6 +39,12 @@ const XATTR: &str = "/usr/bin/xattr";
 const QUARANTINE_XATTR: &str = "com.apple.quarantine";
 const MAX_BACKUPS_PER_JOB: usize = 20;
 
+/// `launchctl print`, `print-disabled` and the other read-only tools. A hung launchctl must not freeze
+/// the job list (polled every 3 s) or wedge the failed-job poll.
+const LAUNCHCTL_TIMEOUT: Duration = Duration::from_secs(15);
+/// bootstrap, bootout, kickstart, kill, enable, disable without the administrator prompt.
+const ACTION_TIMEOUT: Duration = Duration::from_secs(30);
+
 const MAX_OUTPUT_BYTES: u64 = 256 * 1024;
 const MAX_XML_BYTES: usize = 1024 * 1024;
 /// A privileged save passes the plist inside the root script, so the size is bound by ARG_MAX.
@@ -236,44 +242,21 @@ pub(crate) struct ExecResult {
     pub stderr: String,
 }
 
+/// How long a hung child gets to die after SIGKILL before the caller moves on.
+const REAP_GRACE: Duration = Duration::from_secs(2);
+
+const TIMED_OUT: &str = "The command timed out.";
+
 /// Spawn a command from an argument array and collect its output. No shell is involved.
-/// With a timeout, the child is killed when the time is up.
-pub(crate) async fn run_with_timeout<S: AsRef<str>>(cmd: &[S], timeout: Option<Duration>) -> ExecResult {
-    let mut command = Command::new(cmd[0].as_ref());
-    command
-        .args(cmd[1..].iter().map(|a| a.as_ref()))
-        .stdin(Stdio::null())
-        .kill_on_drop(true);
-    let output = match timeout {
-        Some(limit) => match tokio::time::timeout(limit, command.output()).await {
-            Ok(output) => output,
-            // Dropping the future drops the child, and kill_on_drop ends it.
-            Err(_) => return ExecResult { code: -1, stdout: String::new(), stderr: "The command timed out.".to_string() },
-        },
-        None => command.output().await,
-    };
-    match output {
-        Ok(output) => ExecResult {
-            code: output.status.code().unwrap_or(-1),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        },
-        Err(e) => ExecResult { code: 127, stdout: String::new(), stderr: e.to_string() },
-    }
-}
-
-async fn run<S: AsRef<str>>(cmd: &[S]) -> ExecResult {
-    run_with_timeout(cmd, None).await
-}
-
-/// Like `run`, with `input` on the standard input of the command.
-async fn run_with_stdin<S: AsRef<str>>(cmd: &[S], input: &[u8]) -> ExecResult {
-    use tokio::io::AsyncWriteExt;
+/// `input` goes to the standard input. With a timeout, a hung child is killed AND reaped here, so that
+/// it neither blocks the caller for ever nor stays behind as a zombie.
+async fn run_command<S: AsRef<str>>(cmd: &[S], input: Option<&[u8]>, timeout: Option<Duration>) -> ExecResult {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let mut command = Command::new(cmd[0].as_ref());
     command
         .args(cmd[1..].iter().map(|a| a.as_ref()))
-        .stdin(Stdio::piped())
+        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -281,24 +264,54 @@ async fn run_with_stdin<S: AsRef<str>>(cmd: &[S], input: &[u8]) -> ExecResult {
         Ok(child) => child,
         Err(e) => return ExecResult { code: 127, stdout: String::new(), stderr: e.to_string() },
     };
-    let stdin = child.stdin.take();
+    let (stdin, stdout, stderr) = (child.stdin.take(), child.stdout.take(), child.stderr.take());
+
     let feed = async move {
-        if let Some(mut stdin) = stdin {
+        if let (Some(mut stdin), Some(input)) = (stdin, input) {
             // A command that exits early closes the pipe. Its exit status tells the story.
             let _ = stdin.write_all(input).await;
             let _ = stdin.shutdown().await;
         } // dropping stdin sends EOF
     };
-    // Feed and drain at the same time, so that neither pipe can fill up and block.
-    let ((), output) = tokio::join!(feed, child.wait_with_output());
-    match output {
-        Ok(output) => ExecResult {
-            code: output.status.code().unwrap_or(-1),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        },
-        Err(e) => ExecResult { code: 127, stdout: String::new(), stderr: e.to_string() },
+    async fn drain(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes).await;
+        }
+        bytes
     }
+    // Feed and drain at the same time, so that no pipe can fill up and block.
+    let finished = {
+        let collect = async { tokio::join!(feed, drain(stdout), drain(stderr), child.wait()) };
+        match timeout {
+            Some(limit) => tokio::time::timeout(limit, collect).await.ok(),
+            None => Some(collect.await),
+        }
+    };
+    match finished {
+        Some(((), stdout, stderr, Ok(status))) => ExecResult {
+            code: status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).trim().to_string(),
+        },
+        Some(((), _, _, Err(e))) => ExecResult { code: 127, stdout: String::new(), stderr: e.to_string() },
+        None => {
+            // Timed out. SIGKILL, then wait: the wait reaps the child. The wait is bounded as well, for a
+            // process that cannot die (uninterruptible sleep). tokio reaps that one later (kill_on_drop).
+            let _ = child.start_kill();
+            let _ = tokio::time::timeout(REAP_GRACE, child.wait()).await;
+            ExecResult { code: -1, stdout: String::new(), stderr: TIMED_OUT.to_string() }
+        }
+    }
+}
+
+pub(crate) async fn run_with_timeout<S: AsRef<str>>(cmd: &[S], timeout: Option<Duration>) -> ExecResult {
+    run_command(cmd, None, timeout).await
+}
+
+/// Like `run_with_timeout`, with `input` on the standard input of the command.
+async fn run_with_stdin<S: AsRef<str>>(cmd: &[S], input: &[u8], timeout: Duration) -> ExecResult {
+    run_command(cmd, Some(input), Some(timeout)).await
 }
 
 fn sh_quote(arg: &str) -> String {
@@ -392,7 +405,8 @@ async fn run_privileged(steps: &[Step], prompt: &str) -> JobResult<()> {
         return Ok(());
     }
     let script = privileged_script(steps);
-    let result = run(&osascript_argv(&PRIVILEGED_SCRIPT, &[script.as_str(), prompt])).await;
+    // No timeout: the administrator prompt waits for the user.
+    let result = run_with_timeout(&osascript_argv(&PRIVILEGED_SCRIPT, &[script.as_str(), prompt]), None).await;
     if result.code != 0 {
         return Err(explain_privileged_failure(&result.stderr));
     }
@@ -695,34 +709,66 @@ fn parse_disabled(printed: &str) -> HashMap<String, bool> {
     printed.split('\n').filter_map(parse_disabled_line).collect()
 }
 
-/// The override database of a domain: label → disabled.
-async fn read_disabled(domain: &str) -> HashMap<String, bool> {
-    parse_disabled(&run(&[LAUNCHCTL, "print-disabled", domain]).await.stdout)
+/// The last good answer of launchd per domain. When `launchctl print` fails or times out, the jobs
+/// keep their last known state for that tick. They do not all flip to "not loaded".
+static LAST_DOMAIN_STATE: LazyLock<std::sync::Mutex<HashMap<String, Arc<DomainState>>>> =
+    LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// The state of a domain from the two command results, or the last known one. None: launchd gave
+/// no answer and there is no earlier one. Pure apart from the cache that it is handed.
+fn resolve_domain_state(
+    cache: &mut HashMap<String, Arc<DomainState>>,
+    domain: &str,
+    printed: &ExecResult,
+    overrides: &ExecResult,
+) -> Option<Arc<DomainState>> {
+    let known = cache.get(domain).cloned();
+    if printed.code != 0 {
+        return known;
+    }
+    let disabled = match (overrides.code, &known) {
+        (0, _) | (_, None) => parse_disabled(&overrides.stdout),
+        (_, Some(known)) => known.disabled.clone(), // print-disabled failed: keep the known overrides
+    };
+    let state = Arc::new(DomainState { services: parse_services_block(&printed.stdout), disabled });
+    cache.insert(domain.to_string(), Arc::clone(&state));
+    Some(state)
 }
 
-async fn read_domain(domain: &str) -> DomainState {
+async fn read_domain(domain: &str) -> Option<Arc<DomainState>> {
     let print = [LAUNCHCTL, "print", domain];
-    let (printed, disabled) = tokio::join!(run(&print), read_disabled(domain));
-    DomainState { services: parse_services_block(&printed.stdout), disabled }
+    let print_disabled = [LAUNCHCTL, "print-disabled", domain];
+    let (printed, overrides) = tokio::join!(
+        run_with_timeout(&print, Some(LAUNCHCTL_TIMEOUT)),
+        run_with_timeout(&print_disabled, Some(LAUNCHCTL_TIMEOUT)),
+    );
+    let mut cache = LAST_DOMAIN_STATE.lock().unwrap_or_else(|e| e.into_inner());
+    resolve_domain_state(&mut cache, domain, &printed, &overrides)
+}
+
+/// The override database of a domain: label → disabled.
+async fn read_disabled(domain: &str) -> HashMap<String, bool> {
+    parse_disabled(&run_with_timeout(&[LAUNCHCTL, "print-disabled", domain], Some(LAUNCHCTL_TIMEOUT)).await.stdout)
 }
 
 /// Last exit status of every loaded job that has a plist in a writable scope, for the monitor.
-/// None: the job never exited. Jobs that launchd does not know are left out.
-pub(crate) async fn loaded_exit_statuses() -> Vec<(Arc<JobFile>, Option<i64>)> {
+/// Inner None: the job never exited. Jobs that launchd does not know are left out.
+/// Outer None: launchd gave no answer for a domain and there is no earlier one. The caller skips the pass.
+pub(crate) async fn loaded_exit_statuses() -> Option<Vec<(Arc<JobFile>, Option<i64>)>> {
     let gui_domain = format!("gui/{}", uid());
-    let print_gui = [LAUNCHCTL, "print", gui_domain.as_str()];
-    let print_system = [LAUNCHCTL, "print", "system"];
-    let (gui, system, files) = tokio::join!(run(&print_gui), run(&print_system), indexed_files());
-    let (gui, system) = (parse_services_block(&gui.stdout), parse_services_block(&system.stdout));
+    let (gui, system, files) = tokio::join!(read_domain(&gui_domain), read_domain("system"), indexed_files());
+    let (gui, system) = (gui?, system?);
 
-    files
-        .values()
-        .filter_map(|file| {
-            let scope = scope_for(file.category).filter(|s| s.writable)?;
-            let services = if scope.kind == ScopeKind::Daemon { &system } else { &gui };
-            services.get(&file.label).map(|state| (Arc::clone(file), state.status))
-        })
-        .collect()
+    Some(
+        files
+            .values()
+            .filter_map(|file| {
+                let scope = scope_for(file.category).filter(|s| s.writable)?;
+                let domain = if scope.kind == ScopeKind::Daemon { &system } else { &gui };
+                domain.services.get(&file.label).map(|state| (Arc::clone(file), state.status))
+            })
+            .collect(),
+    )
 }
 
 fn status_of(state: Option<&ServiceState>) -> &'static str {
@@ -751,6 +797,8 @@ fn calendar_fields(job: &Dictionary) -> Vec<BTreeMap<String, i64>> {
 pub async fn list_services() -> Vec<ServiceInfo> {
     let gui_domain = format!("gui/{}", uid());
     let (gui, system, files) = tokio::join!(read_domain(&gui_domain), read_domain("system"), indexed_files());
+    let (gui, system) = (gui.unwrap_or_default(), system.unwrap_or_default());
+    let (gui, system) = (&*gui, &*system);
 
     let mut services = Vec::with_capacity(files.len() + 64);
     let mut seen_gui: HashSet<&str> = HashSet::new();
@@ -762,7 +810,7 @@ pub async fn list_services() -> Vec<ServiceInfo> {
             continue;
         };
         let is_system = scope.kind == ScopeKind::Daemon;
-        let domain_state = if is_system { &system } else { &gui };
+        let domain_state = if is_system { system } else { gui };
         let state = domain_state.services.get(&file.label);
         if is_system {
             seen_system.insert(&file.label);
@@ -804,7 +852,7 @@ pub async fn list_services() -> Vec<ServiceInfo> {
 
     // Services launchd knows about that have no file in the scope directories
     // (XPC services, app-registered SMAppService jobs, running app instances).
-    for (is_system, domain_state, seen) in [(false, &gui, &seen_gui), (true, &system, &seen_system)] {
+    for (is_system, domain_state, seen) in [(false, gui, &seen_gui), (true, system, &seen_system)] {
         for (label, state) in &domain_state.services {
             if seen.contains(label.as_str()) {
                 continue;
@@ -920,7 +968,7 @@ pub async fn get_service_detail(label: &str, category: &str) -> JobResult<Option
         return Err("Invalid label.".to_string());
     }
     let domain = domain_for(scope);
-    let printed = run(&[LAUNCHCTL, "print", &format!("{}/{}", domain, label)]).await;
+    let printed = run_with_timeout(&[LAUNCHCTL, "print", &format!("{}/{}", domain, label)], Some(LAUNCHCTL_TIMEOUT)).await;
     if printed.code != 0 || printed.stdout.is_empty() {
         return Ok(None);
     }
@@ -999,7 +1047,7 @@ fn needs_enabled_job(action: &str) -> bool {
 }
 
 async fn is_loaded(domain: &str, label: &str) -> bool {
-    run(&[LAUNCHCTL, "print", &format!("{}/{}", domain, label)]).await.code == 0
+    run_with_timeout(&[LAUNCHCTL, "print", &format!("{}/{}", domain, label)], Some(LAUNCHCTL_TIMEOUT)).await.code == 0
 }
 
 pub async fn manage_service(label: &str, category: &str, action: &str) -> JobResult<()> {
@@ -1046,7 +1094,7 @@ pub async fn manage_service(label: &str, category: &str, action: &str) -> JobRes
         run_privileged(&steps, &format!("mac-dash wants to {} the daemon \"{}\".", action, prompt_label(label))).await?;
     } else {
         for s in &steps {
-            let result = run(&s.cmd).await;
+            let result = run_with_timeout(&s.cmd, Some(ACTION_TIMEOUT)).await;
             if result.code != 0 && !s.tolerant {
                 return Err(explain_launchctl_error(&result));
             }
@@ -1397,7 +1445,7 @@ pub async fn save_job(req: SaveJobRequest) -> JobResult<SavedJob> {
 
     // Lint from memory. The checked text never sits in a file that another process could swap
     // while the administrator prompt is open.
-    let lint = run_with_stdin(&[PLUTIL, "-lint", "-"], req.xml.as_bytes()).await;
+    let lint = run_with_stdin(&[PLUTIL, "-lint", "-"], req.xml.as_bytes(), LAUNCHCTL_TIMEOUT).await;
     if lint.code != 0 {
         let reason = if lint.stdout.trim().is_empty() { lint.stderr.as_str() } else { lint.stdout.trim() };
         return Err(format!("plutil rejected the plist: {}", reason));
@@ -1462,7 +1510,7 @@ pub async fn save_job(req: SaveJobRequest) -> JobResult<SavedJob> {
     } else {
         // Target in the user's own folder: the app writes it. root never writes where the user can plant a symlink.
         if let Some(target) = original_target.as_deref().filter(|_| plan.bootout_original && original_domain.as_deref() != Some("system")) {
-            run(&[LAUNCHCTL, "bootout", target]).await;
+            run_with_timeout(&[LAUNCHCTL, "bootout", target], Some(ACTION_TIMEOUT)).await;
         }
         let (target, xml) = (dest_path.clone(), req.xml.clone());
         // An original in the user's folder goes to the Trash right here. One in /Library needs root, below.
@@ -1506,7 +1554,7 @@ pub async fn save_job(req: SaveJobRequest) -> JobResult<SavedJob> {
         }
 
         if plan.load {
-            let result = run(&[LAUNCHCTL, "bootstrap", &domain, &dest]).await;
+            let result = run_with_timeout(&[LAUNCHCTL, "bootstrap", &domain, &dest], Some(ACTION_TIMEOUT)).await;
             if result.code != 0 {
                 rescan_jobs().await;
                 return Err(format!(
@@ -1542,7 +1590,7 @@ pub async fn delete_job(label: &str, category: &str) -> JobResult<()> {
         }
     } else {
         if let Some(target) = &target {
-            run(&[LAUNCHCTL, "bootout", target]).await;
+            run_with_timeout(&[LAUNCHCTL, "bootout", target], Some(ACTION_TIMEOUT)).await;
         }
         let trashed = Arc::clone(&file);
         tokio::task::spawn_blocking(move || move_to_trash(&trashed, has_backup))
@@ -1637,7 +1685,7 @@ pub async fn check_paths(paths: Vec<String>) -> Vec<PathFacts> {
 pub async fn reveal_job(label: &str, category: &str) -> JobResult<()> {
     scope_or_err(category)?;
     let file = find_job_file(label, category).await.ok_or("Job file not found.")?;
-    let result = run(&[OPEN, "-R", &file.path]).await;
+    let result = run_with_timeout(&[OPEN, "-R", &file.path], Some(LAUNCHCTL_TIMEOUT)).await;
     if result.code == 0 {
         Ok(())
     } else if result.stderr.is_empty() {
@@ -1684,6 +1732,67 @@ mod tests {
         assert_eq!(parse_service_line("12 0x label"), None);
         assert_eq!(parse_service_line("12 -- label"), None);
         assert_eq!(parse_service_line(""), None);
+    }
+
+    /// A hung tool must not block its caller, and the killed child must not stay behind as a zombie.
+    #[tokio::test]
+    async fn hung_commands_are_killed_and_reaped() {
+        let zombies = || {
+            let me = std::process::id().to_string();
+            let listing = std::process::Command::new("/bin/ps").args(["-axo", "ppid=,stat=,comm="]).output().unwrap();
+            String::from_utf8_lossy(&listing.stdout)
+                .lines()
+                .filter(|line| {
+                    let mut columns = line.split_whitespace();
+                    columns.next() == Some(me.as_str()) && columns.next().is_some_and(|stat| stat.starts_with('Z')) && line.contains("sleep")
+                })
+                .count()
+        };
+
+        let started = std::time::Instant::now();
+        let result = run_with_timeout(&["/bin/sleep", "30"], Some(Duration::from_millis(200))).await;
+        assert!(started.elapsed() < Duration::from_secs(5), "returned after {:?}", started.elapsed());
+        assert_eq!((result.code, result.stderr.as_str()), (-1, TIMED_OUT));
+        assert_eq!(zombies(), 0, "the killed child was reaped");
+
+        // The same with data on stdin, for a command that never reads it.
+        let result = run_with_stdin(&["/bin/sleep", "30"], &vec![b'x'; 1024 * 1024], Duration::from_millis(200)).await;
+        assert_eq!(result.code, -1);
+        assert_eq!(zombies(), 0);
+
+        // A command that finishes in time is not affected, and stderr is collected.
+        let quick = run_with_timeout(&["/bin/sh", "-c", "echo out; echo err >&2; exit 3"], Some(Duration::from_secs(10))).await;
+        assert_eq!((quick.code, quick.stdout.as_str(), quick.stderr.as_str()), (3, "out\n", "err"));
+        assert_eq!(run_with_timeout(&["/nonexistent/tool"], Some(Duration::from_secs(1))).await.code, 127);
+    }
+
+    #[test]
+    fn launchd_state_survives_a_failed_print() {
+        let ok = |stdout: &str| ExecResult { code: 0, stdout: stdout.to_string(), stderr: String::new() };
+        let timed_out = ExecResult { code: -1, stdout: String::new(), stderr: TIMED_OUT.to_string() };
+        let printed = "gui/501 = {\n\tservices = {\n\t\t   593      - \tcom.example.job\n\t}\n}\n";
+        let overrides = "\tdisabled services = {\n\t\t\"com.example.off\" => disabled\n\t}\n";
+        let mut cache = HashMap::new();
+
+        // No answer and nothing known: the caller must not take this for "nothing is loaded".
+        assert!(resolve_domain_state(&mut cache, "gui/501", &timed_out, &timed_out).is_none());
+
+        let first = resolve_domain_state(&mut cache, "gui/501", &ok(printed), &ok(overrides)).unwrap();
+        assert_eq!(first.services["com.example.job"].pid, Some(593));
+        assert_eq!(first.disabled.get("com.example.off"), Some(&true));
+
+        // launchctl hangs for one tick: the job stays loaded and running.
+        let kept = resolve_domain_state(&mut cache, "gui/501", &timed_out, &timed_out).unwrap();
+        assert!(Arc::ptr_eq(&kept, &first));
+        // Only print-disabled fails: the services are fresh, the overrides are the known ones.
+        let mixed = resolve_domain_state(&mut cache, "gui/501", &ok("gui/501 = {\n\tservices = {\n\t}\n}\n"), &timed_out).unwrap();
+        assert!(mixed.services.is_empty());
+        assert_eq!(mixed.disabled.get("com.example.off"), Some(&true));
+        // The domains do not share their state.
+        assert!(resolve_domain_state(&mut cache, "system", &timed_out, &timed_out).is_none());
+        // A good answer replaces the known state, also an empty one.
+        let emptied = resolve_domain_state(&mut cache, "gui/501", &ok("gui/501 = {\n\tservices = {\n\t}\n}\n"), &ok("")).unwrap();
+        assert!(emptied.services.is_empty() && emptied.disabled.is_empty());
     }
 
     #[test]
@@ -1976,20 +2085,20 @@ mod tests {
     #[tokio::test]
     async fn lint_from_stdin() {
         let good = "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>Label</key><string>x</string></dict></plist>";
-        let result = run_with_stdin(&[PLUTIL, "-lint", "-"], good.as_bytes()).await;
+        let result = run_with_stdin(&[PLUTIL, "-lint", "-"], good.as_bytes(), LAUNCHCTL_TIMEOUT).await;
         assert_eq!(result.code, 0, "{:?}", result);
 
         let bad = "<plist><dict><key>a</key></dict></plist>";
-        let result = run_with_stdin(&[PLUTIL, "-lint", "-"], bad.as_bytes()).await;
+        let result = run_with_stdin(&[PLUTIL, "-lint", "-"], bad.as_bytes(), LAUNCHCTL_TIMEOUT).await;
         assert_ne!(result.code, 0);
         assert!(!result.stdout.trim().is_empty() || !result.stderr.is_empty());
 
         // More than a pipe buffer in both directions must not block.
         let big = "y".repeat(MAX_XML_BYTES);
-        let echoed = run_with_stdin(&["/bin/cat"], big.as_bytes()).await;
+        let echoed = run_with_stdin(&["/bin/cat"], big.as_bytes(), LAUNCHCTL_TIMEOUT).await;
         assert_eq!(echoed.stdout.len(), big.len());
         // A command that never reads its input
-        assert_eq!(run_with_stdin(&["/usr/bin/true"], big.as_bytes()).await.code, 0);
+        assert_eq!(run_with_stdin(&["/usr/bin/true"], big.as_bytes(), LAUNCHCTL_TIMEOUT).await.code, 0);
     }
 
     #[test]
@@ -2020,7 +2129,7 @@ mod tests {
     async fn live_osascript_separator() {
         let script = ["on run argv", "return \"ARG:\" & (item 1 of argv)", "end run"];
         let hostile = "-e return \"INJECTED\"";
-        let result = run(&osascript_argv(&script, &[hostile])).await;
+        let result = run_with_timeout(&osascript_argv(&script, &[hostile]), Some(LAUNCHCTL_TIMEOUT)).await;
         assert_eq!(result.code, 0, "{:?}", result);
         assert_eq!(result.stdout.trim_end(), format!("ARG:{}", hostile));
 
@@ -2028,7 +2137,7 @@ mod tests {
         // a 270 KB item 1 (the largest privileged save) and a prompt that starts with a dash.
         let echo = ["on run argv", "return ((count of characters of (item 1 of argv)) as text) & \"|\" & (item 2 of argv)", "end run"];
         let payload = privileged_script(&privileged_write_steps(&"x".repeat(MAX_PRIVILEGED_XML_BYTES), "/Library/LaunchDaemons/x.plist", "root:wheel"));
-        let result = run(&osascript_argv(&echo, &[payload.as_str(), "-e prompt"])).await;
+        let result = run_with_timeout(&osascript_argv(&echo, &[payload.as_str(), "-e prompt"]), Some(LAUNCHCTL_TIMEOUT)).await;
         assert_eq!(result.code, 0, "{}", result.stderr);
         assert_eq!(result.stdout.trim_end(), format!("{}|-e prompt", payload.chars().count()));
     }
