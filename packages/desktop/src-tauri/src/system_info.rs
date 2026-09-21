@@ -1,5 +1,5 @@
 use serde::Serialize;
-use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, RefreshKind, System};
+use sysinfo::{Disks, MemoryRefreshKind, System};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -60,14 +60,70 @@ pub struct HardwareInfo {
     pub serial_number: Option<String>,
 }
 
-static SYS: std::sync::LazyLock<Mutex<(System, Instant)>> = std::sync::LazyLock::new(|| {
+/// Wired and compressed memory in bytes. sysinfo does not split these out.
+#[derive(Clone, Copy, Default)]
+struct VmSplit {
+    wired: u64,
+    compressed: u64,
+}
+
+struct Sampler {
+    sys: System,
+    vm: VmSplit,
+    refreshed: Instant,
+}
+
+static SYS: std::sync::LazyLock<Mutex<Sampler>> = std::sync::LazyLock::new(|| {
     let mut sys = System::new();
     sys.refresh_cpu_all();
     std::thread::sleep(std::time::Duration::from_millis(200));
     sys.refresh_cpu_all();
     sys.refresh_memory_specifics(MemoryRefreshKind::everything());
-    Mutex::new((sys, Instant::now()))
+    Mutex::new(Sampler { sys, vm: read_vm_split(), refreshed: Instant::now() })
 });
+
+/// The host port is a send right of this task. One right is kept for the life of the app.
+#[cfg(target_os = "macos")]
+static HOST_PORT: std::sync::LazyLock<libc::mach_port_t> = std::sync::LazyLock::new(|| {
+    // SAFETY: mach_host_self has no preconditions.
+    #[allow(deprecated)] // libc points to the mach2 crate; this one call does not justify a new dependency
+    unsafe {
+        libc::mach_host_self()
+    }
+});
+
+/// `host_statistics64(HOST_VM_INFO64)`: the numbers behind the "Wired" and "Compressed" rows of Activity Monitor.
+#[cfg(target_os = "macos")]
+fn read_vm_split() -> VmSplit {
+    // SAFETY: vm_statistics64 is plain data, so all zeroes is a valid value.
+    let mut info: libc::vm_statistics64 = unsafe { std::mem::zeroed() };
+    let mut count = libc::HOST_VM_INFO64_COUNT;
+    // SAFETY: `info` is as large as `count` says (in integer_t units), and both outlive the call.
+    let status = unsafe {
+        libc::host_statistics64(
+            *HOST_PORT,
+            libc::HOST_VM_INFO64,
+            std::ptr::addr_of_mut!(info).cast::<libc::integer_t>(),
+            &mut count,
+        )
+    };
+    if status != libc::KERN_SUCCESS {
+        return VmSplit::default();
+    }
+    // SAFETY: sysconf has no preconditions.
+    let page_size = u64::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).unwrap_or(0);
+    // The struct is packed: copy the fields, never borrow them.
+    let (wire_count, compressor_page_count) = (info.wire_count, info.compressor_page_count);
+    VmSplit {
+        wired: u64::from(wire_count) * page_size,
+        compressed: u64::from(compressor_page_count) * page_size,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_vm_split() -> VmSplit {
+    VmSplit::default()
+}
 
 fn format_uptime(secs: u64) -> String {
     let days = secs / 86400;
@@ -83,15 +139,18 @@ fn format_uptime(secs: u64) -> String {
 }
 
 pub fn get_system_stats() -> SystemStats {
-    let mut guard = SYS.lock().unwrap();
-    let (sys, last) = &mut *guard;
+    let mut guard = SYS.lock().unwrap_or_else(|e| e.into_inner());
+    let sampler = &mut *guard;
 
-    // Only refresh CPU if >500ms since last refresh
-    if last.elapsed().as_millis() > 500 {
-        sys.refresh_cpu_all();
-        sys.refresh_memory_specifics(MemoryRefreshKind::everything());
-        *last = Instant::now();
+    // Only refresh if >500ms since last refresh
+    if sampler.refreshed.elapsed().as_millis() > 500 {
+        sampler.sys.refresh_cpu_all();
+        sampler.sys.refresh_memory_specifics(MemoryRefreshKind::everything());
+        sampler.vm = read_vm_split();
+        sampler.refreshed = Instant::now();
     }
+    let sys = &sampler.sys;
+    let vm = sampler.vm;
 
     let cpus = sys.cpus();
     let cpu_count = cpus.len();
@@ -133,8 +192,8 @@ pub fn get_system_stats() -> SystemStats {
             total: total_mem,
             used: used_mem,
             free: free_mem,
-            wired: 0,       // sysinfo doesn't split wired/compressed
-            compressed: 0,
+            wired: vm.wired,
+            compressed: vm.compressed,
             used_percent: used_pct,
         },
         disk: DiskStats {
@@ -153,8 +212,8 @@ pub fn get_system_stats() -> SystemStats {
 }
 
 pub fn get_hardware_info() -> HardwareInfo {
-    let guard = SYS.lock().unwrap();
-    let (sys, _) = &*guard;
+    let guard = SYS.lock().unwrap_or_else(|e| e.into_inner());
+    let sys = &guard.sys;
 
     let cpus = sys.cpus();
     let cpu_model = cpus.first().map(|c| c.brand().to_string()).unwrap_or_default();
@@ -168,5 +227,21 @@ pub fn get_hardware_info() -> HardwareInfo {
         os_version: System::os_version().unwrap_or_else(|| "unknown".into()),
         hostname: System::host_name().unwrap_or_else(|| "localhost".into()),
         serial_number: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Read-only check of the mach call: `cargo test -- --ignored live`.
+    #[test]
+    #[ignore]
+    fn live_vm_split() {
+        let stats = get_system_stats();
+        println!("wired {} MiB, compressed {} MiB, total {} MiB", stats.memory.wired >> 20, stats.memory.compressed >> 20, stats.memory.total >> 20);
+        assert!(stats.memory.wired > 0);
+        assert!(stats.memory.wired < stats.memory.total);
+        assert!(stats.memory.compressed < stats.memory.total);
     }
 }

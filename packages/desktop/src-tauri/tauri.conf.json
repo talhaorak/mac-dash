@@ -4,15 +4,16 @@
   "version": "1.0.9",
   "identifier": "com.talhaorak.macdash",
   "build": {
-    "beforeDevCommand": "cd ../../client && bunx --bun vite --port 5173",
-    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "cd ../../client && bunx vite",
+    "devUrl": "http://localhost:7228",
     "beforeBuildCommand": "cd ../../client && bunx --bun vite build",
     "frontendDist": "../../../dist/client"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [
       {
+        "label": "main",
         "title": "Mac Dash",
         "width": 1200,
         "height": 800,
@@ -31,7 +32,10 @@
       "tooltip": "Mac Dash"
     },
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ipc: http://ipc.localhost",
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ]
     }
   },
   "bundle": {
@@ -52,10 +56,7 @@
       "minimumSystemVersion": "13.0",
       "signingIdentity": null,
       "entitlements": null
-    },
-    "resources": [
-      "about.html"
-    ]
+    }
   },
   "plugins": {
     "updater": {

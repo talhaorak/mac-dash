@@ -1,8 +1,11 @@
 use tauri::{
-    tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent},
     menu::{MenuBuilder, MenuItemBuilder},
-    Manager,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
+
+/// `app.trayIcon` in tauri.conf.json already creates the tray icon with this id.
+/// Building a second one would put an extra, empty item in the menu bar.
+const TRAY_ID: &str = "main";
 
 pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let quit = MenuItemBuilder::with_id("quit", "Quit Mac Dash").build(app)?;
@@ -14,33 +17,31 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .item(&quit)
         .build()?;
 
-    let _tray = TrayIconBuilder::new()
-        .menu(&menu)
-        .tooltip("Mac Dash")
-        .on_menu_event(move |app, event| {
-            match event.id().as_ref() {
-                "quit" => {
-                    app.exit(0);
-                }
-                "show" => {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
-                }
-                _ => {}
+    let tray = match app.tray_by_id(TRAY_ID) {
+        Some(tray) => tray,
+        None => {
+            let mut builder = TrayIconBuilder::with_id(TRAY_ID).tooltip("Mac Dash").icon_as_template(true);
+            if let Some(icon) = app.default_window_icon() {
+                builder = builder.icon(icon.clone());
             }
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
-        })
-        .build(app)?;
+            builder.build(app)?
+        }
+    };
+
+    tray.set_menu(Some(menu))?;
+    // Left click shows the dashboard, right click opens the menu.
+    tray.set_show_menu_on_left_click(false)?;
+    tray.on_menu_event(|app, event| match event.id().as_ref() {
+        // Closing the window only hides it, so this is the way out besides the app menu.
+        "quit" => app.exit(0),
+        "show" => crate::show_main_window(app),
+        _ => {}
+    });
+    tray.on_tray_icon_event(|tray, event| {
+        if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+            crate::show_main_window(tray.app_handle());
+        }
+    });
 
     Ok(())
 }

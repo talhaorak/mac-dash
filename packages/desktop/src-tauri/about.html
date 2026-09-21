@@ -143,7 +143,7 @@
   <div class="container">
     <div class="icon">📊</div>
     <h1>Mac Dash</h1>
-    <div class="version" id="version">Version 1.0.6</div>
+    <div class="version" id="version">Version {{VERSION}}</div>
     <p class="description">
       A beautiful macOS system dashboard for monitoring services, processes, and logs.
     </p>
@@ -164,12 +164,12 @@
     </div>
     
     <div class="links">
-      <a href="https://github.com/talhaorak/mac-dash" class="link" id="github">GitHub</a>
-      <a href="https://talhaorak.github.io/mac-dash" class="link" id="website">Website</a>
+      <a href="https://github.com/talhaorak/mac-dash" class="link" id="github" data-external>GitHub</a>
+      <a href="https://talhaorak.github.io/mac-dash" class="link" id="website" data-external>Website</a>
     </div>
     
     <div class="license">
-      Licensed under the <a href="https://opensource.org/licenses/MIT">MIT License</a>
+      Licensed under the <a href="https://opensource.org/licenses/MIT" data-external>MIT License</a>
       <br>
       © 2026 Talha Orak. All rights reserved.
       <br><br>
@@ -177,20 +177,21 @@
     </div>
   </div>
   
-  <script>
-    // Open links in system browser (Tauri shell)
-    if (window.__TAURI__) {
-      import('https://unpkg.com/@tauri-apps/plugin-shell@2').then(({ open }) => {
-        document.getElementById('github').addEventListener('click', (e) => {
-          e.preventDefault();
-          open('https://github.com/talhaorak/mac-dash');
-        });
-        document.getElementById('website').addEventListener('click', (e) => {
-          e.preventDefault();
-          open('https://talhaorak.github.io/mac-dash');
+  <script nonce="{{NONCE}}">
+    // Links open in the system browser through the `open_external` command.
+    // The Rust side only accepts the exact URLs of this page.
+    (function () {
+      var internals = window.__TAURI_INTERNALS__;
+      var links = document.querySelectorAll('a[data-external]');
+      Array.prototype.forEach.call(links, function (link) {
+        link.addEventListener('click', function (event) {
+          event.preventDefault();
+          if (internals && typeof internals.invoke === 'function') {
+            internals.invoke('open_external', { url: link.getAttribute('href') }).catch(function () {});
+          }
         });
       });
-    }
+    })();
   </script>
 </body>
 </html>

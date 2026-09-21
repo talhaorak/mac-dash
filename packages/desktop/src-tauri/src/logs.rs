@@ -1,7 +1,14 @@
 use serde::Serialize;
 use std::sync::Mutex;
-use tokio::process::Command;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
+use tokio::sync::oneshot;
+
+const LOG: &str = "/usr/bin/log";
+/// Wait this long before a stream that ended by itself is started again.
+const RESTART_DELAY: Duration = Duration::from_secs(5);
+const MAX_QUERY_MINUTES: u32 = 24 * 60;
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -18,8 +25,27 @@ pub struct LogEntry {
 static LOG_BUFFER: std::sync::LazyLock<Mutex<Vec<LogEntry>>> =
     std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
 
-static STREAM_RUNNING: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+/// State of the `log stream` child process.
+/// The stream runs while the client wants it and the main window is visible.
+struct StreamControl {
+    /// The client asked for the stream (`start_log_stream`) and did not stop it.
+    wanted: bool,
+    /// The main window is hidden. Nobody reads the buffer, so the child does not run.
+    paused: bool,
+    /// Present while a stream task runs. Sending (or dropping) it ends the task.
+    stop: Option<oneshot::Sender<()>>,
+    /// pid of the running child, for the synchronous kill at app exit.
+    child_pid: Option<u32>,
+    /// Identifies the running task, so that an old task never clears the state of a new one.
+    generation: u64,
+}
+
+static STREAM: Mutex<StreamControl> =
+    Mutex::new(StreamControl { wanted: false, paused: false, stop: None, child_pid: None, generation: 0 });
+
+fn stream() -> std::sync::MutexGuard<'static, StreamControl> {
+    STREAM.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 const MAX_BUFFER: usize = 1000;
 
@@ -66,7 +92,8 @@ fn parse_compact_line(line: &str) -> Option<LogEntry> {
 
             // Parse process[pid]
             if let Some(bracket_pos) = rest.find('[') {
-                if let Some(close_pos) = rest.find(']') {
+                // Search after the opening bracket: a "]" before it would make the slice below panic.
+                if let Some(close_pos) = rest[bracket_pos..].find(']').map(|at| bracket_pos + at) {
                     let process = &rest[..bracket_pos];
                     let pid: Option<i32> = rest[bracket_pos+1..close_pos].parse().ok();
                     let message = rest[close_pos+1..].trim().to_string();
@@ -97,61 +124,145 @@ fn parse_compact_line(line: &str) -> Option<LogEntry> {
     })
 }
 
-pub fn start_log_stream() {
-    if STREAM_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return; // already running
+fn push_entry(entry: LogEntry) {
+    let mut buf = LOG_BUFFER.lock().unwrap_or_else(|e| e.into_inner());
+    buf.push(entry);
+    if buf.len() > MAX_BUFFER {
+        let drain = buf.len() - MAX_BUFFER;
+        buf.drain(..drain);
     }
+}
 
-    tauri::async_runtime::spawn(async {
-        let mut child = match Command::new("log")
-            .args(["stream", "--style", "compact", "--level", "info"])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
+/// Spawn the child and its reader task when the stream should run and does not.
+fn ensure_running(control: &mut StreamControl) {
+    if !control.wanted || control.paused || control.stop.is_some() {
+        return;
+    }
+    let (stop_tx, stop_rx) = oneshot::channel();
+    control.stop = Some(stop_tx);
+    control.generation += 1;
+    let generation = control.generation;
+    tauri::async_runtime::spawn(run_stream(generation, stop_rx));
+}
+
+async fn run_stream(generation: u64, mut stop: oneshot::Receiver<()>) {
+    let spawned = Command::new(LOG)
+        .args(["stream", "--style", "compact", "--level", "info"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn();
+
+    let mut stopped_on_request = false;
+    if let Ok(mut child) = spawned {
         {
-            Ok(c) => c,
-            Err(_) => {
-                STREAM_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
-                return;
+            let mut control = stream();
+            if control.generation == generation {
+                control.child_pid = child.id();
             }
-        };
-
-        let stdout = child.stdout.take().unwrap();
-        let mut reader = BufReader::new(stdout).lines();
-
-        while let Ok(Some(line)) = reader.next_line().await {
-            if !STREAM_RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
-                break;
-            }
-            if let Some(entry) = parse_compact_line(&line) {
-                let mut buf = LOG_BUFFER.lock().unwrap();
-                buf.push(entry);
-                if buf.len() > MAX_BUFFER {
-                    let drain = buf.len() - MAX_BUFFER;
-                    buf.drain(..drain);
+        }
+        if let Some(stdout) = child.stdout.take() {
+            let mut reader = BufReader::new(stdout);
+            let mut line = Vec::new();
+            loop {
+                line.clear();
+                tokio::select! {
+                    _ = &mut stop => {
+                        stopped_on_request = true;
+                        break;
+                    }
+                    // Bytes, not `lines()`: one message with invalid UTF-8 must not end the stream.
+                    read = reader.read_until(b'\n', &mut line) => match read {
+                        Ok(n) if n > 0 => {
+                            if let Some(entry) = parse_compact_line(String::from_utf8_lossy(&line).trim_end()) {
+                                push_entry(entry);
+                            }
+                        }
+                        // EOF or a read error: the child ended by itself.
+                        _ => break,
+                    },
                 }
             }
         }
+        // Forget the pid before the child is reaped, so that `shutdown()` never signals a reused pid.
+        {
+            let mut control = stream();
+            if control.generation == generation {
+                control.child_pid = None;
+            }
+        }
+        let _ = child.kill().await; // kills when still alive, and reaps
+    }
 
-        let _ = child.kill().await;
-        STREAM_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
-    });
+    // Reset the state, so that the stream can start again.
+    {
+        let mut control = stream();
+        if control.generation == generation {
+            control.stop = None;
+            control.child_pid = None;
+        }
+    }
+    if !stopped_on_request {
+        // Unexpected exit (or `log` could not start). Try again later, when it is still wanted.
+        tokio::time::sleep(RESTART_DELAY).await;
+        ensure_running(&mut stream());
+    }
+}
+
+fn stop_child(control: &mut StreamControl) {
+    if let Some(stop) = control.stop.take() {
+        let _ = stop.send(());
+    }
+}
+
+pub fn start_log_stream() {
+    let mut control = stream();
+    control.wanted = true;
+    ensure_running(&mut control);
 }
 
 pub fn stop_log_stream() {
-    STREAM_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut control = stream();
+    control.wanted = false;
+    stop_child(&mut control);
+}
+
+/// The main window was hidden: nobody reads the log buffer.
+pub fn pause_log_stream() {
+    let mut control = stream();
+    control.paused = true;
+    stop_child(&mut control);
+}
+
+/// The main window is visible again.
+pub fn resume_log_stream() {
+    let mut control = stream();
+    control.paused = false;
+    ensure_running(&mut control);
+}
+
+/// App exit. The async runtime may not run the stream task again, so the child is killed here.
+pub fn shutdown() {
+    let mut control = stream();
+    control.wanted = false;
+    stop_child(&mut control);
+    if let Some(pid) = control.child_pid.take().and_then(|pid| libc::pid_t::try_from(pid).ok()) {
+        // SAFETY: kill has no memory preconditions. The pid belongs to a child that was not reaped yet.
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+    }
 }
 
 pub fn get_recent_logs(count: usize) -> Vec<LogEntry> {
-    let buf = LOG_BUFFER.lock().unwrap();
+    let buf = LOG_BUFFER.lock().unwrap_or_else(|e| e.into_inner());
     let start = buf.len().saturating_sub(count);
     buf[start..].to_vec()
 }
 
 pub async fn query_logs(last_minutes: u32, predicate: Option<&str>) -> Vec<LogEntry> {
     let mut args = vec![
-        "log".to_string(), "show".to_string(),
-        "--last".to_string(), format!("{}m", last_minutes),
+        LOG.to_string(), "show".to_string(),
+        "--last".to_string(), format!("{}m", last_minutes.clamp(1, MAX_QUERY_MINUTES)),
         "--style".to_string(), "compact".to_string(),
     ];
     if let Some(pred) = predicate {
@@ -161,6 +272,8 @@ pub async fn query_logs(last_minutes: u32, predicate: Option<&str>) -> Vec<LogEn
 
     let output = Command::new(&args[0])
         .args(&args[1..])
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true)
         .output()
         .await;
 
@@ -183,7 +296,7 @@ pub async fn query_logs(last_minutes: u32, predicate: Option<&str>) -> Vec<LogEn
 }
 
 pub fn get_active_log_processes() -> Vec<(String, usize, String)> {
-    let buf = LOG_BUFFER.lock().unwrap();
+    let buf = LOG_BUFFER.lock().unwrap_or_else(|e| e.into_inner());
     let mut counts: std::collections::HashMap<String, (usize, String)> = std::collections::HashMap::new();
 
     for entry in buf.iter() {
@@ -199,4 +312,23 @@ pub fn get_active_log_processes() -> Vec<(String, usize, String)> {
         .collect();
     result.sort_by(|a, b| b.1.cmp(&a.1));
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_lines() {
+        let entry = parse_compact_line("2026-09-21 10:00:00.123456+0300 host kernel[0] something happened").unwrap();
+        assert_eq!(entry.process, "kernel");
+        assert_eq!(entry.pid, Some(0));
+        assert_eq!(entry.message, "something happened");
+
+        // A closing bracket before the opening one must not panic (release builds abort on panic).
+        let odd = parse_compact_line("2026-09-21 10:00:00.123456+0300 host we]ird[12] text").unwrap();
+        assert_eq!(odd.pid, Some(12));
+        assert!(parse_compact_line("2026-09-21 10:00:00.1+0300 host only] closing").is_some());
+        assert!(parse_compact_line("   ").is_none());
+    }
 }

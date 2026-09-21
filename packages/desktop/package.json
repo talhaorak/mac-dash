@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.9",
   "scripts": {
-    "dev": "cd ../../client && bunx --bun vite --port 5173",
+    "dev": "cd ../../client && bunx vite",
     "tauri:dev": "cargo tauri dev --config src-tauri/tauri.conf.json",
     "tauri:build": "cargo tauri build --config src-tauri/tauri.conf.json",
     "build": "cd ../../client && bunx --bun vite build && cd ../../packages/desktop && cargo tauri build"

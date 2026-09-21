@@ -13,17 +13,15 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-shell = "2"
 tauri-plugin-notification = "2"
-tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sysinfo = "0.33"
+sysinfo = "0.38"
 tokio = { version = "1", features = ["full"] }
 plist = "1"
-glob = "0.3"
+base64 = "0.22"
 dirs = "6"
 chrono = "0.4"
 libc = "0.2"
@@ -31,3 +29,10 @@ libc = "0.2"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+opt-level = "s"
