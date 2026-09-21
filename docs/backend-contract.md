@@ -107,7 +107,8 @@ interface JobSignature {
   identifier: string | null;
   authorities: string[];            // certificate chain, leaf first
   teamId: string | null;            // null for "not set"
-  apple: boolean;                   // leaf authority is "Software Signing" or "Apple Mac OS Application Signing"
+  apple: boolean;                   // VERIFIED: `codesign -v -R="anchor apple"` exits 0
+  trusted: boolean;                 // VERIFIED: `codesign -v -R="anchor apple generic"` exits 0 (Apple, Developer ID, App Store)
   adhoc: boolean;
   error: string | null;             // e.g. "Executable not found"
 }
@@ -209,9 +210,9 @@ When the Trash is not reachable (another volume, macOS privacy protection), unli
 
 ## Signature, background items, apps, power
 
-- **Signature**: run `codesign -dv --verbose=2 <executable>` and parse stderr (`Identifier=`, `Authority=` lines in order, `TeamIdentifier=`, `Signature=adhoc`). The executable path comes from the plist, never from the client. `code object is not signed at all` means `signed: false`. A relative or missing executable gives `error`.
+- **Signature**: run `codesign -dv --verbose=2 <executable>` and parse stderr (`Identifier=`, `Authority=` lines in order, `TeamIdentifier=`, `Signature=adhoc`). The executable path comes from the plist, never from the client. `code object is not signed at all` means `signed: false`. `codesign -d` only displays names, which a self-signed certificate can imitate, so `apple` and `trusted` come from the two `codesign -v -R=...` verifications (30 s timeout each, run only for signed code). A relative or missing executable gives `error`.
 - **Background items**: parse `sfltool dumpbtm` (works without root on macOS 13+; when it fails return an empty list and the stderr text as the error). Records start with ` #<n>:` under a `Records for UID <uid>` header. Return the records of the current uid, of uid 0 and of uid -2. Skip the `Embedded Item Identifiers` sub-lists. Read-only: never call `resetbtm`.
-- **Delete login item**: System Events through `osascript`, the name as an `argv` item: `tell application "System Events" to delete login item (item 1 of argv)`. Same Automation-permission error text as for reading.
+- **Delete login item**: System Events through `osascript`, the name as an `argv` item after a `--` separator (an argument that starts with `-e` would otherwise be compiled as script text): `tell application "System Events" to delete login item (item 1 of argv)`. Same Automation-permission error text as for reading.
 - **Build app**: wrap a script in an applet so macOS can grant it privacy permissions. `name` must match `^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`. `scriptPath` must be absolute, exist, be a regular file and contain no control characters. Create `~/Applications` when missing. Refuse to overwrite an existing `.app`. Run `osacompile -o <app> -e 'do shell script quoted form of "<path>"'` with `\` and `"` escaped for the AppleScript string literal.
 - **Power schedule**: read with `pmset -g sched` (the "Repeating power events" block: lines like `  wakepoweron at 7:00AM weekdays only`, `  sleep at 11:30PM every day`, `  shutdown at 9:00PM Some days: Mon Wed`). Set with one administrator prompt: `pmset repeat <type> <days> <time> [<type> <days> <time>]`, or `pmset repeat cancel` for an empty list. At most two events: one of `sleep|shutdown|restart` and one of `wake|poweron|wakeorpoweron`. Validate `days` against `^M?T?W?R?F?S?U?$` (not empty) and `time` against `^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$` before anything reaches the shell.
 - **Monitor settings**: `notify: false` stops native notifications. A label that starts with one of the `exclude` prefixes never notifies. Events are still recorded. Limits: 50 prefixes of 100 characters.
@@ -220,6 +221,6 @@ When the Trash is not reachable (another volume, macOS privacy protection), unli
 
 The backend watches the five scope directories all the time, not only while a client is connected.
 It diffs `(path, mtime, size)` snapshots, appends `JobEvent`s to `~/.macdash/job-events.json` (newest 500) and publishes them.
-Every 30 seconds the monitor also compares the last exit status of the jobs that have a plist in a writable scope. When the status of a loaded job changes to a value other than 0, it records a `failed` event with `exitStatus`. The first pass is the baseline.
+Every 30 seconds the monitor also compares the last exit status of the jobs that have a plist in a writable scope. When the status of a loaded job changes to a value other than 0, it records a `failed` event with `exitStatus`. A status of `-15` (SIGTERM, an orderly stop) is not a failure. The first pass is the baseline.
 Native notifications honour `MonitorSettings`.
 The desktop shell posts a native notification per event. The server posts one through `osascript` only when no WebSocket client is connected; otherwise the web client shows a browser notification.

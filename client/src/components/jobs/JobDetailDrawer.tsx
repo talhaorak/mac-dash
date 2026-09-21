@@ -2,6 +2,8 @@ import { useEffect, useId, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  ChevronDown,
+  ChevronRight,
   Copy,
   FolderOpen,
   Pencil,
@@ -15,11 +17,12 @@ import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { toast } from "@/components/ui/Toast";
-import { backend, type JobMeta, type JobOutput, type ServiceDetail } from "@/lib/backend";
+import { backend, type JobMeta, type JobOutput, type JobSignature, type ServiceDetail } from "@/lib/backend";
 import type { ServiceInfo } from "@/stores/app";
 import { cn } from "@/lib/utils";
 import { explainExitStatus, scopeFor } from "@shared/launchd";
 import { inputClass } from "./fields";
+import { authorityChain, describeSignature } from "./signature";
 
 type Tab = "overview" | "output" | "launchctl" | "notes";
 
@@ -93,6 +96,23 @@ function DrawerBody({
   }, [service.label, service.category, service.pid, service.loaded]);
 
   const hasFile = service.plistPath !== null;
+
+  // Code signature: asked for once, when the Overview tab shows a job that has a plist.
+  // The backend reads the executable path from the plist itself.
+  const [signature, setSignature] = useState<JobSignature | { failed: string } | null>(null);
+  const wantSignature = tab === "overview" && hasFile && signature === null;
+  useEffect(() => {
+    if (!wantSignature) return;
+    let cancelled = false;
+    backend
+      .getJobSignature({ label: service.label, category: service.category })
+      .then((sig) => !cancelled && setSignature(sig))
+      .catch((e: Error) => !cancelled && setSignature({ failed: e.message || "The signature could not be read." }));
+    return () => {
+      cancelled = true;
+    };
+  }, [wantSignature, service.label, service.category]);
+
   const exitText = explainExitStatus(service.lastExitStatus);
   const programName = service.program?.split("/").pop();
 
@@ -201,6 +221,7 @@ function DrawerBody({
           )}
           <Row label="Triggers" value={service.triggers.length > 0 ? service.triggers.join(" · ") : hasFile ? "None: starts only on demand" : null} />
           <Row label="Plist" value={service.plistPath} mono />
+          {hasFile && <SignatureRow signature={signature} />}
           <Row label="Runs as" value={service.userName ?? (scopeFor(service.category)?.kind === "daemon" ? "root" : "the logged-in user")} />
           <Row label="launchd state" value={detail?.state ?? (service.loaded ? "loaded" : "not loaded")} />
           <Row label="Domain" value={detail?.domain ?? null} mono />
@@ -372,6 +393,79 @@ function ActionButton({ icon: Icon, onClick, children }: { icon: typeof Pencil; 
       <Icon className="w-3.5 h-3.5" aria-hidden />
       {children}
     </button>
+  );
+}
+
+function SignatureRow({ signature }: { signature: JobSignature | { failed: string } | null }) {
+  const [open, setOpen] = useState(false);
+  const listId = useId();
+  const sig = signature && !("failed" in signature) ? signature : null;
+  const summary = sig ? describeSignature(sig) : null;
+  const tone = summary?.tone === "warning" ? "text-amber-400" : summary?.tone === "ok" ? "text-gray-300" : "text-gray-500";
+  const hasDetails = sig !== null && (sig.authorities.length > 0 || sig.identifier !== null || sig.teamId !== null || sig.path !== null);
+
+  return (
+    <div className="grid grid-cols-[110px_1fr] gap-3">
+      <dt className="text-xs text-gray-500 pt-1.5">Signed by</dt>
+      <dd className="min-w-0 text-sm space-y-1.5">
+        {signature === null ? (
+          <span className="text-gray-500">Checking…</span>
+        ) : "failed" in signature ? (
+          <span className="text-gray-500 break-words">{signature.failed}</span>
+        ) : (
+          <>
+            <p className={cn("flex items-start gap-1.5 break-words", tone)} title={authorityChain(signature) || undefined}>
+              {summary!.tone === "warning" && <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" aria-hidden />}
+              <span>
+                {summary!.tone === "warning" && <span className="sr-only">Warning: </span>}
+                {summary!.text}
+              </span>
+            </p>
+            {hasDetails && (
+              <button
+                type="button"
+                aria-expanded={open}
+                aria-controls={listId}
+                onClick={() => setOpen(!open)}
+                className="inline-flex items-center gap-1 rounded-md text-[11px] text-gray-500 hover:text-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
+              >
+                {open ? <ChevronDown className="w-3 h-3" aria-hidden /> : <ChevronRight className="w-3 h-3" aria-hidden />}
+                Signature details
+              </button>
+            )}
+            {hasDetails && open && (
+              <div id={listId} className="rounded-lg bg-black/20 px-3 py-2 space-y-1.5 text-[11px] text-gray-400">
+                {signature.authorities.length > 0 && (
+                  <>
+                    <p className="text-gray-500">Certificate chain, leaf first{signature.trusted ? "" : " (names only, not verified)"}</p>
+                    <ol className="list-decimal list-inside space-y-0.5 font-mono break-words">
+                      {signature.authorities.map((a, i) => (
+                        <li key={i}>{a}</li>
+                      ))}
+                    </ol>
+                  </>
+                )}
+                {signature.identifier && (
+                  <p>
+                    Identifier: <span className="font-mono break-all">{signature.identifier}</span>
+                  </p>
+                )}
+                {signature.teamId && (
+                  <p>
+                    Team ID: <span className="font-mono">{signature.teamId}</span>
+                  </p>
+                )}
+                {signature.path && (
+                  <p>
+                    Executable: <span className="font-mono break-all">{signature.path}</span>
+                  </p>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </dd>
+    </div>
   );
 }
 

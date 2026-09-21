@@ -115,7 +115,10 @@ export interface JobSignature {
   identifier: string | null;
   authorities: string[];
   teamId: string | null;
+  /** Verified against Apple's root: Apple's own code. */
   apple: boolean;
+  /** Verified against Apple's root: Apple, Developer ID or App Store. */
+  trusted: boolean;
   adhoc: boolean;
   error: string | null;
 }

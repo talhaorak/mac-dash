@@ -5,7 +5,7 @@ import { Toaster } from "@/components/ui/Toast";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { backend, type JobEvent } from "@/lib/backend";
 import { toast } from "@/components/ui/Toast";
-import { notifyJobEvent } from "@/components/jobs/JobPanels";
+import { notifyJobEvent, refreshMonitorSettings } from "@/components/jobs/JobPanels";
 import {
   useNavStore,
   useJobEventsStore,
@@ -73,8 +73,12 @@ export default function App() {
     (event: JobEvent) => {
       addJobEvent(event);
       notifyJobEvent(event);
-      if (!document.hidden) {
-        const verb = { added: "added", modified: "changed", removed: "removed", failed: "failed" }[event.kind];
+      if (document.hidden) return;
+      if (event.kind === "failed") {
+        const exit = event.exitStatus !== undefined ? ` (exit ${event.exitStatus})` : "";
+        toast.error(`launchd job failed: ${event.label}${exit}`);
+      } else {
+        const verb = { added: "added", modified: "changed", removed: "removed" }[event.kind];
         toast.info(`launchd job ${verb}: ${event.label}`);
       }
     },
@@ -83,6 +87,8 @@ export default function App() {
 
   useEffect(() => {
     backend.getJobEvents().then(setJobEvents).catch(() => {});
+    // notifyJobEvent reads the monitor settings synchronously: fill its cache now. On failure it keeps the localStorage copy.
+    refreshMonitorSettings().catch(() => {});
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     backend.onJobEvent(handleJobEvent).then((off) => (cancelled ? off() : (unlisten = off)));

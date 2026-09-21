@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useJobEventsStore, useNavStore, useServicesStore, type ServiceInfo } from "@/stores/app";
 import { GlowCard } from "@/components/ui/GlowCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -6,46 +6,26 @@ import { useConfirm } from "@/components/ui/ConfirmButton";
 import { toast } from "@/components/ui/Toast";
 import { JobEditor, type JobEditorTarget } from "@/components/jobs/JobEditor";
 import { JobDetailDrawer } from "@/components/jobs/JobDetailDrawer";
-import { JobEventsDrawer, JobTimeline, StartupExtrasCard } from "@/components/jobs/JobPanels";
+import { JobEventsDrawer, JobTimeline } from "@/components/jobs/JobPanels";
+import { JobListView } from "@/components/jobs/ListView";
+import { JobRowActions, serviceKey, type ArmedAction } from "@/components/jobs/ListJobRowActions";
+import { SmartFolderBar } from "@/components/jobs/SmartFolderBar";
+import { isAppleService, matchesFolder, type SmartFolder } from "@/components/jobs/SmartFolders";
+import { StartupExtrasCard } from "@/components/jobs/StartupPanels";
+import { PowerSchedulePanel } from "@/components/jobs/PowerSchedulePanel";
 import { backend, metaKey, type JobMeta, type ServiceAction } from "@/lib/backend";
 import { cn } from "@/lib/utils";
 import { JOB_SCOPES, JOB_TEMPLATES, type JobCategory } from "@shared/launchd";
-import {
-  Bell,
-  CalendarClock,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  List,
-  Pencil,
-  Play,
-  Plus,
-  Power,
-  PowerOff,
-  RotateCw,
-  Search,
-  ShieldAlert,
-  Square,
-} from "lucide-react";
+import { Bell, CalendarClock, ChevronDown, ChevronRight, List, Plus, Search, ShieldAlert, Table2 } from "lucide-react";
 
 const categoryOrder: JobCategory[] = JOB_SCOPES.map((s) => s.category);
 const categoryLabels = Object.fromEntries(JOB_SCOPES.map((s) => [s.category, s.title])) as Record<JobCategory, string>;
 
 type StatusFilter = "all" | "running" | "stopped" | "error" | "disabled";
 type OwnerFilter = "all" | "apple" | "third-party";
-type View = "groups" | "timeline";
+type View = "groups" | "list" | "timeline";
 
 const ROWS_PER_GROUP = 250;
-const serviceKey = (s: { category: string; label: string }) => `${s.category}/${s.label}`;
-
-function isAppleService(s: ServiceInfo): boolean {
-  return (
-    s.label.startsWith("com.apple.") ||
-    s.plistPath?.includes("/System/") === true ||
-    s.program?.startsWith("/System/") === true ||
-    s.program?.startsWith("/usr/libexec/") === true
-  );
-}
 
 export function ServicesPage() {
   const services = useServicesStore((s) => s.services);
@@ -54,6 +34,8 @@ export function ServicesPage() {
   const navigateToProcess = useNavStore((s) => s.navigateToProcess);
   const navigateToLogs = useNavStore((s) => s.navigateToLogs);
   const targetServiceLabel = useNavStore((s) => s.targetServiceLabel);
+  const targetServiceCategory = useNavStore((s) => s.targetServiceCategory);
+  const clearServiceTarget = useNavStore((s) => s.clearServiceTarget);
   const unseenEvents = useJobEventsStore((s) => s.unseen);
 
   const [search, setSearch] = useState("");
@@ -63,6 +45,7 @@ export function ServicesPage() {
   const [filterStatus, setFilterStatus] = useState<StatusFilter>("all");
   const [filterOwner, setFilterOwner] = useState<OwnerFilter>("all");
   const [filterTag, setFilterTag] = useState<string | null>(null);
+  const [folder, setFolder] = useState<SmartFolder | null>(null);
   const [view, setView] = useState<View>("groups");
   const [editor, setEditor] = useState<JobEditorTarget | null>(null);
   const [eventsOpen, setEventsOpen] = useState(false);
@@ -78,16 +61,15 @@ export function ServicesPage() {
     backend.getJobMeta().then(setMeta).catch(() => {});
   }, []);
 
-  // Jump from another page (process detail → service). Handle each request once.
-  const handledTarget = useRef<string | null>(null);
+  // Jump from another page or from the quick switcher. The request is consumed, so the same label works again later.
+  // It waits here while the job list is still loading.
   useEffect(() => {
-    if (!targetServiceLabel || handledTarget.current === targetServiceLabel) return;
-    const match = services.find((s) => s.label === targetServiceLabel);
-    if (match) {
-      handledTarget.current = targetServiceLabel;
-      setSelectedKey(serviceKey(match));
-    }
-  }, [targetServiceLabel, services]);
+    if (!targetServiceLabel) return;
+    const match = services.find((s) => s.label === targetServiceLabel && (!targetServiceCategory || s.category === targetServiceCategory));
+    if (!match) return;
+    setSelectedKey(serviceKey(match));
+    clearServiceTarget();
+  }, [targetServiceLabel, targetServiceCategory, services, clearServiceTarget]);
 
   const refresh = useCallback(async () => {
     try {
@@ -141,6 +123,7 @@ export function ServicesPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const now = new Date();
     return services.filter((s) => {
       const m = meta[metaKey(s)];
       if (
@@ -156,9 +139,10 @@ export function ServicesPage() {
       if (filterOwner === "apple" && !isAppleService(s)) return false;
       if (filterOwner === "third-party" && isAppleService(s)) return false;
       if (filterTag && !m?.tags.includes(filterTag)) return false;
+      if (folder && !matchesFolder(s, m, folder, now)) return false;
       return true;
     });
-  }, [services, search, filterStatus, filterOwner, filterTag, meta]);
+  }, [services, search, filterStatus, filterOwner, filterTag, folder, meta]);
 
   const grouped = useMemo(() => {
     const groups: Partial<Record<JobCategory, ServiceInfo[]>> = {};
@@ -197,6 +181,7 @@ export function ServicesPage() {
             {(
               [
                 { id: "groups", icon: List, label: "Groups" },
+                { id: "list", icon: Table2, label: "List" },
                 { id: "timeline", icon: CalendarClock, label: "Timeline" },
               ] as const
             ).map((v) => (
@@ -317,8 +302,21 @@ export function ServicesPage() {
         )}
       </div>
 
+      <SmartFolderBar services={services} meta={meta} active={folder} onChange={setFolder} />
+
       {view === "timeline" ? (
         <JobTimeline services={filtered} onSelect={(s) => setSelectedKey(serviceKey(s))} />
+      ) : view === "list" ? (
+        <JobListView
+          services={filtered}
+          meta={meta}
+          loading={loading}
+          busyKey={busy}
+          isArmed={isArmed}
+          onAction={requestAction}
+          onSelect={setSelectedKey}
+          onEdit={setEditor}
+        />
       ) : (
         <div className="space-y-3">
           {loading && services.length === 0 && <p className="text-sm text-gray-500 text-center py-10">Reading launchd…</p>}
@@ -376,8 +374,14 @@ export function ServicesPage() {
               </GlowCard>
             );
           })}
+        </div>
+      )}
 
+      {/* One instance for both job views, so an expanded card stays expanded when the view changes. */}
+      {view !== "timeline" && (
+        <div className="space-y-3">
           <StartupExtrasCard />
+          <PowerSchedulePanel />
         </div>
       )}
 
@@ -447,8 +451,6 @@ function FilterButton({
   );
 }
 
-const iconButton = "p-1.5 rounded-lg text-gray-500 transition-colors disabled:opacity-40 focus-visible:ring-1 focus-visible:ring-cyan-500/50 focus:outline-none";
-
 const ServiceRow = memo(function ServiceRow({
   service,
   tags,
@@ -461,18 +463,11 @@ const ServiceRow = memo(function ServiceRow({
   service: ServiceInfo;
   tags: string[] | undefined;
   busy: boolean;
-  armedAction: "stop" | "disable" | null;
+  armedAction: ArmedAction | null;
   onAction: (action: ServiceAction, service: ServiceInfo) => void;
   onSelect: (key: string) => void;
   onEdit: (target: JobEditorTarget) => void;
 }) {
-  const ref = { label: service.label, category: service.category };
-  const hasFile = service.plistPath !== null;
-  const act = (action: ServiceAction) => (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onAction(action, service);
-  };
-
   return (
     <div
       role="button"
@@ -520,61 +515,14 @@ const ServiceRow = memo(function ServiceRow({
 
       {service.pid !== null && <span className="text-gray-600 font-mono text-[10px] flex-shrink-0">PID {service.pid}</span>}
 
-      <div className={cn("flex gap-1 transition-opacity", armedAction ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100")}>
-        {service.status === "running" ? (
-          <>
-            <button type="button" disabled={busy} onClick={act("stop")} aria-label={armedAction === "stop" ? `Confirm stop ${service.label}` : `Stop ${service.label}`} title={armedAction === "stop" ? "Click again to stop" : "Stop"} className={cn(iconButton, armedAction === "stop" ? "bg-red-500/25 text-red-300" : "hover:bg-red-500/10 hover:text-red-400")}>
-              <Square className="w-3 h-3" aria-hidden />
-            </button>
-            <button type="button" disabled={busy} onClick={act("restart")} aria-label={`Restart ${service.label}`} title="Restart" className={cn(iconButton, "hover:bg-cyan-500/10 hover:text-cyan-400")}>
-              <RotateCw className="w-3 h-3" aria-hidden />
-            </button>
-          </>
-        ) : (
-          <button type="button" disabled={busy} onClick={act("start")} aria-label={`Run ${service.label} now`} title="Run now" className={cn(iconButton, "hover:bg-green-500/10 hover:text-green-400")}>
-            <Play className="w-3 h-3" aria-hidden />
-          </button>
-        )}
-
-        {service.disabled ? (
-          <button type="button" disabled={busy} onClick={act("enable")} aria-label={`Enable ${service.label}`} title="Enable and load" className={cn(iconButton, "hover:bg-cyan-500/10 hover:text-cyan-400")}>
-            <Power className="w-3 h-3" aria-hidden />
-          </button>
-        ) : (
-          <button type="button" disabled={busy} onClick={act("disable")} aria-label={armedAction === "disable" ? `Confirm disable ${service.label}` : `Disable ${service.label}`} title={armedAction === "disable" ? "Click again to disable" : "Disable and unload"} className={cn(iconButton, armedAction === "disable" ? "bg-amber-500/25 text-amber-300" : "hover:bg-amber-500/10 hover:text-amber-400")}>
-            <PowerOff className="w-3 h-3" aria-hidden />
-          </button>
-        )}
-
-        {hasFile && (
-          <>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit({ mode: "edit", job: ref });
-              }}
-              aria-label={`${service.writable ? "Edit" : "View"} ${service.label}`}
-              title={service.writable ? "Edit" : "View plist"}
-              className={cn(iconButton, "hover:bg-white/[0.06] hover:text-gray-300")}
-            >
-              <Pencil className="w-3 h-3" aria-hidden />
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit({ mode: "duplicate", job: ref });
-              }}
-              aria-label={`Duplicate ${service.label}`}
-              title="Duplicate"
-              className={cn(iconButton, "hover:bg-white/[0.06] hover:text-gray-300")}
-            >
-              <Copy className="w-3 h-3" aria-hidden />
-            </button>
-          </>
-        )}
-      </div>
+      <JobRowActions
+        service={service}
+        busy={busy}
+        armedAction={armedAction}
+        onAction={onAction}
+        onEdit={onEdit}
+        className={cn("transition-opacity", armedAction ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100")}
+      />
     </div>
   );
 });

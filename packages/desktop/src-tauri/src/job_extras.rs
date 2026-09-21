@@ -2,8 +2,8 @@
 //! Mirrors `server/core/job-extras.ts`; see docs/backend-contract.md.
 
 use crate::services::{
-    backup_dir, create_private_dir, read_plist_xml, revision_label, run_with_timeout, safe_file_name, scope_or_err,
-    state_dir,
+    backup_dir, create_private_dir, osascript_argv, read_plist_xml, revision_label, run_with_timeout, safe_file_name,
+    scope_or_err, state_dir,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::{Duration, UNIX_EPOCH};
 
-const OSASCRIPT: &str = "/usr/bin/osascript";
 const CRONTAB: &str = "/usr/bin/crontab";
 const SHORTCUTS: &str = "/usr/bin/shortcuts";
 
@@ -283,8 +282,12 @@ fn parse_login_items(stdout: &str) -> Vec<LoginItem> {
         .collect()
 }
 
+/// The error text for a refused Automation request, for reading and for deleting login items.
+pub(crate) const AUTOMATION_DENIED: &str =
+    "macOS denied access. Allow mac-dash (or your terminal) under System Settings > Privacy & Security > Automation > System Events.";
+
 /// `/-1743|not allowed|not authorized/i`
-fn is_automation_denied(stderr: &str) -> bool {
+pub(crate) fn is_automation_denied(stderr: &str) -> bool {
     let lower = stderr.to_lowercase();
     lower.contains("-1743") || lower.contains("not allowed") || lower.contains("not authorized")
 }
@@ -292,14 +295,11 @@ fn is_automation_denied(stderr: &str) -> bool {
 /// Login items from System Events. The first call makes macOS ask for Automation permission,
 /// so the client only calls this when the user asks for it.
 pub async fn get_login_items() -> Result<Vec<LoginItem>, String> {
-    let mut cmd = vec![OSASCRIPT];
-    for line in LOGIN_ITEMS_SCRIPT {
-        cmd.extend(["-e", line]);
-    }
-    let result = run_with_timeout(&cmd, Some(LOGIN_ITEMS_TIMEOUT)).await;
+    // A constant script without arguments. It still goes through the one argv builder.
+    let result = run_with_timeout(&osascript_argv(&LOGIN_ITEMS_SCRIPT, &[]), Some(LOGIN_ITEMS_TIMEOUT)).await;
     if result.code != 0 {
         return Err(if is_automation_denied(&result.stderr) {
-            "macOS denied access. Allow mac-dash (or your terminal) under System Settings > Privacy & Security > Automation > System Events.".to_string()
+            AUTOMATION_DENIED.to_string()
         } else if result.stderr.is_empty() {
             "Could not read the login items.".to_string()
         } else {

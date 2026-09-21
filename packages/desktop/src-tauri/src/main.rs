@@ -7,6 +7,7 @@ mod launchd;
 mod logs;
 mod processes;
 mod services;
+mod startup_tools;
 mod system_info;
 mod tray;
 
@@ -215,6 +216,94 @@ async fn get_login_items(window: tauri::Window) -> ApiResult<Vec<job_extras::Log
 async fn list_shortcuts(window: tauri::Window) -> ApiResult<Vec<String>> {
     main_window_only!(window);
     ok_result(job_extras::list_shortcuts().await)
+}
+
+#[tauri::command]
+async fn get_job_signature(window: tauri::Window, label: String, category: String) -> ApiResult<startup_tools::JobSignature> {
+    main_window_only!(window);
+    api(startup_tools::get_job_signature(&label, &category).await)
+}
+
+#[tauri::command]
+async fn get_background_items(window: tauri::Window) -> ApiResult<Vec<startup_tools::BackgroundItem>> {
+    main_window_only!(window);
+    match startup_tools::get_background_items().await {
+        Ok(items) => ok_result(items),
+        // Contract: an empty list, and the stderr text as the error
+        Err(e) => ApiResult { ok: false, data: Some(Vec::new()), error: Some(e) },
+    }
+}
+
+#[tauri::command]
+async fn delete_login_item(window: tauri::Window, name: String) -> ApiResult<()> {
+    main_window_only!(window);
+    api(startup_tools::delete_login_item(&name).await)
+}
+
+#[tauri::command]
+async fn build_script_app(window: tauri::Window, script_path: String, name: String) -> ApiResult<startup_tools::BuiltApp> {
+    main_window_only!(window);
+    api(startup_tools::build_script_app(&script_path, &name).await)
+}
+
+#[tauri::command]
+async fn get_power_schedule(window: tauri::Window) -> ApiResult<startup_tools::PowerSchedule> {
+    main_window_only!(window);
+    api(startup_tools::get_power_schedule().await)
+}
+
+#[tauri::command]
+async fn set_power_schedule(window: tauri::Window, events: Vec<startup_tools::PowerEvent>) -> ApiResult<()> {
+    main_window_only!(window);
+    api(startup_tools::set_power_schedule(&events).await)
+}
+
+#[tauri::command]
+async fn get_monitor_settings(window: tauri::Window) -> ApiResult<job_monitor::MonitorSettings> {
+    main_window_only!(window);
+    ok_result(job_monitor::get_monitor_settings().await)
+}
+
+#[tauri::command]
+async fn set_monitor_settings(window: tauri::Window, notify: bool, exclude: Option<Vec<String>>) -> ApiResult<()> {
+    main_window_only!(window);
+    api(job_monitor::set_monitor_settings(notify, exclude.unwrap_or_default()).await)
+}
+
+// ── Self-test (debug builds only) ────────────────────────────────────
+
+/// Exit code and the one output line for a self-test report: 0 when the JSON has `"ok": true`,
+/// 1 when it does not, 2 when the report is not JSON.
+#[cfg(any(debug_assertions, test))]
+fn selftest_outcome(report: &str) -> (i32, String) {
+    match serde_json::from_str::<serde_json::Value>(report) {
+        Ok(value) => {
+            let code = if value.get("ok").and_then(|ok| ok.as_bool()) == Some(true) { 0 } else { 1 };
+            // The report as it came, when it is one line. Pretty-printed JSON is printed compact.
+            let one_line = if report.contains(['\n', '\r']) { value.to_string() } else { report.to_string() };
+            (code, format!("SELFTEST_REPORT {}", one_line))
+        }
+        Err(_) => (2, format!("SELFTEST_REPORT {}", report.replace(['\n', '\r'], " "))),
+    }
+}
+
+/// The web client runs its self-test (`?selftest=1`) and hands the result over. The process prints
+/// one line and exits, so that a script can verify the desktop build without GUI automation.
+/// This command does not exist in release builds.
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn selftest_report(window: tauri::Window, report: String) -> ApiResult<()> {
+    use std::io::Write;
+
+    main_window_only!(window);
+    let (code, line) = selftest_outcome(&report);
+    {
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, "{}", line);
+        let _ = out.flush();
+    }
+    logs::shutdown(); // `process::exit` skips RunEvent::Exit, and the `log stream` child must not stay behind
+    std::process::exit(code);
 }
 
 // ── Process Commands ─────────────────────────────────────────────────
@@ -539,6 +628,16 @@ fn main() {
             get_startup_extras,
             get_login_items,
             list_shortcuts,
+            get_job_signature,
+            get_background_items,
+            delete_login_item,
+            build_script_app,
+            get_power_schedule,
+            set_power_schedule,
+            get_monitor_settings,
+            set_monitor_settings,
+            #[cfg(debug_assertions)]
+            selftest_report,
             get_processes,
             get_process_detail,
             kill_process,
@@ -564,4 +663,33 @@ fn main() {
         tauri::RunEvent::Exit => logs::shutdown(),
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selftest_exit_codes() {
+        assert_eq!(selftest_outcome(r#"{"ok":true,"checks":12}"#), (0, r#"SELFTEST_REPORT {"ok":true,"checks":12}"#.to_string()));
+        assert_eq!(selftest_outcome(r#"{"ok":false,"failed":["save_job"]}"#).0, 1);
+        assert_eq!(selftest_outcome(r#"{"checks":3}"#).0, 1);
+        assert_eq!(selftest_outcome(r#"{"ok":"true"}"#).0, 1);
+        assert_eq!(selftest_outcome("[]").0, 1);
+        assert_eq!(selftest_outcome("not json").0, 2);
+        assert_eq!(selftest_outcome("").0, 2);
+
+        // Always one line, whatever the client sends.
+        let (code, line) = selftest_outcome("{\n  \"ok\": true,\n  \"note\": \"a\\nb\"\n}");
+        assert_eq!(code, 0);
+        assert_eq!(line.lines().count(), 1);
+        assert_eq!(selftest_outcome("broken\nreport\r\n").1, "SELFTEST_REPORT broken report  ");
+    }
+
+    #[test]
+    fn external_links_are_an_exact_allowlist() {
+        assert!(EXTERNAL_URLS.iter().all(|url| url.starts_with("https://")));
+        assert!(!EXTERNAL_URLS.contains(&"https://github.com/talhaorak/mac-dash/"));
+        assert!(!EXTERNAL_URLS.contains(&"file:///etc/passwd"));
+    }
 }

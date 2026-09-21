@@ -9,6 +9,18 @@ import {
   type KeySpec,
 } from "@shared/launchd";
 import { isPlistDict, serializePlist, type PlistDict, type PlistValue } from "@shared/plist";
+import {
+  DEFAULT_UMASK,
+  UMASK_CLASSES,
+  UMASK_PERMISSIONS,
+  formatMode,
+  formatOctal,
+  modeUnderUmask,
+  normalizeUmask,
+  parseUmaskString,
+  toggleUmaskBit,
+  umaskToGrid,
+} from "./umask";
 
 // Input primitives for the launchd job form. Every field edits one plist value and
 // reports `undefined` when the key should be removed from the job.
@@ -629,7 +641,161 @@ export function ComplexValue({ value, onRemove, disabled }: { value: PlistValue;
   );
 }
 
-/** Pick the widget for a key from its schema entry. */
+// ── Umask ────────────────────────────────────────────────────────────
+
+/**
+ * Umask as an rwx grid. A checked box MASKS the permission: new files do not get it.
+ * The plist stores the decimal integer (octal 022 = 18). launchd also accepts a string,
+ * which is shown as it is, with an action that converts it.
+ */
+export function UmaskEditor({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: PlistValue | undefined;
+  onChange: (next: PlistValue | undefined) => void;
+  disabled?: boolean;
+}) {
+  const groupId = useId();
+
+  // A real, a date or a container is a type error (the Checks panel reports it). Show the raw value.
+  if (value !== undefined && typeof value !== "number" && typeof value !== "string") {
+    return <ComplexValue value={value} disabled={disabled} onRemove={() => onChange(undefined)} />;
+  }
+
+  if (typeof value === "string") {
+    const parsed = parseUmaskString(value);
+    return (
+      <div className="space-y-1.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <input type="text" readOnly aria-label="Umask (string value)" value={value} className={cn(inputClass, "w-32 font-mono text-xs")} />
+          {parsed !== null && (
+            <button type="button" disabled={disabled} onClick={() => onChange(normalizeUmask(parsed))} className={smallButton}>
+              Convert to integer ({normalizeUmask(parsed)})
+            </button>
+          )}
+          <button type="button" disabled={disabled} onClick={() => onChange(undefined)} className={smallButton}>
+            <X className="w-3.5 h-3.5" />
+            Remove key
+          </button>
+        </div>
+        <p className="text-[11px] text-gray-600">
+          {parsed !== null
+            ? `The plist stores a string. launchd reads it as octal ${formatOctal(parsed)}. Convert it to edit the permissions here.`
+            : "The plist stores a string that is not a clean number. Edit it in Expert mode, or remove the key."}
+        </p>
+      </div>
+    );
+  }
+
+  const isSet = typeof value === "number";
+  const mask = isSet ? normalizeUmask(value) : 0;
+  const grid = umaskToGrid(mask);
+  const outOfRange = isSet && value !== mask;
+
+  return (
+    <div className="space-y-2">
+      <div role="radiogroup" aria-label="Umask" className="inline-flex rounded-lg bg-white/[0.04] p-0.5">
+        {[
+          { set: false, text: "Not set" },
+          { set: true, text: "Set" },
+        ].map((o) => (
+          <button
+            key={o.text}
+            type="button"
+            role="radio"
+            aria-checked={isSet === o.set}
+            disabled={disabled}
+            onClick={() => o.set !== isSet && onChange(o.set ? DEFAULT_UMASK : undefined)}
+            className={cn(
+              "px-2.5 py-1 rounded-md text-xs transition-colors",
+              isSet === o.set ? "bg-cyan-500/20 text-cyan-300" : "text-gray-500 hover:text-gray-300"
+            )}
+          >
+            {o.text}
+          </button>
+        ))}
+      </div>
+
+      {isSet && (
+        <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
+          <table className="text-xs" aria-describedby={`${groupId}-hint`}>
+            <caption className="sr-only">Permissions removed from new files</caption>
+            <thead>
+              <tr>
+                <td />
+                {UMASK_PERMISSIONS.map((p) => (
+                  <th key={p} scope="col" className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-gray-600">
+                    {p}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {UMASK_CLASSES.map((cls, c) => (
+                <tr key={cls}>
+                  <th scope="row" className="pr-3 py-1 text-left font-medium text-gray-400">
+                    {cls}
+                  </th>
+                  {UMASK_PERMISSIONS.map((perm, p) => (
+                    <td key={perm} className="px-2 py-1 text-center">
+                      <input
+                        type="checkbox"
+                        aria-label={`Mask ${perm.toLowerCase()} for ${cls.toLowerCase()}`}
+                        checked={grid[c][p]}
+                        disabled={disabled}
+                        onChange={() => onChange(toggleUmaskBit(mask, c, p))}
+                        className="h-3.5 w-3.5 rounded accent-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 disabled:opacity-50"
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <dl className="grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5 text-[11px] text-gray-500" aria-live="polite">
+            <dt>Octal</dt>
+            <dd className="font-mono text-gray-300">{formatOctal(mask)}</dd>
+            <dt>Decimal (stored)</dt>
+            <dd className="font-mono text-gray-300">{mask}</dd>
+            <dt>New files</dt>
+            <dd className="font-mono text-gray-400">
+              {formatMode(modeUnderUmask(mask, "file"))} ({modeUnderUmask(mask, "file").toString(8)})
+            </dd>
+            <dt>New folders</dt>
+            <dd className="font-mono text-gray-400">
+              {formatMode(modeUnderUmask(mask, "folder"))} ({modeUnderUmask(mask, "folder").toString(8)})
+            </dd>
+          </dl>
+        </div>
+      )}
+
+      {isSet && (
+        <p id={`${groupId}-hint`} className="text-[11px] text-gray-600">
+          A checked box removes that permission from the files the job creates.
+        </p>
+      )}
+      {outOfRange && (
+        <p className="text-[11px] text-amber-400">
+          The plist stores {String(value)}. umask(2) only uses the nine permission bits, so launchd applies {formatOctal(mask)} (decimal {mask}).
+          A change here stores the reduced value.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Keys whose widget is more specific than their schema type. */
+const KEY_WIDGETS: Record<
+  string,
+  (props: { value: PlistValue | undefined; onChange: (next: PlistValue | undefined) => void; disabled?: boolean }) => ReactNode
+> = {
+  Umask: UmaskEditor,
+};
+
+/** Pick the widget for a key: a key-specific widget first, else one from its schema type. */
 export function SchemaField({
   spec,
   value,
@@ -643,6 +809,9 @@ export function SchemaField({
   disabled?: boolean;
   id?: string;
 }) {
+  const KeyWidget = KEY_WIDGETS[spec.key];
+  if (KeyWidget) return <KeyWidget value={value} onChange={onChange} disabled={disabled} />;
+
   switch (spec.type) {
     case "string":
       return spec.options ? (

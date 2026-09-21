@@ -1,31 +1,89 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertOctagon, Bell, BellOff, FilePlus2, FileX2, FilePen, Trash2, X } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
 import { GlowCard } from "@/components/ui/GlowCard";
 import { toast } from "@/components/ui/Toast";
-import { backend, type JobEvent, type LoginItem, type StartupExtras } from "@/lib/backend";
+import { backend, type JobEvent, type MonitorSettings } from "@/lib/backend";
 import { useJobEventsStore, type ServiceInfo } from "@/stores/app";
 import { cn } from "@/lib/utils";
-import { formatInterval, nextRuns, scopeFor } from "@shared/launchd";
+import { explainExitStatus, formatInterval, nextRuns, scopeFor } from "@shared/launchd";
 import { inputClass } from "./fields";
+import { InlineError } from "./StartupPanels";
 
-// ── Monitor settings (per browser) ───────────────────────────────────
+export type { MonitorSettings } from "@/lib/backend";
+export { StartupExtrasCard } from "./StartupPanels";
+
+// ── Monitor settings ─────────────────────────────────────────────────
+// The backend owns the settings (~/.macdash/settings.json), so the native notifications honour them too.
+// localStorage keeps a copy. The copy is the fallback while the backend call fails.
 
 const SETTINGS_KEY = "macdash.jobMonitor";
+/** Set after the value that an older version kept in localStorage reached the backend. */
+const MIGRATED_KEY = "macdash.jobMonitor.migrated";
+const SAVE_DELAY_MS = 500;
+const MAX_PREFIXES = 50;
+const MAX_PREFIX_LENGTH = 100;
 
-export interface MonitorSettings {
-  notify: boolean;
-  /** Label prefixes that never raise a notification, e.g. "com.apple." */
-  exclude: string[];
+function sanitizeSettings(input: unknown): MonitorSettings {
+  const raw = (typeof input === "object" && input !== null ? input : {}) as { notify?: unknown; exclude?: unknown };
+  const exclude = Array.isArray(raw.exclude)
+    ? raw.exclude.filter((p): p is string => typeof p === "string" && p !== "").map((p) => p.slice(0, MAX_PREFIX_LENGTH)).slice(0, MAX_PREFIXES)
+    : [];
+  return { notify: raw.notify !== false, exclude };
 }
 
-export function loadMonitorSettings(): MonitorSettings {
+function readLocalSettings(): MonitorSettings | null {
   try {
-    const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "");
-    return { notify: parsed.notify !== false, exclude: Array.isArray(parsed.exclude) ? parsed.exclude : [] };
+    const text = localStorage.getItem(SETTINGS_KEY);
+    return text === null ? null : sanitizeSettings(JSON.parse(text));
   } catch {
-    return { notify: true, exclude: [] };
+    return null;
   }
+}
+
+function writeLocal(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Private mode or a full quota: the cache in memory still works for this session.
+  }
+}
+
+/** Last known settings. `notifyJobEvent` reads them synchronously. */
+let cachedSettings: MonitorSettings = readLocalSettings() ?? { notify: true, exclude: [] };
+
+function remember(settings: MonitorSettings): void {
+  cachedSettings = settings;
+  writeLocal(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+/** Settings from the last load or edit. Never waits for the backend. */
+export function loadMonitorSettings(): MonitorSettings {
+  return cachedSettings;
+}
+
+/**
+ * Read the settings from the backend into the cache. Call it once at start and when the settings panel opens.
+ * A value from an older version (localStorage only) moves to the backend once.
+ * On failure the cache keeps the localStorage value and the error is thrown.
+ */
+export async function refreshMonitorSettings(): Promise<MonitorSettings> {
+  const remote = sanitizeSettings(await backend.getMonitorSettings());
+  const local = readLocalSettings();
+  let migrated = true;
+  try {
+    migrated = localStorage.getItem(MIGRATED_KEY) === "1";
+  } catch {
+    // No localStorage: nothing to migrate.
+  }
+  if (!migrated) {
+    if (local) await backend.setMonitorSettings(local);
+    writeLocal(MIGRATED_KEY, "1");
+    remember(local ?? remote);
+  } else {
+    remember(remote);
+  }
+  return cachedSettings;
 }
 
 const KIND = {
@@ -35,14 +93,27 @@ const KIND = {
   failed: { icon: AlertOctagon, text: "Failed", tone: "text-red-400" },
 } as const;
 
+/** "Failed (exit 78)" for a failed event, otherwise the plain kind text. */
+function kindText(event: JobEvent): string {
+  const text = KIND[event.kind].text;
+  return event.kind === "failed" && event.exitStatus !== undefined ? `${text} (exit ${event.exitStatus})` : text;
+}
+
 /** Browser notification for a job change. Only fires while the dashboard is not in front. */
 export function notifyJobEvent(event: JobEvent): void {
-  const settings = loadMonitorSettings();
+  const settings = cachedSettings;
   if (!settings.notify || settings.exclude.some((p) => p && event.label.startsWith(p))) return;
   if (backend.isDesktop()) return; // the desktop shell posts native notifications itself
   if (typeof Notification === "undefined" || Notification.permission !== "granted" || !document.hidden) return;
-  new Notification(`launchd job ${KIND[event.kind].text.toLowerCase()}`, { body: `${event.label}\n${event.path}`, tag: event.id });
+  new Notification(`launchd job ${kindText(event).toLowerCase()}`, { body: `${event.label}\n${event.path}`, tag: event.id });
 }
+
+const parsePrefixes = (text: string) =>
+  text
+    .split(/[,\s]+/)
+    .filter(Boolean)
+    .map((p) => p.slice(0, MAX_PREFIX_LENGTH))
+    .slice(0, MAX_PREFIXES);
 
 export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; onClose: () => void; onOpenJob: (event: JobEvent) => void }) {
   const titleId = useId();
@@ -50,16 +121,75 @@ export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; o
   const setEvents = useJobEventsStore((s) => s.setEvents);
   const markSeen = useJobEventsStore((s) => s.markSeen);
   const [settings, setSettings] = useState(loadMonitorSettings);
+  // The text of the prefix field is its own state. A field that re-joins the parsed list swallows the separator while the user types.
+  const [excludeText, setExcludeText] = useState(() => settings.exclude.join(", "));
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadingSettings, setLoadingSettings] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "pending" | "saved" | { error: string }>("idle");
   const canNotify = typeof Notification !== "undefined" && !backend.isDesktop();
 
   useEffect(() => {
     if (open) markSeen();
   }, [open, markSeen, events.length]);
 
+  // Debounced write. `pending` holds the value that still has to reach the backend.
+  const pending = useRef<MonitorSettings | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flush = useCallback(async () => {
+    if (timer.current !== null) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+    const next = pending.current;
+    if (!next) return;
+    pending.current = null;
+    try {
+      await backend.setMonitorSettings(next);
+      if (pending.current === null) setSaveState("saved");
+    } catch (e) {
+      // Keep the value for the Retry button unless a newer edit replaced it.
+      pending.current ??= next;
+      setSaveState({ error: (e as Error).message });
+    }
+  }, []);
+
   const update = (next: MonitorSettings) => {
     setSettings(next);
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    remember(next);
+    pending.current = next;
+    setSaveState("pending");
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = setTimeout(flush, SAVE_DELAY_MS);
   };
+
+  const pull = useCallback(async () => {
+    setLoadingSettings(true);
+    try {
+      const loaded = await refreshMonitorSettings();
+      // An edit made while the request ran is newer than the answer.
+      if (pending.current === null) {
+        setSettings(loaded);
+        setExcludeText(loaded.exclude.join(", "));
+      } else {
+        remember(pending.current);
+      }
+      setLoadError(null);
+    } catch (e) {
+      setLoadError((e as Error).message);
+    } finally {
+      setLoadingSettings(false);
+    }
+  }, []);
+
+  // Open: read the backend value. Close or unmount: send a waiting edit now.
+  useEffect(() => {
+    if (!open) return;
+    void pull();
+    return () => {
+      if (timer.current !== null) void flush();
+    };
+  }, [open, pull, flush]);
 
   const enableNotifications = async () => {
     if (canNotify && Notification.permission === "default") await Notification.requestPermission();
@@ -76,7 +206,8 @@ export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; o
               Job changes
             </h2>
             <p className="text-xs text-gray-500 mt-1">
-              mac-dash watches the five launchd folders all the time. Every plist that an app adds, changes or removes is recorded here.
+              mac-dash watches the five launchd folders all the time. Every plist that an app adds, changes or removes is recorded here. A job that
+              exits with an error is recorded as failed.
             </p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className="p-2 rounded-lg hover:bg-white/[0.06] text-gray-400">
@@ -101,17 +232,35 @@ export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; o
             <span className="text-[11px] text-gray-500">Do not notify for labels that start with</span>
             <input
               type="text"
-              value={settings.exclude.join(", ")}
+              value={excludeText}
               placeholder="com.apple., com.google."
-              onChange={(e) => update({ ...settings, exclude: e.target.value.split(/[,\s]+/).filter(Boolean) })}
+              spellCheck={false}
+              onChange={(e) => {
+                setExcludeText(e.target.value);
+                update({ ...settings, exclude: parsePrefixes(e.target.value) });
+              }}
               className={cn(inputClass, "font-mono text-xs")}
             />
           </label>
           <p className="text-[11px] text-gray-600">
             {backend.isDesktop()
-              ? "The desktop app posts a macOS notification for every change."
+              ? "The desktop app posts a macOS notification for every change that these settings allow."
               : "The browser notifies while this tab is in the background. With no dashboard open, the server posts a macOS notification."}
           </p>
+          <p className="text-[11px] text-gray-600" aria-live="polite">
+            {saveState === "pending" ? "Saving…" : saveState === "saved" ? "Saved. The settings apply to every client and to the native notifications." : ""}
+          </p>
+          {typeof saveState === "object" && (
+            <InlineError title="The settings did not reach the backend. This browser keeps them." message={saveState.error} onRetry={flush} />
+          )}
+          {loadError && typeof saveState !== "object" && (
+            <InlineError
+              title="The settings could not be read from the backend. The values of this browser are shown."
+              message={loadError}
+              onRetry={pull}
+              retrying={loadingSettings}
+            />
+          )}
         </div>
 
         <div className="flex items-center">
@@ -144,7 +293,12 @@ export function JobEventsDrawer({ open, onClose, onOpenJob }: { open: boolean; o
                     <kind.icon className={cn("w-4 h-4 mt-0.5 flex-shrink-0", kind.tone)} aria-hidden />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline gap-2">
-                        <span className={cn("text-[11px] font-medium", kind.tone)}>{kind.text}</span>
+                        <span
+                          className={cn("text-[11px] font-medium flex-shrink-0", kind.tone)}
+                          title={event.kind === "failed" ? (explainExitStatus(event.exitStatus ?? null) ?? undefined) : undefined}
+                        >
+                          {kindText(event)}
+                        </span>
                         <span className="text-xs font-mono text-gray-200 truncate">{event.label}</span>
                       </div>
                       <div className="text-[10px] text-gray-600 font-mono truncate">{event.program ?? event.path}</div>
@@ -223,91 +377,5 @@ function TimelineRow({ when, service, onSelect }: { when: string; service: Servi
       <span className="text-[12px] font-mono text-gray-200 truncate">{service.label}</span>
       <span className="ml-auto text-[10px] text-gray-600 truncate max-w-[40%]">{service.program}</span>
     </button>
-  );
-}
-
-// ── Startup mechanisms that are not launchd plists ───────────────────
-
-export function StartupExtrasCard() {
-  const [extras, setExtras] = useState<StartupExtras | null>(null);
-  const [loginItems, setLoginItems] = useState<LoginItem[] | null>(null);
-  const [loadingLogin, setLoadingLogin] = useState(false);
-
-  useEffect(() => {
-    backend.getStartupExtras().then(setExtras).catch(() => {});
-  }, []);
-
-  const loadLoginItems = async () => {
-    setLoadingLogin(true);
-    try {
-      setLoginItems(await backend.getLoginItems());
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setLoadingLogin(false);
-    }
-  };
-
-  const groups: { title: string; hint: string; rows: { main: string; sub?: string }[] | null }[] = [
-    { title: "cron", hint: "Your crontab (crontab -l)", rows: extras?.cron.map((line) => ({ main: line })) ?? null },
-    { title: "Privileged helper tools", hint: "/Library/PrivilegedHelperTools", rows: extras?.helperTools.map((h) => ({ main: h.name, sub: h.path })) ?? null },
-    { title: "Startup items", hint: "Legacy /Library/StartupItems", rows: extras?.startupItems.map((h) => ({ main: h.name, sub: h.path })) ?? null },
-  ];
-
-  return (
-    <GlowCard padding="sm">
-      <h2 className="px-2 py-1.5 text-sm font-semibold text-gray-300">Other startup mechanisms (read-only)</h2>
-      <div className="grid gap-3 md:grid-cols-2 p-2">
-        {groups.map((g) => (
-          <ExtrasGroup key={g.title} title={g.title} hint={g.hint} rows={g.rows} />
-        ))}
-        <div>
-          {loginItems === null ? (
-            <div className="space-y-1.5">
-              <h3 className="text-xs font-semibold text-gray-400">Login items</h3>
-              <p className="text-[11px] text-gray-600">Reading them goes through System Events. macOS asks for Automation permission the first time.</p>
-              <button
-                type="button"
-                disabled={loadingLogin}
-                onClick={loadLoginItems}
-                className="px-2.5 py-1 rounded-lg text-xs bg-white/[0.06] text-gray-300 hover:bg-white/[0.1] disabled:opacity-40"
-              >
-                {loadingLogin ? "Reading…" : "Read login items"}
-              </button>
-            </div>
-          ) : (
-            <ExtrasGroup
-              title="Login items"
-              hint="System Settings > General > Login Items"
-              rows={loginItems.map((li) => ({ main: li.name + (li.hidden ? " (hidden)" : ""), sub: li.path }))}
-            />
-          )}
-        </div>
-      </div>
-    </GlowCard>
-  );
-}
-
-function ExtrasGroup({ title, hint, rows }: { title: string; hint: string; rows: { main: string; sub?: string }[] | null }) {
-  return (
-    <div className="space-y-1.5 min-w-0">
-      <h3 className="text-xs font-semibold text-gray-400">
-        {title} {rows && <span className="text-gray-600 font-normal">({rows.length})</span>}
-      </h3>
-      <p className="text-[11px] text-gray-600">{hint}</p>
-      {rows === null ? (
-        <p className="text-[11px] text-gray-600">Loading…</p>
-      ) : rows.length === 0 ? (
-        <p className="text-[11px] text-gray-600">None.</p>
-      ) : (
-        <ul className="space-y-0.5">
-          {rows.map((r, i) => (
-            <li key={i} className="text-xs font-mono text-gray-300 truncate" title={r.sub ?? r.main}>
-              {r.main}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
   );
 }

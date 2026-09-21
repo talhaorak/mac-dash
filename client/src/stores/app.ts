@@ -183,11 +183,17 @@ interface NavStore {
   logProcessFilter: string | null;
   targetProcessPid: number | null;
   targetServiceLabel: string | null;
+  /** Narrows `targetServiceLabel` when the same label exists in more than one scope. */
+  targetServiceCategory: JobCategory | null;
+  /** Counts `navigateToService` calls. A consumer can tell two requests for the same label apart. */
+  navNonce: number;
   setPage: (page: string) => void;
   toggleSidebar: () => void;
   navigateToLogs: (processName?: string) => void;
   navigateToProcess: (pid: number) => void;
-  navigateToService: (label: string) => void;
+  navigateToService: (label: string, category?: JobCategory) => void;
+  /** The Services page calls this after it opened the requested job. */
+  clearServiceTarget: () => void;
 }
 
 export const useNavStore = create<NavStore>((set) => ({
@@ -196,14 +202,24 @@ export const useNavStore = create<NavStore>((set) => ({
   logProcessFilter: null,
   targetProcessPid: null,
   targetServiceLabel: null,
-  setPage: (page) => set({ currentPage: page, logProcessFilter: null, targetProcessPid: null, targetServiceLabel: null }),
+  targetServiceCategory: null,
+  navNonce: 0,
+  setPage: (page) =>
+    set({ currentPage: page, logProcessFilter: null, targetProcessPid: null, targetServiceLabel: null, targetServiceCategory: null }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   navigateToLogs: (processName) =>
     set({ currentPage: "logs", logProcessFilter: processName || null }),
   navigateToProcess: (pid) =>
-    set({ currentPage: "processes", targetProcessPid: pid, targetServiceLabel: null }),
-  navigateToService: (label) =>
-    set({ currentPage: "services", targetServiceLabel: label, targetProcessPid: null }),
+    set({ currentPage: "processes", targetProcessPid: pid, targetServiceLabel: null, targetServiceCategory: null }),
+  navigateToService: (label, category) =>
+    set((s) => ({
+      currentPage: "services",
+      targetServiceLabel: label,
+      targetServiceCategory: category ?? null,
+      targetProcessPid: null,
+      navNonce: s.navNonce + 1,
+    })),
+  clearServiceTarget: () => set({ targetServiceLabel: null, targetServiceCategory: null }),
 }));
 
 // Connection / update tracking store

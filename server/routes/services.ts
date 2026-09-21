@@ -12,9 +12,12 @@ import {
   saveJob,
   type ServiceAction,
 } from "../core/launchctl";
-import { clearJobEvents, getJobEvents } from "../core/job-monitor";
+import { clearJobEvents, getJobEvents, getMonitorSettings, setMonitorSettings } from "../core/job-monitor";
+import { buildScriptApp, getJobSignature, getPowerSchedule, setPowerSchedule } from "../core/job-tools";
 import {
+  deleteLoginItem,
   getAllJobMeta,
+  getBackgroundItems,
   getLoginItems,
   getStartupExtras,
   listRevisions,
@@ -134,7 +137,50 @@ app.get("/login-items", async (c) => {
   return c.json(result, result.ok ? 200 : 400);
 });
 
+app.delete("/login-items", async (c) => {
+  const name = c.req.query("name");
+  if (!name) return fail(c, "name is required");
+  const result = await deleteLoginItem(name);
+  return c.json(result, result.ok ? 200 : 400);
+});
+
 app.get("/shortcuts", async (c) => c.json({ shortcuts: await listShortcuts() }));
+
+app.get("/signature", async (c) => {
+  const ref = jobRef(c.req.query());
+  if (!ref) return fail(c, "label and category are required");
+  return c.json(await getJobSignature(ref.label, ref.category));
+});
+
+app.get("/background-items", async (c) => {
+  const { items, error } = await getBackgroundItems();
+  return error === null ? c.json({ items }) : c.json({ ok: false, error, items }, 400);
+});
+
+app.post("/build-app", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const result = await buildScriptApp(body?.scriptPath, body?.name);
+  return c.json(result, result.ok ? 200 : 400);
+});
+
+app.get("/power-schedule", async (c) => c.json(await getPowerSchedule()));
+
+app.put("/power-schedule", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const result = await setPowerSchedule(body?.events);
+  return c.json(result, result.ok ? 200 : 400);
+});
+
+app.get("/monitor-settings", async (c) => c.json(await getMonitorSettings()));
+
+app.put("/monitor-settings", async (c) => {
+  try {
+    await setMonitorSettings(await c.req.json().catch(() => null));
+    return c.json({ ok: true });
+  } catch (e) {
+    return fail(c, e instanceof Error ? e.message : String(e));
+  }
+});
 
 app.get("/events", async (c) => c.json({ events: await getJobEvents() }));
 

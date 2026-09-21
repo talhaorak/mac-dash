@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Wand2 } from "lucide-react";
+import { AppWindow, ChevronDown, ChevronRight, Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { backend } from "@/lib/backend";
 import {
@@ -13,6 +13,7 @@ import {
 } from "@shared/launchd";
 import { type PlistDict, type PlistValue } from "@shared/plist";
 import { ComplexValue, FieldRow, SchemaField, StringList, Toggle, inputClass } from "./fields";
+import { appNameProblem, buildOpenArgs, defaultAppName, parseOpenArgs } from "./scriptApp";
 
 // Form view of a launchd job. It edits the same PlistDict that Expert mode serializes,
 // so keys the form does not know are preserved.
@@ -50,7 +51,7 @@ function detectRunKind(job: PlistDict): RunKind {
   const a = argsOf(job);
   if (typeof job.Program === "string") return "program";
   if (a.length === 3 && SHELLS.includes(a[0]) && a[1] === "-c") return "command";
-  if (a[0] === "/usr/bin/open" && a[1] === "-a") return "app";
+  if (parseOpenArgs(a)) return "app";
   if (a[0] === "/usr/bin/shortcuts" && a[1] === "run" && a.length === 3) return "shortcut";
   if (a.length === 2 && INTERPRETERS.includes(a[0]) && a[1].startsWith("/")) return "script";
   return "program";
@@ -70,8 +71,10 @@ function RunSection({
   const [kind, setKind] = useState<RunKind>(() => detectRunKind(job));
   const [shortcuts, setShortcuts] = useState<string[]>([]);
   const [resolveNote, setResolveNote] = useState<string | null>(null);
+  const [builtApp, setBuiltApp] = useState<string | null>(null);
   const shortcutListId = useId();
   const args = argsOf(job);
+  const openArgs = parseOpenArgs(args) ?? { app: "", wait: false, rest: [] };
   const setArgs = (next: string[]) => onChange(setKey(setKey(job, "Program", undefined), "ProgramArguments", next));
 
   useEffect(() => {
@@ -81,6 +84,7 @@ function RunSection({
   const switchKind = (next: RunKind) => {
     setKind(next);
     setResolveNote(null);
+    setBuiltApp(null);
     if (next === detectRunKind(job)) return;
     const commandLine = kind === "command" ? args[2] ?? "" : args.join(" ");
     if (next === "command") setArgs(["/bin/sh", "-c", commandLine]);
@@ -210,18 +214,51 @@ function RunSection({
             />
           </div>
         )}
+        {kind === "script" && (args[1] ?? "").startsWith("/") && !disabled && (
+          <WrapInApp
+            key={args[1]}
+            scriptPath={args[1]}
+            onBuilt={(appPath) => {
+              // -W keeps open(1) alive until the app quits, so launchd sees the real run time and exit.
+              setArgs(buildOpenArgs({ app: appPath, wait: true, rest: [] }));
+              setKind("app");
+              setBuiltApp(appPath);
+            }}
+          />
+        )}
 
         {kind === "app" && (
-          <input
-            type="text"
-            aria-label="Application"
-            spellCheck={false}
-            value={args[2] ?? ""}
-            disabled={disabled}
-            placeholder="Safari  or  /Applications/Safari.app"
-            onChange={(e) => setArgs(["/usr/bin/open", "-a", e.target.value, ...args.slice(3)])}
-            className={cn(inputClass, "font-mono text-xs")}
-          />
+          <div className="space-y-1.5">
+            <input
+              type="text"
+              aria-label="Application"
+              spellCheck={false}
+              value={openArgs.app}
+              disabled={disabled}
+              placeholder="Safari  or  /Applications/Safari.app"
+              onChange={(e) => {
+                setBuiltApp(null);
+                setArgs(buildOpenArgs({ ...openArgs, app: e.target.value }));
+              }}
+              className={cn(inputClass, "font-mono text-xs")}
+            />
+            <label className="flex items-center gap-2 text-xs text-gray-400">
+              <input
+                type="checkbox"
+                checked={openArgs.wait}
+                disabled={disabled}
+                onChange={(e) => setArgs(buildOpenArgs({ ...openArgs, wait: e.target.checked }))}
+                className="h-3.5 w-3.5 rounded accent-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
+              />
+              Wait until the app quits (<span className="font-mono">-W</span>), so launchd tracks the app and not only the launcher
+            </label>
+            {builtApp && (
+              <p role="status" className="text-[11px] text-cyan-400/80">
+                Built <span className="font-mono">{builtApp}</span>. The job now opens this app, because macOS grants privacy permissions
+                (Full Disk Access, Automation) to apps, not to scripts.
+              </p>
+            )}
+          </div>
         )}
 
         {kind === "shortcut" && (
@@ -244,6 +281,97 @@ function RunSection({
           </>
         )}
       </FieldRow>
+    </div>
+  );
+}
+
+/** Lingon's "Build an App": the backend wraps the script in ~/Applications/<name>.app. */
+function WrapInApp({ scriptPath, onBuilt }: { scriptPath: string; onBuilt: (appPath: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(() => defaultAppName(scriptPath));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const nameId = useId();
+  const errorId = useId();
+  const problem = appNameProblem(name);
+
+  const build = async () => {
+    if (problem || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await backend.buildScriptApp(scriptPath, name);
+      if (!result || typeof result.path !== "string" || !result.path.startsWith("/")) throw new Error("The backend did not return the path of the app.");
+      onBuilt(result.path);
+    } catch (e) {
+      setError((e as Error).message || "The app could not be built.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        aria-expanded={false}
+        onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-cyan-400 hover:bg-cyan-500/10"
+      >
+        <AppWindow className="w-3.5 h-3.5" aria-hidden />
+        Wrap in an app…
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-white/[0.06] bg-black/20 p-3 space-y-2">
+      <p className="text-[11px] leading-snug text-gray-500">
+        Creates <span className="font-mono">~/Applications/{name || "<name>"}.app</span> and changes the job to open it. The app runs the script file
+        itself: the file must be executable and start with a <span className="font-mono">#!</span> line.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor={nameId} className="text-xs text-gray-400">
+          App name
+        </label>
+        <input
+          id={nameId}
+          type="text"
+          autoFocus
+          spellCheck={false}
+          value={name}
+          disabled={busy}
+          aria-invalid={problem !== null}
+          aria-describedby={errorId}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              build();
+            } else if (e.key === "Escape") {
+              // Consume Escape so the editor dialog stays open.
+              e.preventDefault();
+              setOpen(false);
+            }
+          }}
+          className={cn(inputClass, "w-56")}
+        />
+        <button
+          type="button"
+          disabled={busy || problem !== null}
+          onClick={build}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-cyan-950 bg-cyan-400 hover:bg-cyan-300 disabled:opacity-40"
+        >
+          {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden />}
+          Build app
+        </button>
+        <button type="button" disabled={busy} onClick={() => setOpen(false)} className="px-2 py-1.5 rounded-lg text-xs text-gray-400 hover:bg-white/[0.06]">
+          Cancel
+        </button>
+      </div>
+      <p id={errorId} role="alert" className={cn("text-[11px] leading-snug", error ? "text-red-400" : "text-amber-400")}>
+        {error ?? (name !== "" ? problem : null)}
+      </p>
     </div>
   );
 }

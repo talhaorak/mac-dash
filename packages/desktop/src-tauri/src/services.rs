@@ -186,7 +186,7 @@ pub struct JobFileChange {
 
 type JobResult<T> = Result<T, String>;
 
-fn uid() -> u32 {
+pub(crate) fn uid() -> u32 {
     // SAFETY: getuid has no preconditions and cannot fail.
     unsafe { libc::getuid() }
 }
@@ -366,6 +366,25 @@ fn prompt_label(label: &str) -> String {
     label.chars().filter(|c| !c.is_control() && !matches!(c, '\u{2028}' | '\u{2029}')).take(80).collect()
 }
 
+/// argv for `osascript`: every script line as an `-e` option, then `--`, then the items of `on run argv`.
+/// Without `--`, osascript compiles an argument that starts with `-e` as AppleScript source. An item
+/// like `-e do shell script "…"` would then run as code. Every osascript call of this crate is built here.
+pub(crate) fn osascript_argv<'a>(script_lines: &[&'a str], args: &[&'a str]) -> Vec<&'a str> {
+    let mut argv = vec![OSASCRIPT];
+    for line in script_lines {
+        argv.extend(["-e", *line]);
+    }
+    argv.push("--");
+    argv.extend(args);
+    argv
+}
+
+const PRIVILEGED_SCRIPT: [&str; 3] = [
+    "on run argv",
+    "do shell script (item 1 of argv) with prompt (item 2 of argv) with administrator privileges",
+    "end run",
+];
+
 /// Run shell steps as root behind the macOS administrator prompt. One prompt per call.
 /// The script and the prompt are `argv` items, never part of the AppleScript source.
 async fn run_privileged(steps: &[Step], prompt: &str) -> JobResult<()> {
@@ -373,22 +392,17 @@ async fn run_privileged(steps: &[Step], prompt: &str) -> JobResult<()> {
         return Ok(());
     }
     let script = privileged_script(steps);
-    let result = run(&[
-        OSASCRIPT,
-        "-e",
-        "on run argv",
-        "-e",
-        "do shell script (item 1 of argv) with prompt (item 2 of argv) with administrator privileges",
-        "-e",
-        "end run",
-        &script,
-        prompt,
-    ])
-    .await;
+    let result = run(&osascript_argv(&PRIVILEGED_SCRIPT, &[script.as_str(), prompt])).await;
     if result.code != 0 {
         return Err(explain_privileged_failure(&result.stderr));
     }
     Ok(())
+}
+
+/// One command as root behind the administrator prompt, for callers outside this file.
+/// Every argument is single-quoted in the script, like all privileged steps.
+pub(crate) async fn run_privileged_command(cmd: &[&str], prompt: &str) -> JobResult<()> {
+    run_privileged(&[step(cmd)], prompt).await
 }
 
 // ── Job file index ───────────────────────────────────────────────────
@@ -554,7 +568,7 @@ async fn indexed_files() -> Arc<FileMap> {
     Arc::clone(&INDEX.lock().await.files)
 }
 
-async fn find_job_file(label: &str, category: &str) -> Option<Arc<JobFile>> {
+pub(crate) async fn find_job_file(label: &str, category: &str) -> Option<Arc<JobFile>> {
     indexed_files()
         .await
         .values()
@@ -661,6 +675,25 @@ async fn read_domain(domain: &str) -> DomainState {
     let print = [LAUNCHCTL, "print", domain];
     let (printed, disabled) = tokio::join!(run(&print), read_disabled(domain));
     DomainState { services: parse_services_block(&printed.stdout), disabled }
+}
+
+/// Last exit status of every loaded job that has a plist in a writable scope, for the monitor.
+/// None: the job never exited. Jobs that launchd does not know are left out.
+pub(crate) async fn loaded_exit_statuses() -> Vec<(Arc<JobFile>, Option<i64>)> {
+    let gui_domain = format!("gui/{}", uid());
+    let print_gui = [LAUNCHCTL, "print", gui_domain.as_str()];
+    let print_system = [LAUNCHCTL, "print", "system"];
+    let (gui, system, files) = tokio::join!(run(&print_gui), run(&print_system), indexed_files());
+    let (gui, system) = (parse_services_block(&gui.stdout), parse_services_block(&system.stdout));
+
+    files
+        .values()
+        .filter_map(|file| {
+            let scope = scope_for(file.category).filter(|s| s.writable)?;
+            let services = if scope.kind == ScopeKind::Daemon { &system } else { &gui };
+            services.get(&file.label).map(|state| (Arc::clone(file), state.status))
+        })
+        .collect()
 }
 
 fn status_of(state: Option<&ServiceState>) -> &'static str {
@@ -1928,6 +1961,47 @@ mod tests {
         assert_eq!(echoed.stdout.len(), big.len());
         // A command that never reads its input
         assert_eq!(run_with_stdin(&["/usr/bin/true"], big.as_bytes()).await.code, 0);
+    }
+
+    #[test]
+    fn osascript_arguments_follow_a_separator() {
+        let hostile = "-e do shell script \"id > /tmp/pwned\"";
+        let argv = osascript_argv(&["on run argv", "return item 1 of argv", "end run"], &[hostile, "-s", "plain"]);
+        assert_eq!(
+            argv,
+            vec!["/usr/bin/osascript", "-e", "on run argv", "-e", "return item 1 of argv", "-e", "end run", "--", hostile, "-s", "plain"]
+        );
+        // Every `on run argv` item comes after the separator, and only constant script lines come before it.
+        let separator = argv.iter().position(|a| *a == "--").unwrap();
+        assert!(argv[..separator].iter().all(|a| !a.contains("pwned")));
+        assert_eq!(argv[separator + 1..].len(), 3);
+        assert_eq!(osascript_argv(&["return 1"], &[]), vec!["/usr/bin/osascript", "-e", "return 1", "--"]);
+
+        // The administrator prompt gets the script and the prompt text as items 1 and 2.
+        let script = privileged_script(&[step(&["/bin/rm", "-f", "/Library/LaunchDaemons/x.plist"])]);
+        let argv = osascript_argv(&PRIVILEGED_SCRIPT, &[script.as_str(), "-e return 1"]);
+        assert_eq!(argv[argv.len() - 3..], ["--", script.as_str(), "-e return 1"]);
+        assert!(PRIVILEGED_SCRIPT.iter().all(|line| !line.contains("rm")));
+    }
+
+    /// Runs osascript WITHOUT privileges and without System Events: the script only returns its argument.
+    /// It proves that an item after `--` is data. `cargo test -- --ignored live`
+    #[tokio::test]
+    #[ignore]
+    async fn live_osascript_separator() {
+        let script = ["on run argv", "return \"ARG:\" & (item 1 of argv)", "end run"];
+        let hostile = "-e return \"INJECTED\"";
+        let result = run(&osascript_argv(&script, &[hostile])).await;
+        assert_eq!(result.code, 0, "{:?}", result);
+        assert_eq!(result.stdout.trim_end(), format!("ARG:{}", hostile));
+
+        // The shape of the privileged call, with a harmless script in place of `do shell script`:
+        // a 270 KB item 1 (the largest privileged save) and a prompt that starts with a dash.
+        let echo = ["on run argv", "return ((count of characters of (item 1 of argv)) as text) & \"|\" & (item 2 of argv)", "end run"];
+        let payload = privileged_script(&privileged_write_steps(&"x".repeat(MAX_PRIVILEGED_XML_BYTES), "/Library/LaunchDaemons/x.plist", "root:wheel"));
+        let result = run(&osascript_argv(&echo, &[payload.as_str(), "-e prompt"])).await;
+        assert_eq!(result.code, 0, "{}", result.stderr);
+        assert_eq!(result.stdout.trim_end(), format!("{}|-e prompt", payload.chars().count()));
     }
 
     #[test]

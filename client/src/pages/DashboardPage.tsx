@@ -57,7 +57,7 @@ export function DashboardPage() {
         <GlowCard glow="accent" className="flex items-center gap-6">
           <Gauge value={cpuUsed} label="CPU" sublabel={stats?.cpu.model?.split(" ").slice(0, 2).join(" ")} color="#06b6d4" />
           <div className="flex-1 space-y-2">
-            <MiniChart data={history.map((h) => ({ value: h.cpu }))} color="#06b6d4" />
+            <MiniChart data={history.map((h) => ({ value: h.cpu }))} color="#06b6d4" label="CPU usage history" />
             <div className="grid grid-cols-2 gap-x-4 text-xs">
               <div className="text-gray-500">User</div>
               <div className="text-right text-cyan-400 font-mono">{stats?.cpu.user.toFixed(1)}%</div>
@@ -72,7 +72,7 @@ export function DashboardPage() {
         <GlowCard glow={memPercent > 85 ? "danger" : "none"} className="flex items-center gap-6">
           <Gauge value={memPercent} label="Memory" sublabel={stats ? formatBytes(stats.memory.total) : ""} color={memPercent > 85 ? "#ef4444" : "#8b5cf6"} />
           <div className="flex-1 space-y-2">
-            <MiniChart data={history.map((h) => ({ value: h.mem }))} color="#8b5cf6" />
+            <MiniChart data={history.map((h) => ({ value: h.mem }))} color="#8b5cf6" label="Memory usage history" />
             <div className="grid grid-cols-2 gap-x-4 text-xs">
               <div className="text-gray-500">Used</div>
               <div className="text-right text-purple-400 font-mono">{stats ? formatBytes(stats.memory.used) : "-"}</div>

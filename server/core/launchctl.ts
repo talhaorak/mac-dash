@@ -112,19 +112,22 @@ const MAX_OUTPUT_BYTES = 256 * 1024;
 
 const scopeDir = (scope: JobScope) => scope.dir.replace(/^~/, homedir());
 const domainFor = (category: JobCategory) => (scopeFor(category)?.kind === "daemon" ? "system" : `gui/${UID}`);
-const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
+export const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 // ── Process helpers ──────────────────────────────────────────────────
 
-interface ExecResult {
+export interface ExecResult {
   code: number;
   stdout: string;
   stderr: string;
 }
 
-async function run(cmd: string[], stdin?: string): Promise<ExecResult> {
+/** `timeoutMs` kills a command that hangs (a tool waiting for a permission dialog, a dead volume). */
+export async function run(cmd: string[], stdin?: string, timeoutMs?: number): Promise<ExecResult> {
+  let timer: Timer | undefined;
   try {
     const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: stdin === undefined ? "ignore" : new Blob([stdin]) });
+    if (timeoutMs) timer = setTimeout(() => proc.kill(), timeoutMs);
     const [stdout, stderr, code] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -133,37 +136,44 @@ async function run(cmd: string[], stdin?: string): Promise<ExecResult> {
     return { code, stdout, stderr: stderr.trim() };
   } catch (e) {
     return { code: 127, stdout: "", stderr: errorMessage(e) };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 /** Labels come from plists that any app can drop into a job folder. These two keep them harmless. */
 const isLaunchctlTarget = (label: string) => label !== "" && !label.includes("/") && !label.startsWith("-");
-const promptLabel = (label: string) => label.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").slice(0, 80);
+export const promptLabel = (label: string) => label.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").slice(0, 80);
 
 const shQuote = (arg: string) => `'${arg.replace(/'/g, `'\\''`)}'`;
 
-interface PrivilegedStep {
+export interface PrivilegedStep {
   cmd: string[];
   /** A failing tolerant step does not abort the script (e.g. bootout of a job that is not loaded). */
   tolerant?: boolean;
 }
 
-/** Run shell steps as root behind the macOS administrator prompt. One prompt per call. */
-async function runPrivileged(steps: PrivilegedStep[], prompt: string): Promise<void> {
+/** The shell text that `do shell script` receives: every argument single-quoted, steps joined with &&. */
+export function buildPrivilegedScript(steps: PrivilegedStep[]): string {
   // `a && b || true && c` would swallow a failure of `a`: sh gives && and || the same precedence.
   // A tolerant step is therefore its own group.
-  const script = steps
+  return steps
     .map((s) => {
       const cmd = s.cmd.map(shQuote).join(" ");
       return s.tolerant ? `{ ${cmd} || true; }` : cmd;
     })
     .join(" && ");
+}
+
+/** Run shell steps as root behind the macOS administrator prompt. One prompt per call. */
+export async function runPrivileged(steps: PrivilegedStep[], prompt: string): Promise<void> {
   const result = await run([
     "osascript",
     "-e", "on run argv",
     "-e", "do shell script (item 1 of argv) with prompt (item 2 of argv) with administrator privileges",
     "-e", "end run",
-    script,
+    "--", // an argument that starts with "-e" would otherwise be compiled as script text
+    buildPrivilegedScript(steps),
     prompt,
   ]);
   if (result.code !== 0) {
@@ -300,7 +310,7 @@ function ensureIndex(): Promise<void> {
   return indexReady;
 }
 
-async function findJobFile(label: string, category: JobCategory): Promise<JobFile | null> {
+export async function findJobFile(label: string, category: JobCategory): Promise<JobFile | null> {
   await ensureIndex();
   for (const file of index.values()) {
     if (file.label === label && file.category === category) return file;
@@ -659,8 +669,8 @@ async function moveToTrash(file: JobFile, hasBackup: boolean): Promise<void> {
   await unlink(file.path);
 }
 
-/** A privileged save passes the plist inside the root script, so the size is bound by ARG_MAX. */
-const MAX_PRIVILEGED_XML = 200 * 1024;
+/** A privileged save passes the plist inside the root script, so the size (in bytes, not characters) is bound by ARG_MAX. */
+export const MAX_PRIVILEGED_XML = 200 * 1024;
 
 export async function saveJob(req: SaveJobRequest): Promise<Result<{ label: string; path: string }>> {
   try {
@@ -702,12 +712,13 @@ export async function saveJob(req: SaveJobRequest): Promise<Result<{ label: stri
 
     if (scope.needsAdmin) {
       // Target in /Library: root writes it. Root only touches root-owned folders.
-      if (req.xml.length > MAX_PRIVILEGED_XML) throw new JobError("The plist is too large for a privileged save (200 KB).");
+      const xmlBytes = Buffer.from(req.xml, "utf8");
+      if (xmlBytes.length > MAX_PRIVILEGED_XML) throw new JobError("The plist is too large for a privileged save (200 KB).");
       const trashCopy = moved && originalNeedsAdmin ? await copyToTrash(original!, hasBackup) : null;
       const steps: PrivilegedStep[] = [];
       if (bootoutOriginal && originalTarget) steps.push({ cmd: ["launchctl", "bootout", originalTarget], tolerant: true });
       // root decodes the text it was handed: $0 is the base64 plist, $1 the staging file
-      steps.push({ cmd: ["/bin/sh", "-c", 'printf %s "$0" | /usr/bin/base64 -D > "$1"', Buffer.from(req.xml, "utf8").toString("base64"), staging] });
+      steps.push({ cmd: ["/bin/sh", "-c", 'printf %s "$0" | /usr/bin/base64 -D > "$1"', xmlBytes.toString("base64"), staging] });
       steps.push({ cmd: ["/usr/sbin/chown", "root:wheel", staging] });
       steps.push({ cmd: ["/bin/chmod", "644", staging] });
       steps.push({ cmd: ["/bin/mv", "-f", staging, dest] });

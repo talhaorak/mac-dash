@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, History, Info, Loader2, X, XCircle } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
 import { toast } from "@/components/ui/Toast";
@@ -18,6 +18,7 @@ import {
 import { PlistParseError, parsePlistDict, serializePlist, type PlistDict } from "@shared/plist";
 import { JobForm, setKey } from "./JobForm";
 import { XmlEditor } from "./XmlEditor";
+import { DRAFT_DEBOUNCE_MS, browserStorage, clearDraft, jobDraftKey, readDraft, writeDraft, type JobDraft } from "./drafts";
 import { inputClass } from "./fields";
 
 export type JobEditorTarget =
@@ -72,13 +73,61 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
   const [pathFacts, setPathFacts] = useState<PathFacts[]>([]);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(target.mode === "new");
+  /** The user changed something. A new job is dirty from the start, but there is nothing to keep as a draft yet. */
+  const [edited, setEdited] = useState(false);
   const [revisions, setRevisions] = useState<JobRevision[] | null>(null);
   /** Expert edits keep the user's exact text (comments, order). Form edits regenerate it. */
   const xmlIsSource = useRef(false);
 
+  // ── Draft ──────────────────────────────────────────────────────────
+  // Unsaved work is kept in localStorage: it survives Escape, Cancel and a page reload.
+  const [storage] = useState(browserStorage);
+  const draftKey = jobDraftKey(target);
+  /** A stored draft the user has not restored or discarded yet. It is never overwritten while it waits. */
+  const [pendingDraft, setPendingDraft] = useState<JobDraft | null>(null);
+  const draftState = useRef({ xml, category, enabled: false, closed: false });
+  draftState.current = { ...draftState.current, xml, category, enabled: edited && !readOnly && pendingDraft === null };
+
+  const offerDraft = (currentXml: string, currentCategory: JobCategory) => {
+    const draft = readDraft(storage, draftKey);
+    if (!draft) return;
+    if (draft.xml === currentXml && draft.category === currentCategory) clearDraft(storage, draftKey);
+    else setPendingDraft(draft);
+  };
+
+  /** Write the draft now. Returns true when the current state is in storage. */
+  const flushDraft = useCallback((): boolean => {
+    const { xml, category, enabled, closed } = draftState.current;
+    if (!enabled || closed) return false;
+    const stored = readDraft(storage, draftKey);
+    if (stored && stored.xml === xml && stored.category === category) return true; // keep its time
+    return writeDraft(storage, draftKey, { xml, category, savedAt: Date.now() });
+  }, [storage, draftKey]);
+
+  const dropDraft = () => {
+    draftState.current.closed = true;
+    clearDraft(storage, draftKey);
+  };
+
+  const draftEnabled = draftState.current.enabled;
+  useEffect(() => {
+    if (!draftEnabled) return;
+    const timer = setTimeout(flushDraft, DRAFT_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [xml, category, draftEnabled, flushDraft]);
+
+  // Do not lose the last 800 ms when the page reloads or the dialog closes.
+  useEffect(() => {
+    window.addEventListener("pagehide", flushDraft);
+    return () => {
+      window.removeEventListener("pagehide", flushDraft);
+      flushDraft();
+    };
+  }, [flushDraft]);
+
   // ── Load ───────────────────────────────────────────────────────────
   useEffect(() => {
-    if (target.mode === "new") return;
+    if (target.mode === "new") return offerDraft(xml, category);
     let cancelled = false;
     const taken = new Set(services.map((s) => s.label));
 
@@ -100,6 +149,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
           setJob(copy);
           setXml(serializePlist(copy));
           setDirty(true);
+          offerDraft(serializePlist(copy), doc.writable ? doc.category : "user-agents");
         } else {
           setCategory(doc.category);
           setJob(parsed);
@@ -112,6 +162,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
             setXmlError(parseError);
             setTab("expert");
           }
+          if (doc.writable) offerDraft(doc.xml, doc.category);
         }
       })
       .catch((e: Error) => !cancelled && setLoadError(e.message))
@@ -130,18 +181,37 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
     setXmlError(null);
     xmlIsSource.current = false;
     setDirty(true);
+    setEdited(true);
   };
 
-  const editXml = (text: string) => {
+  /** Returns false when the text is not a valid property list. */
+  const editXml = (text: string): boolean => {
     setXml(text);
     xmlIsSource.current = true;
     setDirty(true);
+    setEdited(true);
     try {
       setJob(parsePlistDict(text));
       setXmlError(null);
+      return true;
     } catch (e) {
       setXmlError(e as Error);
+      return false;
     }
+  };
+
+  const restoreDraft = () => {
+    if (!pendingDraft) return;
+    setCategory(pendingDraft.category);
+    // A draft with an XML error can only be fixed in Expert mode.
+    if (!editXml(pendingDraft.xml) || tab === "revisions") setTab("expert");
+    setPendingDraft(null);
+    toast.info("Draft restored. Save to apply it.");
+  };
+
+  const discardDraft = () => {
+    clearDraft(storage, draftKey);
+    setPendingDraft(null);
   };
 
   // ── Validation ─────────────────────────────────────────────────────
@@ -186,12 +256,16 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
         load,
       });
       toast.success(load ? `Saved and loaded ${result.label}` : `Saved ${result.label} without loading`);
+      dropDraft();
       onClose();
     } catch (e) {
       // "Saved, but launchd did not load the job" is a partial success: the file is written.
       const message = (e as Error).message;
       toast.error(message);
-      if (message.startsWith("Saved, but")) onClose();
+      if (message.startsWith("Saved, but")) {
+        dropDraft();
+        onClose();
+      }
     } finally {
       setSaving(false);
     }
@@ -214,7 +288,16 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
   };
 
   const requestClose = () => {
-    if (!dirty || readOnly || window.confirm("Discard the changes to this job?")) onClose();
+    if (!dirty || readOnly) return onClose();
+    // Write the draft first, so the question tells the truth about what happens to the changes.
+    const message = flushDraft()
+      ? "Close the editor without saving?\n\nYour changes stay on this Mac as a draft. The editor offers to restore them the next time you open this job."
+      : !edited
+        ? "Close the editor? You did not change this job, so no draft is kept."
+        : pendingDraft
+          ? `Close the editor? These changes are lost.\n\nThe earlier draft from ${new Date(pendingDraft.savedAt).toLocaleString()} stays.`
+          : "Discard the changes to this job?\n\nThey cannot be kept as a draft (over 200 KB, or the browser storage is not available).";
+    if (window.confirm(message)) onClose();
   };
 
   const title =
@@ -248,6 +331,7 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
                 onChange={(e) => {
                   setCategory(e.target.value as JobCategory);
                   setDirty(true);
+                  setEdited(true);
                 }}
                 className={inputClass}
               >
@@ -296,6 +380,24 @@ function EditorBody({ target, onClose }: { target: JobEditorTarget; onClose: () 
           </button>
         ))}
       </div>
+
+      {pendingDraft && (
+        <div role="status" className="mx-6 mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200/90">
+          <History className="w-3.5 h-3.5 flex-shrink-0 text-amber-400" aria-hidden />
+          <span>
+            Unsaved draft from <time dateTime={new Date(pendingDraft.savedAt).toISOString()}>{new Date(pendingDraft.savedAt).toLocaleString()}</time>.{" "}
+            <span className="text-amber-200/60">New edits are not kept as a draft until you restore or discard it.</span>
+          </span>
+          <span className="ml-auto flex gap-1">
+            <button type="button" onClick={restoreDraft} className="px-2.5 py-1 rounded-lg font-medium text-cyan-950 bg-cyan-400 hover:bg-cyan-300">
+              Restore
+            </button>
+            <button type="button" onClick={discardDraft} className="px-2.5 py-1 rounded-lg text-amber-200/90 hover:bg-white/[0.08]">
+              Discard
+            </button>
+          </span>
+        </div>
+      )}
 
       {/* Body */}
       <div className="flex-1 min-h-0 grid grid-cols-[1fr_280px] gap-4 px-6 py-4">

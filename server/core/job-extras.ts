@@ -122,6 +122,13 @@ export async function getStartupExtras(): Promise<StartupExtras> {
   return { cron, helperTools, startupItems: [...startupA, ...startupB] };
 }
 
+function explainSystemEventsError(stderr: string, fallback: string): string {
+  if (/-1743|not allowed|not authorized/i.test(stderr)) {
+    return "macOS denied access. Allow mac-dash (or your terminal) under System Settings > Privacy & Security > Automation > System Events.";
+  }
+  return stderr.replace(/^.*execution error: /, "") || fallback;
+}
+
 /**
  * Login items from System Events. The first call makes macOS ask for Automation permission,
  * so the client only calls this when the user asks for it.
@@ -137,21 +144,107 @@ export async function getLoginItems(): Promise<{ ok: true; items: LoginItem[] } 
     "end tell",
   ];
   const result = await capture(["osascript", ...script.flatMap((line) => ["-e", line])], 30_000);
-  if (result.code !== 0) {
-    const denied = /-1743|not allowed|not authorized/i.test(result.stderr);
-    return {
-      ok: false,
-      error: denied
-        ? "macOS denied access. Allow mac-dash (or your terminal) under System Settings > Privacy & Security > Automation > System Events."
-        : result.stderr || "Could not read the login items.",
-    };
-  }
+  if (result.code !== 0) return { ok: false, error: explainSystemEventsError(result.stderr, "Could not read the login items.") };
   const items = result.stdout
     .split("\n")
     .map((line) => line.split("\t"))
     .filter((cols) => cols.length >= 3 && cols[0])
     .map(([name, path, hidden]) => ({ name, path: path === "missing value" ? "" : path, hidden: hidden.trim() === "true" }));
   return { ok: true, items };
+}
+
+/**
+ * The name travels as an argv item, never inside the AppleScript text. "--" ends osascript's own
+ * options: without it a name such as "-e ..." would be compiled as one more script line.
+ */
+export function deleteLoginItemArgv(name: string): string[] {
+  return [
+    "osascript",
+    "-e", "on run argv",
+    "-e", 'tell application "System Events" to delete login item (item 1 of argv)',
+    "-e", "end run",
+    "--",
+    name,
+  ];
+}
+
+export async function deleteLoginItem(name: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (typeof name !== "string" || !name || name.length > 255 || /[\u0000-\u001f\u007f]/.test(name)) {
+    return { ok: false, error: "Invalid login item name." };
+  }
+  const result = await capture(deleteLoginItemArgv(name), 30_000);
+  return result.code === 0 ? { ok: true } : { ok: false, error: explainSystemEventsError(result.stderr, "Could not delete the login item.") };
+}
+
+// ── Background items (read-only) ─────────────────────────────────────
+
+export interface BackgroundItem {
+  uid: number;
+  name: string;
+  developerName: string | null;
+  type: string;
+  disposition: string[];
+  identifier: string | null;
+  url: string | null;
+  executablePath: string | null;
+  parentIdentifier: string | null;
+  teamIdentifier: string | null;
+}
+
+/**
+ * Records of `sfltool dumpbtm` for the given uids. A record starts with " #<n>:" under a
+ * "Records for UID <uid>" header. The "Embedded Item Identifiers" sub-lists ("    #1: <id>") carry
+ * text after the colon, so they never start a record, and their keys are not read.
+ */
+export function parseBtmDump(text: string, uids: number[]): BackgroundItem[] {
+  const items: BackgroundItem[] = [];
+  let uid: number | null = null;
+  let fields: Map<string, string> | null = null;
+
+  const flush = () => {
+    if (fields && uid !== null && uids.includes(uid)) {
+      const value = (key: string) => {
+        const v = fields!.get(key);
+        return v === undefined || v === "" || v === "(null)" ? null : v;
+      };
+      items.push({
+        uid,
+        name: value("Name") ?? "",
+        developerName: value("Developer Name"),
+        type: (value("Type") ?? "").replace(/\s*\(0x[0-9a-f]+\)$/i, ""),
+        disposition: (value("Disposition")?.match(/\[(.*?)\]/)?.[1] ?? "").split(",").map((d) => d.trim()).filter(Boolean),
+        identifier: value("Identifier"),
+        url: value("URL"),
+        executablePath: value("Executable Path"),
+        parentIdentifier: value("Parent Identifier"),
+        teamIdentifier: value("Team Identifier"),
+      });
+    }
+    fields = null;
+  };
+
+  for (const line of text.split("\n")) {
+    const header = line.match(/^\s*Records for UID (-?\d+)\b/);
+    if (header) {
+      flush();
+      uid = parseInt(header[1], 10);
+    } else if (/^ #\d+:\s*$/.test(line)) {
+      flush();
+      fields = new Map();
+    } else if (fields) {
+      const field = line.match(/^\s+([A-Za-z][A-Za-z. ]*?):\s?(.*)$/);
+      if (field && !fields.has(field[1])) fields.set(field[1], field[2].trim());
+    }
+  }
+  flush();
+  return items;
+}
+
+/** Items of the current user, of root and of "all users" (uid -2). Read-only: never calls resetbtm. */
+export async function getBackgroundItems(): Promise<{ items: BackgroundItem[]; error: string | null }> {
+  const result = await capture(["sfltool", "dumpbtm"], 15_000);
+  if (result.code !== 0) return { items: [], error: result.stderr || "Could not read the background items." };
+  return { items: parseBtmDump(result.stdout, [process.getuid?.() ?? 501, 0, -2]), error: null };
 }
 
 /** Names of the user's Shortcuts, for the "Shortcut" run kind (/usr/bin/shortcuts run <name>). */

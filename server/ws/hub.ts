@@ -110,8 +110,9 @@ export function refreshServices() {
 export function startPolling() {
   // ── launchd job changes — pushed as they happen ───────────────────
   onJobEvent((event) => {
+    // A connected web client shows a browser notification itself. notifyNatively honours the monitor settings.
     if (hasSubscribers("job-events")) broadcast("job-events", "update", event);
-    else notifyNatively(event);
+    else void notifyNatively(event);
     refreshServices();
   });
 
