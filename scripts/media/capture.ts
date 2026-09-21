@@ -8,7 +8,7 @@
  * Needs Google Chrome and ffmpeg.
  */
 
-import { existsSync, mkdirSync, rmSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 import puppeteer, { type Page } from "puppeteer-core";
 import * as demo from "./demo-data";
@@ -48,7 +48,7 @@ function api(method: string, url: URL): unknown {
     case "/health": return { status: "ok" };
     case "/system/stats": return demo.systemStats();
     case "/system/hardware": return demo.hardware;
-    case "/system/version": return { version: JSON.parse(require("fs").readFileSync(join(ROOT, "package.json"), "utf8")).version };
+    case "/system/version": return { version: JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version };
     case "/services": { const services = demo.services(); return { services, count: services.length }; }
     case "/services/detail": return demo.detail(label, q.get("category") ?? "");
     case "/services/job": {
@@ -132,7 +132,7 @@ async function recordFor(page: Page, ms: number) {
   }
 }
 
-async function clickText(page: Page, text: string, selector = "button, [role=button], [role=tab], [role=radio], [role=menuitem]") {
+async function clickText(page: Page, text: string, selector = "a, button, [role=button], [role=tab], [role=radio], [role=menuitem]") {
   const ok = await page.evaluate(
     (text, selector) => {
       const el = [...document.querySelectorAll<HTMLElement>(selector)].find((e) => (e.getAttribute("aria-label") || e.textContent || "").trim().startsWith(text));
@@ -151,7 +151,10 @@ async function shot(page: Page, name: string) {
 }
 
 async function typeInto(page: Page, selector: string, text: string, delay = 45) {
-  await page.click(selector, { clickCount: 3 });
+  await page.$eval(selector, (el) => {
+    (el as HTMLInputElement).focus();
+    (el as HTMLInputElement).select();
+  });
   for (const ch of text) {
     await page.keyboard.type(ch);
     await recordFor(page, delay);
@@ -286,13 +289,71 @@ async function demoGif(browser: Awaited<ReturnType<typeof puppeteer.launch>>) {
   console.log("  demo.gif, demo.mp4");
 }
 
+/**
+ * Web-sized copies for the GitHub Pages site (website/media): WebP plus a PNG fallback, WebM plus MP4.
+ * Chrome does the image work in a canvas, so no WebP tool has to be installed.
+ */
+async function publishToWebsite(browser: Awaited<ReturnType<typeof puppeteer.launch>>) {
+  console.log("Website media");
+  const site = join(ROOT, "website/media");
+  mkdirSync(site, { recursive: true });
+  const ffmpeg = (args: string[]) => {
+    const p = Bun.spawnSync(["ffmpeg", "-y", "-loglevel", "error", ...args]);
+    if (p.exitCode !== 0) throw new Error(`ffmpeg failed: ${p.stderr.toString()}`);
+  };
+
+  const mp4 = join(OUT, "demo.mp4");
+  const poster = join(OUT, ".poster.png");
+  if (existsSync(mp4)) {
+    copyFileSync(mp4, join(site, "demo.mp4"));
+    ffmpeg(["-i", mp4, "-c:v", "libvpx-vp9", "-crf", "36", "-b:v", "0", "-an", join(site, "demo.webm")]);
+    ffmpeg(["-ss", "1", "-i", mp4, "-frames:v", "1", poster]);
+  }
+
+  const page = await browser.newPage();
+  await page.goto("about:blank");
+  const convert = async (source: string, name: string, png: boolean) => {
+    const dataUrl = `data:image/png;base64,${readFileSync(source).toString("base64")}`;
+    const out = await page.evaluate(
+      async (dataUrl, png) => {
+        const img = new Image();
+        img.src = dataUrl;
+        await img.decode();
+        const width = Math.min(1600, img.naturalWidth);
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = Math.round((img.naturalHeight * width) / img.naturalWidth);
+        const ctx = canvas.getContext("2d")!;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        return { webp: canvas.toDataURL("image/webp", 0.86), png: png ? canvas.toDataURL("image/png") : null };
+      },
+      dataUrl,
+      png
+    );
+    const write = (file: string, url: string) => writeFileSync(join(site, file), Buffer.from(url.slice(url.indexOf(",") + 1), "base64"));
+    write(`${name}.webp`, out.webp);
+    if (out.png) write(`${name}.png`, out.png);
+  };
+  for (const file of readdirSync(OUT).filter((f) => f.endsWith(".png") && !f.startsWith("."))) {
+    await convert(join(OUT, file), file.replace(/\.png$/, ""), true);
+  }
+  if (existsSync(poster)) {
+    await convert(poster, "demo-poster", false);
+    rmSync(poster);
+  }
+  await page.close();
+  console.log(`  ${readdirSync(site).length} files in website/media`);
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 mkdirSync(OUT, { recursive: true });
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--hide-scrollbars", "--force-color-profile=srgb"] });
 try {
   const only = process.argv[2];
-  if (only !== "gif") await screenshots(browser);
-  if (only !== "shots") await demoGif(browser);
+  if (only !== "gif" && only !== "site") await screenshots(browser);
+  if (only !== "shots" && only !== "site") await demoGif(browser);
+  await publishToWebsite(browser);
 } finally {
   await browser.close();
   server.stop(true);

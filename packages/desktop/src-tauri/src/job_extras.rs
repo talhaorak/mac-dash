@@ -20,10 +20,44 @@ const MAX_TAGS: usize = 20;
 const MAX_TAG_CHARS: usize = 40;
 const MAX_LABEL_CHARS: usize = 512;
 const MAX_ICON_EMOJI_CHARS: usize = 8;
-/// The whole data URL, not the decoded image.
+/// The WHOLE data URL string, not the decoded image.
 const MAX_ICON_URL_BYTES: usize = 48 * 1024;
-const ICON_URL_PREFIXES: [(&str, &[u8]); 2] =
-    [("data:image/png;base64,", b"\x89PNG\r\n\x1a\n"), ("data:image/jpeg;base64,", b"\xff\xd8\xff")];
+const ICON_URL_PREFIXES: [&str; 2] = ["data:image/png;base64,", "data:image/jpeg;base64,"];
+
+/// `\p{Extended_Pictographic}`, generated from the JavaScript engine of the Bun server (Unicode 15.1),
+/// so that both backends accept the same emoji. Sorted ranges, both ends included.
+#[rustfmt::skip]
+const EXTENDED_PICTOGRAPHIC: [(u32, u32); 156] = [
+    (0xA9, 0xA9), (0xAE, 0xAE), (0x203C, 0x203C), (0x2049, 0x2049), (0x2122, 0x2122), (0x2139, 0x2139),
+    (0x2194, 0x2199), (0x21A9, 0x21AA), (0x231A, 0x231B), (0x2328, 0x2328), (0x23CF, 0x23CF), (0x23E9, 0x23F3),
+    (0x23F8, 0x23FA), (0x24C2, 0x24C2), (0x25AA, 0x25AB), (0x25B6, 0x25B6), (0x25C0, 0x25C0), (0x25FB, 0x25FE),
+    (0x2600, 0x2604), (0x260E, 0x260E), (0x2611, 0x2611), (0x2614, 0x2615), (0x2618, 0x2618), (0x261D, 0x261D),
+    (0x2620, 0x2620), (0x2622, 0x2623), (0x2626, 0x2626), (0x262A, 0x262A), (0x262E, 0x262F), (0x2638, 0x263A),
+    (0x2640, 0x2640), (0x2642, 0x2642), (0x2648, 0x2653), (0x265F, 0x2660), (0x2663, 0x2663), (0x2665, 0x2666),
+    (0x2668, 0x2668), (0x267B, 0x267B), (0x267E, 0x267F), (0x2692, 0x2697), (0x2699, 0x2699), (0x269B, 0x269C),
+    (0x26A0, 0x26A1), (0x26A7, 0x26A7), (0x26AA, 0x26AB), (0x26B0, 0x26B1), (0x26BD, 0x26BE), (0x26C4, 0x26C5),
+    (0x26C8, 0x26C8), (0x26CE, 0x26CF), (0x26D1, 0x26D1), (0x26D3, 0x26D4), (0x26E9, 0x26EA), (0x26F0, 0x26F5),
+    (0x26F7, 0x26FA), (0x26FD, 0x26FD), (0x2702, 0x2702), (0x2705, 0x2705), (0x2708, 0x270D), (0x270F, 0x270F),
+    (0x2712, 0x2712), (0x2714, 0x2714), (0x2716, 0x2716), (0x271D, 0x271D), (0x2721, 0x2721), (0x2728, 0x2728),
+    (0x2733, 0x2734), (0x2744, 0x2744), (0x2747, 0x2747), (0x274C, 0x274C), (0x274E, 0x274E), (0x2753, 0x2755),
+    (0x2757, 0x2757), (0x2763, 0x2764), (0x2795, 0x2797), (0x27A1, 0x27A1), (0x27B0, 0x27B0), (0x27BF, 0x27BF),
+    (0x2934, 0x2935), (0x2B05, 0x2B07), (0x2B1B, 0x2B1C), (0x2B50, 0x2B50), (0x2B55, 0x2B55), (0x3030, 0x3030),
+    (0x303D, 0x303D), (0x3297, 0x3297), (0x3299, 0x3299), (0x1F004, 0x1F004), (0x1F02C, 0x1F02F), (0x1F094, 0x1F09F),
+    (0x1F0AF, 0x1F0B0), (0x1F0C0, 0x1F0C0), (0x1F0CF, 0x1F0D0), (0x1F0F6, 0x1F0FF), (0x1F170, 0x1F171),
+    (0x1F17E, 0x1F17F), (0x1F18E, 0x1F18E), (0x1F191, 0x1F19A), (0x1F1AE, 0x1F1E5), (0x1F201, 0x1F20F),
+    (0x1F21A, 0x1F21A), (0x1F22F, 0x1F22F), (0x1F232, 0x1F23A), (0x1F23C, 0x1F23F), (0x1F249, 0x1F25F),
+    (0x1F266, 0x1F321), (0x1F324, 0x1F393), (0x1F396, 0x1F397), (0x1F399, 0x1F39B), (0x1F39E, 0x1F3F0),
+    (0x1F3F3, 0x1F3F5), (0x1F3F7, 0x1F3FA), (0x1F400, 0x1F4FD), (0x1F4FF, 0x1F53D), (0x1F549, 0x1F54E),
+    (0x1F550, 0x1F567), (0x1F56F, 0x1F570), (0x1F573, 0x1F57A), (0x1F587, 0x1F587), (0x1F58A, 0x1F58D),
+    (0x1F590, 0x1F590), (0x1F595, 0x1F596), (0x1F5A4, 0x1F5A5), (0x1F5A8, 0x1F5A8), (0x1F5B1, 0x1F5B2),
+    (0x1F5BC, 0x1F5BC), (0x1F5C2, 0x1F5C4), (0x1F5D1, 0x1F5D3), (0x1F5DC, 0x1F5DE), (0x1F5E1, 0x1F5E1),
+    (0x1F5E3, 0x1F5E3), (0x1F5E8, 0x1F5E8), (0x1F5EF, 0x1F5EF), (0x1F5F3, 0x1F5F3), (0x1F5FA, 0x1F64F),
+    (0x1F680, 0x1F6C5), (0x1F6CB, 0x1F6D2), (0x1F6D5, 0x1F6E5), (0x1F6E9, 0x1F6E9), (0x1F6EB, 0x1F6F0),
+    (0x1F6F3, 0x1F6FF), (0x1F7DA, 0x1F7FF), (0x1F80C, 0x1F80F), (0x1F848, 0x1F84F), (0x1F85A, 0x1F85F),
+    (0x1F888, 0x1F88F), (0x1F8AE, 0x1F8AF), (0x1F8BC, 0x1F8BF), (0x1F8C2, 0x1F8CF), (0x1F8D9, 0x1F8FF),
+    (0x1F90C, 0x1F93A), (0x1F93C, 0x1F945), (0x1F947, 0x1F9FF), (0x1FA58, 0x1FA5F), (0x1FA6E, 0x1FAFF),
+    (0x1FC00, 0x1FFFD),
+];
 const MAX_REVISION_BYTES: u64 = 4 * 1024 * 1024;
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
@@ -78,49 +112,73 @@ fn to_job_meta(value: &serde_json::Value) -> Option<JobMeta> {
     Some(JobMeta { notes, tags, icon })
 }
 
-/// Characters that emoji are made of: pictographs, symbols, and the joiners and modifiers between them.
-fn is_emoji_char(c: char) -> bool {
-    matches!(u32::from(c),
-        0x00A9 | 0x00AE | 0x203C | 0x2049 | 0x2122 | 0x2139 | 0x3030 | 0x303D | 0x3297 | 0x3299
-        | 0x2190..=0x21FF | 0x2300..=0x23FF | 0x2460..=0x24FF | 0x25A0..=0x27BF | 0x2900..=0x297F | 0x2B00..=0x2BFF
-        | 0x1F000..=0x1FAFF
-        | 0x200D | 0xFE0F | 0x20E3 | 0xE0020..=0xE007F)
+fn is_extended_pictographic(c: char) -> bool {
+    let code = u32::from(c);
+    EXTENDED_PICTOGRAPHIC.binary_search_by(|(first, last)| {
+        if code < *first { std::cmp::Ordering::Greater } else if code > *last { std::cmp::Ordering::Less } else { std::cmp::Ordering::Equal }
+    }).is_ok()
 }
 
-fn is_emoji_joiner(c: char) -> bool {
-    matches!(u32::from(c), 0x200D | 0xFE0F | 0x20E3 | 0xE0020..=0xE007F)
+fn is_regional_indicator(c: char) -> bool {
+    matches!(u32::from(c), 0x1F1E6..=0x1F1FF)
 }
 
-/// An emoji of at most 8 characters: 👍, 👨‍👩‍👧, 🇹🇷, 1️⃣. Letters, markup and control characters never pass.
+fn is_keycap_base(c: char) -> bool {
+    matches!(c, '0'..='9' | '#' | '*')
+}
+
+/// `\p{Emoji_Component}` without the keycap bases: ZWJ, keycap, VS16, regional indicators, skin tones,
+/// hair components and tag characters.
+fn is_emoji_component(c: char) -> bool {
+    matches!(u32::from(c), 0x200D | 0x20E3 | 0xFE0F | 0x1F1E6..=0x1F1FF | 0x1F3FB..=0x1F3FF | 0x1F9B0..=0x1F9B3 | 0xE0020..=0xE007F)
+}
+
+/// An emoji of at most 8 code points (one family emoji is seven of them): 🚀, ⚙️, 🇹🇷, 1️⃣, 👍🏽.
+/// Every code point is pictographic or an emoji component. A digit, "#" or "*" only counts in a keycap
+/// sequence, before U+FE0F U+20E3 or U+20E3. At least one code point is pictographic, a regional
+/// indicator or the keycap, so that "1234" and "#" are no emoji.
 fn is_emoji_icon(icon: &str) -> bool {
-    let keycap = icon.contains('\u{20E3}');
-    let count = icon.chars().count();
-    (1..=MAX_ICON_EMOJI_CHARS).contains(&count)
-        && icon.chars().all(|c| is_emoji_char(c) || (keycap && matches!(c, '0'..='9' | '#' | '*')))
-        && icon.chars().any(|c| !is_emoji_joiner(c))
-}
-
-/// A `data:image/png;base64,` or `data:image/jpeg;base64,` URL of at most 48 KB whose payload really is
-/// base64 of that image type. SVG never passes: it can carry script.
-fn is_image_data_url(icon: &str) -> bool {
-    use base64::Engine;
-    if icon.len() > MAX_ICON_URL_BYTES {
+    let chars: Vec<char> = icon.chars().collect();
+    if chars.is_empty() || chars.len() > MAX_ICON_EMOJI_CHARS {
         return false;
     }
-    ICON_URL_PREFIXES.iter().any(|(prefix, magic)| {
-        icon.strip_prefix(prefix)
-            .and_then(|payload| base64::engine::general_purpose::STANDARD.decode(payload).ok())
-            .is_some_and(|bytes| bytes.starts_with(magic))
+    let parts_ok = chars.iter().enumerate().all(|(at, c)| {
+        if is_keycap_base(*c) {
+            matches!(chars.get(at + 1..), Some(['\u{FE0F}', '\u{20E3}', ..]) | Some(['\u{20E3}', ..]))
+        } else {
+            is_extended_pictographic(*c) || is_emoji_component(*c)
+        }
+    });
+    parts_ok && chars.iter().any(|c| is_extended_pictographic(*c) || is_regional_indicator(*c) || *c == '\u{20E3}')
+}
+
+/// `^data:image/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$`. SVG never passes: it can carry script.
+/// The payload alphabet cannot break out of an attribute.
+fn is_image_data_url(icon: &str) -> bool {
+    ICON_URL_PREFIXES.iter().filter_map(|prefix| icon.strip_prefix(prefix)).any(|payload| {
+        let data = payload.trim_end_matches('=');
+        let padding = payload.len() - data.len();
+        !data.is_empty() && padding <= 2 && data.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
     })
 }
 
-/// None: no icon. Err: a value that is neither an emoji nor a PNG/JPEG data URL.
+/// None: no icon. Err: a value that is neither an emoji nor a PNG/JPEG data URL. Same rules and
+/// texts as `checkJobIcon()` of the Bun server. Nothing is trimmed: "🚀 " is not an emoji.
 fn clean_icon(icon: Option<&str>) -> Result<Option<String>, String> {
-    match icon.map(str::trim).filter(|icon| !icon.is_empty()) {
-        None => Ok(None),
-        Some(icon) if is_emoji_icon(icon) || is_image_data_url(icon) => Ok(Some(icon.to_string())),
-        Some(_) => Err("The icon must be an emoji or a PNG or JPEG image of at most 48 KB.".to_string()),
+    let Some(icon) = icon.filter(|icon| !icon.is_empty()) else {
+        return Ok(None);
+    };
+    if icon.starts_with("data:") {
+        if icon.len() > MAX_ICON_URL_BYTES {
+            return Err("The icon image is larger than 48 KB.".to_string());
+        }
+        if !is_image_data_url(icon) {
+            return Err("The icon image must be a base64 PNG or JPEG data URL.".to_string());
+        }
+    } else if !is_emoji_icon(icon) {
+        return Err("The icon must be an emoji of at most 8 characters or a PNG or JPEG image.".to_string());
     }
+    Ok(Some(icon.to_string()))
 }
 
 pub async fn get_job_meta() -> BTreeMap<String, JobMeta> {
@@ -418,29 +476,59 @@ mod tests {
     const PNG_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
     const JPEG_URL: &str = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgM=";
 
+    /// The cases of `checkJobIcon` in server/core/job-extras.test.ts, plus a few more.
     #[test]
     fn icons() {
-        for emoji in ["👍", "⚙️", "🗂", "👨‍👩‍👧", "🇹🇷", "1️⃣", "#️⃣", "✅", "⭐", "❤️", "👋🏽", "©️"] {
-            assert_eq!(clean_icon(Some(emoji)), Ok(Some(emoji.to_string())), "{}", emoji);
-        }
-        assert_eq!(clean_icon(Some(PNG_URL)), Ok(Some(PNG_URL.to_string())));
-        assert_eq!(clean_icon(Some(JPEG_URL)), Ok(Some(JPEG_URL.to_string())));
-        assert_eq!(clean_icon(Some(" 👍 ")), Ok(Some("👍".to_string())));
-        // No icon
         assert_eq!(clean_icon(None), Ok(None));
         assert_eq!(clean_icon(Some("")), Ok(None));
-        assert_eq!(clean_icon(Some("   ")), Ok(None));
 
-        let too_long = "👍".repeat(9);
-        let too_big = format!("data:image/png;base64,{}", "A".repeat(MAX_ICON_URL_BYTES));
-        let svg = "data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9ImFsZXJ0KDEpIi8+";
-        let svg_as_png = "data:image/png;base64,PHN2ZyBvbmxvYWQ9ImFsZXJ0KDEpIi8+";
+        // Emoji, also sequences of several code points
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}"; // 7 code points, 11 UTF-16 units
+        for emoji in ["\u{1F680}", "\u{2699}\u{FE0F}", "\u{1F1F9}\u{1F1F7}", "1\u{FE0F}\u{20E3}", "\u{1F44D}\u{1F3FD}", family, "#\u{FE0F}\u{20E3}", "*\u{20E3}", "✅", "⭐", "❤️", "©️", "🗂"] {
+            assert_eq!(clean_icon(Some(emoji)), Ok(Some(emoji.to_string())), "{}", emoji);
+        }
+
+        // A PNG or JPEG data URL up to 48 KB, measured on the whole string
+        assert_eq!(clean_icon(Some("data:image/png;base64,iVBORw0KGgo=")), Ok(Some("data:image/png;base64,iVBORw0KGgo=".to_string())));
+        assert_eq!(clean_icon(Some("data:image/jpeg;base64,/9j/4AAQ")), Ok(Some("data:image/jpeg;base64,/9j/4AAQ".to_string())));
+        assert_eq!(clean_icon(Some(PNG_URL)), Ok(Some(PNG_URL.to_string())));
+        assert_eq!(clean_icon(Some(JPEG_URL)), Ok(Some(JPEG_URL.to_string())));
+        let prefix = "data:image/png;base64,";
+        let largest = format!("{}{}", prefix, "A".repeat(48 * 1024 - prefix.len()));
+        assert_eq!(clean_icon(Some(&largest)).unwrap().unwrap().len(), 48 * 1024);
+        let too_big = format!("{}A", largest);
+        assert_eq!(clean_icon(Some(&too_big)).unwrap_err(), "The icon image is larger than 48 KB.");
+
+        // Everything else
+        let nine = "\u{1F680}".repeat(9);
         for bad in [
-            "abc", "A", "1", "#", "12", "<b>", "👍a", "a👍", "\u{200D}", "\u{FE0F}\u{200D}", "👍\n👍", "👍 👍", too_long.as_str(), too_big.as_str(),
-            svg, svg_as_png, "data:image/png;base64,", "data:image/png;base64,not base64!", "data:image/gif;base64,R0lGODlhAQABAAAAACw=",
-            "data:text/html;base64,PGI+", "javascript:alert(1)", "https://example.com/icon.png", "DATA:IMAGE/PNG;BASE64,iVBORw0KGgo=",
+            "A", "rocket", "1234", "#", "1", "*", "12\u{20E3}", "\u{200D}", "\u{FE0F}\u{200D}", "\u{1F3FD}", nine.as_str(),
+            "\u{1F680}<script>", "\u{1F680} ", " \u{1F680}", "\u{1F680}\n", "   ", "a\u{1F680}",
+            "https://example.com/icon.png", "javascript:alert(1)",
         ] {
-            assert!(clean_icon(Some(bad)).is_err(), "{:?}", bad.chars().take(40).collect::<String>());
+            assert_eq!(clean_icon(Some(bad)).unwrap_err(), "The icon must be an emoji of at most 8 characters or a PNG or JPEG image.", "{:?}", bad);
+        }
+        for bad in [
+            "data:image/svg+xml;base64,PHN2Zz4=", "data:image/gif;base64,R0lGODlh", "data:image/png;base64,",
+            "data:image/png;base64,iVBOR w0K", "data:image/png,iVBORw0KGgo=", "data:image/png;base64,iVBO\"onerror=\"x",
+            "data:image/png;base64,====", "data:image/png;base64,AAAA===", "data:image/png;base64,AA=A", "data:text/html;base64,PGI+",
+        ] {
+            assert_eq!(clean_icon(Some(bad)).unwrap_err(), "The icon image must be a base64 PNG or JPEG data URL.", "{:?}", bad);
+        }
+        // The scheme is case-sensitive, like in the server: this one is no data URL and no emoji.
+        assert!(clean_icon(Some("DATA:IMAGE/PNG;BASE64,iVBORw0KGgo=")).is_err());
+    }
+
+    #[test]
+    fn pictographic_table() {
+        assert!(EXTENDED_PICTOGRAPHIC.windows(2).all(|pair| pair[0].1 < pair[1].0), "sorted and disjoint, for the binary search");
+        assert!(EXTENDED_PICTOGRAPHIC.iter().all(|(first, last)| first <= last));
+        for c in ['\u{A9}', '\u{2699}', '\u{1F680}', '\u{1F468}', '\u{1FAE0}', '\u{1F5C2}'] {
+            assert!(is_extended_pictographic(c), "{:?}", c);
+        }
+        // Skin tones, regional indicators and keycap parts are components, not pictographs.
+        for c in ['A', '1', '#', ' ', '\u{200D}', '\u{FE0F}', '\u{20E3}', '\u{1F3FD}', '\u{1F1F9}'] {
+            assert!(!is_extended_pictographic(c), "{:?}", c);
         }
     }
 

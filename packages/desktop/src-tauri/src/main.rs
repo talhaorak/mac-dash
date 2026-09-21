@@ -257,12 +257,12 @@ async fn get_job_signature(window: tauri::Window, label: String, category: Strin
 }
 
 #[tauri::command]
-async fn get_background_items(window: tauri::Window) -> ApiResult<Vec<startup_tools::BackgroundItem>> {
+async fn get_background_items(window: tauri::Window) -> ApiResult<std::sync::Arc<Vec<startup_tools::BackgroundItem>>> {
     main_window_only!(window);
     match startup_tools::get_background_items().await {
         Ok(items) => ok_result(items),
         // Contract: an empty list, and the stderr text as the error
-        Err(e) => ApiResult { ok: false, data: Some(Vec::new()), error: Some(e) },
+        Err(e) => ApiResult { ok: false, data: Some(Default::default()), error: Some(e) },
     }
 }
 

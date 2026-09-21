@@ -20,6 +20,8 @@ const SFLTOOL: &str = "/usr/bin/sfltool";
 const MAX_BROWSE_ENTRIES: usize = 1000;
 /// A folder with more names than this is cut before sorting, so that one request stays bounded.
 const MAX_BROWSE_SCAN: usize = 20_000;
+/// The client asks the user and sends the request again with `permanent: true`.
+const TRASH_COPY_FAILED: &str = "The file cannot be copied to the Trash. Delete it permanently?";
 const DEFAULT_PATH_TAIL: [&str; 4] = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin"];
 
 fn has_control_chars(text: &str) -> bool {
@@ -66,13 +68,14 @@ pub async fn delete_helper_tool(name: &str, permanent: bool) -> Result<(), Strin
         if !meta.is_file() {
             return Err("Helper tool not found.".to_string());
         }
+        if permanent {
+            return Ok(None); // the user confirmed: no Trash copy at all
+        }
         let dest = free_trash_path(&file_name);
         // The copy keeps the execute bits, without setuid and setgid.
-        match copy_exclusive_with_mode(&source, &dest, meta.permissions().mode() & 0o755) {
-            Ok(()) => Ok(Some(dest)),
-            Err(_) if permanent => Ok(None),
-            Err(_) => Err("The file cannot be copied to the Trash. Delete it permanently?".to_string()),
-        }
+        copy_exclusive_with_mode(&source, &dest, meta.permissions().mode() & 0o755)
+            .map(|()| Some(dest))
+            .map_err(|_| TRASH_COPY_FAILED.to_string())
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -88,7 +91,9 @@ pub async fn delete_helper_tool(name: &str, permanent: bool) -> Result<(), Strin
 const RESET_BACKGROUND_ITEMS_COMMAND: [&str; 2] = [SFLTOOL, "resetbtm"];
 
 pub async fn reset_background_items() -> Result<(), String> {
-    run_privileged_command(&RESET_BACKGROUND_ITEMS_COMMAND, "mac-dash wants to reset the background items of all apps.").await
+    run_privileged_command(&RESET_BACKGROUND_ITEMS_COMMAND, "mac-dash wants to reset the background-item approval of every app.").await?;
+    crate::startup_tools::clear_background_items_cache().await; // the kept answer of `dumpbtm` is wrong now
+    Ok(())
 }
 
 // ── Browse ───────────────────────────────────────────────────────────
@@ -137,9 +142,11 @@ fn normalize_browse_path(path: &str, home: &Path) -> Result<PathBuf, String> {
     Ok(normal)
 }
 
-/// Directories first, then by name without case.
+/// Directories first, then by lowercased name, then by name. Strings compare by UTF-16 code units, like
+/// `<` in JavaScript, so both backends return the same order. Not locale-aware.
 fn sort_browse_entries(entries: &mut [BrowseEntry]) {
-    entries.sort_by_cached_key(|entry| (!entry.is_directory, entry.name.to_lowercase(), entry.name.clone()));
+    let units = |text: &str| text.encode_utf16().collect::<Vec<u16>>();
+    entries.sort_by_cached_key(|entry| (!entry.is_directory, units(&entry.name.to_lowercase()), units(&entry.name)));
 }
 
 fn browse_folder(path: &str, home: &Path, limit: usize) -> Result<BrowseResult, String> {
@@ -385,6 +392,20 @@ mod tests {
         // A helper tool that does not exist fails before anything privileged happens.
         assert_eq!(delete_helper_tool("no.such.helper.tool.macdash-test", false).await.unwrap_err(), "Helper tool not found.");
         assert_eq!(delete_helper_tool("../etc/hosts", true).await.unwrap_err(), "Invalid helper tool name.");
+    }
+
+    #[test]
+    fn browse_order_is_by_code_units() {
+        let entry = |name: &str, is_directory: bool| BrowseEntry { name: name.into(), is_directory, is_app: false, executable: false, hidden: false };
+        let mut entries = vec![
+            entry("b.txt", false), entry("a.txt", false), entry("B.txt", false), entry("Zebra", true), entry("apple", true),
+            entry("_x", false), entry("10", false), entry("9", false), entry("ä", false), entry("z", false),
+            entry("\u{1F600}", false), entry("\u{FB01}", false), // an emoji (surrogates in UTF-16) sorts before U+FB01
+        ];
+        sort_browse_entries(&mut entries);
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        // Expected order from `sortBrowseEntries()` of the Bun server.
+        assert_eq!(names, vec!["apple", "Zebra", "10", "9", "_x", "a.txt", "B.txt", "b.txt", "z", "ä", "\u{1F600}", "\u{FB01}"]);
     }
 
     #[test]

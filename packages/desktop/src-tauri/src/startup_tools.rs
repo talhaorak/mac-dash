@@ -11,7 +11,9 @@ use crate::services::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
 
 const CODESIGN: &str = "/usr/bin/codesign";
 const SFLTOOL: &str = "/usr/bin/sfltool";
@@ -246,8 +248,62 @@ fn parse_dumpbtm(text: &str, wanted_uids: &[i64]) -> Vec<BackgroundItem> {
     items
 }
 
-/// Read-only: `sfltool dumpbtm`. Never `resetbtm`.
-pub async fn get_background_items() -> Result<Vec<BackgroundItem>, String> {
+/// How long a good answer of `sfltool dumpbtm` is kept.
+const BACKGROUND_ITEMS_TTL: Duration = Duration::from_secs(120);
+
+type BackgroundItemsResult = Result<Arc<Vec<BackgroundItem>>, String>;
+
+/// `sfltool dumpbtm` usually answers in 5 s, but needs half a minute on a busy Mac and gets slower when
+/// several copies run at once. One run at a time: callers that arrive during a run share its result,
+/// also a failure. A good answer is kept for two minutes. A failure is never kept.
+#[derive(Default)]
+struct BackgroundItemsCache {
+    state: tokio::sync::Mutex<BackgroundItemsState>,
+    /// Number of finished runs. A caller that waited for the lock sees here that a run ended meanwhile.
+    finished: AtomicU64,
+}
+
+#[derive(Default)]
+struct BackgroundItemsState {
+    last: Option<BackgroundItemsResult>,
+    good_at: Option<Instant>,
+}
+
+impl BackgroundItemsCache {
+    async fn get<F, Fut>(&self, ttl: Duration, run: F) -> BackgroundItemsResult
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<BackgroundItem>, String>>,
+    {
+        let finished_before = self.finished.load(Ordering::SeqCst);
+        let mut state = self.state.lock().await; // held for the whole run: this is the queue
+        if let (Some(Ok(items)), Some(at)) = (&state.last, state.good_at) {
+            if at.elapsed() < ttl {
+                return Ok(Arc::clone(items));
+            }
+        }
+        if self.finished.load(Ordering::SeqCst) != finished_before {
+            if let Some(shared) = &state.last {
+                return shared.clone(); // the run that this caller waited for
+            }
+        }
+        let result = run().await.map(Arc::new);
+        state.good_at = result.is_ok().then(Instant::now);
+        state.last = Some(result.clone());
+        self.finished.fetch_add(1, Ordering::SeqCst);
+        result
+    }
+
+    async fn clear(&self) {
+        let mut state = self.state.lock().await;
+        state.last = None;
+        state.good_at = None;
+    }
+}
+
+static BACKGROUND_ITEMS: LazyLock<BackgroundItemsCache> = LazyLock::new(BackgroundItemsCache::default);
+
+async fn dump_background_items() -> Result<Vec<BackgroundItem>, String> {
     let result = run_with_timeout(&[SFLTOOL, "dumpbtm"], Some(DUMPBTM_TIMEOUT)).await;
     if result.code != 0 {
         return Err(if result.stderr.is_empty() { "Could not read the background items.".to_string() } else { result.stderr });
@@ -255,6 +311,16 @@ pub async fn get_background_items() -> Result<Vec<BackgroundItem>, String> {
     let wanted = [i64::from(uid()), 0, -2];
     let text = result.stdout;
     tokio::task::spawn_blocking(move || parse_dumpbtm(&text, &wanted)).await.map_err(|e| e.to_string())
+}
+
+/// Read-only: `sfltool dumpbtm`. Never `resetbtm`.
+pub async fn get_background_items() -> Result<Arc<Vec<BackgroundItem>>, String> {
+    BACKGROUND_ITEMS.get(BACKGROUND_ITEMS_TTL, dump_background_items).await
+}
+
+/// After `sfltool resetbtm` the kept answer is wrong.
+pub(crate) async fn clear_background_items_cache() {
+    BACKGROUND_ITEMS.clear().await;
 }
 
 // ── Login items ──────────────────────────────────────────────────────
@@ -765,6 +831,59 @@ mod tests {
         assert_eq!(json["executablePath"], serde_json::Value::Null);
         assert_eq!(json["parentIdentifier"], "2.com.docker.docker");
         assert_eq!(json["teamIdentifier"], "9BNSXJN65R");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn background_items_run_once_at_a_time_and_are_cached() {
+        use std::sync::atomic::AtomicUsize;
+        static RUNS: AtomicUsize = AtomicUsize::new(0);
+        static RUNNING: AtomicUsize = AtomicUsize::new(0);
+        static FAIL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+        async fn fake_dump() -> Result<Vec<BackgroundItem>, String> {
+            assert_eq!(RUNNING.fetch_add(1, Ordering::SeqCst), 0, "two runs at the same time");
+            let run = RUNS.fetch_add(1, Ordering::SeqCst) + 1;
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            RUNNING.fetch_sub(1, Ordering::SeqCst);
+            if FAIL.load(Ordering::SeqCst) {
+                return Err(format!("failure {}", run));
+            }
+            Ok(vec![BackgroundItem { name: format!("run {}", run), ..BackgroundItem::default() }])
+        }
+        let cache = Arc::new(BackgroundItemsCache::default());
+        let ttl = Duration::from_secs(120);
+        let burst = |cache: &Arc<BackgroundItemsCache>, ttl: Duration| {
+            let calls: Vec<_> = (0..6).map(|_| { let cache = Arc::clone(cache); tokio::spawn(async move { cache.get(ttl, fake_dump).await }) }).collect();
+            async move {
+                let mut results = Vec::new();
+                for call in calls {
+                    results.push(call.await.unwrap());
+                }
+                results
+            }
+        };
+
+        // Six callers at once: one run, and everybody gets its result.
+        let results = burst(&cache, ttl).await;
+        assert_eq!(RUNS.load(Ordering::SeqCst), 1);
+        assert!(results.iter().all(|r| r.as_ref().unwrap()[0].name == "run 1"));
+        // Within the two minutes: no new run.
+        assert_eq!(cache.get(ttl, fake_dump).await.unwrap()[0].name, "run 1");
+        assert_eq!(RUNS.load(Ordering::SeqCst), 1);
+
+        // `reset_background_items` clears the answer.
+        cache.clear().await;
+        assert_eq!(cache.get(ttl, fake_dump).await.unwrap()[0].name, "run 2");
+        // An old answer is not used.
+        assert_eq!(cache.get(Duration::ZERO, fake_dump).await.unwrap()[0].name, "run 3");
+
+        // A failure is shared by the callers that waited for it, but it is never kept.
+        FAIL.store(true, Ordering::SeqCst);
+        let results = burst(&cache, Duration::ZERO).await;
+        assert_eq!(RUNS.load(Ordering::SeqCst), 4);
+        assert!(results.iter().all(|r| r.as_ref().unwrap_err() == "failure 4"));
+        FAIL.store(false, Ordering::SeqCst);
+        assert_eq!(cache.get(ttl, fake_dump).await.unwrap()[0].name, "run 5");
     }
 
     #[test]

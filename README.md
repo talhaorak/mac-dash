@@ -7,14 +7,14 @@
 <h1 align="center">mac-dash</h1>
 
 <p align="center">
-  <strong>Beautiful real-time macOS system dashboard</strong><br />
-  Monitor services, processes, CPU, memory, disk and logs — all from your browser.
+  <strong>See, create and edit every launchd job on your Mac</strong><br />
+  Plus processes, logs and system load. Open source, as a desktop app or in your browser.
 </p>
 
 <p align="center">
   <a href="https://github.com/talhaorak/mac-dash/actions/workflows/ci.yml"><img src="https://github.com/talhaorak/mac-dash/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://www.npmjs.com/package/@talhaorak/mac-dash"><img src="https://img.shields.io/npm/v/mac-dash.svg?color=06b6d4" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/mac-dash"><img src="https://img.shields.io/npm/dm/mac-dash.svg?color=8b5cf6" alt="npm downloads" /></a>
+  <a href="https://www.npmjs.com/package/@talhaorak/mac-dash"><img src="https://img.shields.io/npm/v/%40talhaorak%2Fmac-dash.svg?color=06b6d4" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@talhaorak/mac-dash"><img src="https://img.shields.io/npm/dm/%40talhaorak%2Fmac-dash.svg?color=8b5cf6" alt="npm downloads" /></a>
   <a href="https://github.com/talhaorak/mac-dash/blob/master/LICENSE"><img src="https://img.shields.io/github/license/talhaorak/mac-dash?color=22c55e" alt="License" /></a>
   <a href="https://github.com/talhaorak/mac-dash/stargazers"><img src="https://img.shields.io/github/stars/talhaorak/mac-dash?style=social" alt="GitHub Stars" /></a>
 </p>
@@ -27,17 +27,30 @@
   <a href="https://buymeacoffee.com/talhao">Sponsor</a>
 </p>
 
+<p align="center">
+  <img src="docs/media/demo.gif" alt="Creating a scheduled launchd job in mac-dash, then looking at the timeline, the job details and the change history" width="880" />
+</p>
+
 ---
 
 ## What is mac-dash?
 
-mac-dash is a lightweight, real-time system dashboard for macOS. It runs a local web server and gives you a beautiful browser-based interface to:
+mac-dash is a launchd job manager and system dashboard for macOS:
 
-- **Monitor** CPU, memory, and disk usage with live gauges and charts
-- **Manage** LaunchAgents and LaunchDaemons (start, stop, enable, disable)
-- **Explore** running processes (sort, filter, kill)
-- **Stream** macOS unified logs in real-time
+- **Create and edit** LaunchAgents and LaunchDaemons: a form for every `launchd.plist` key, an XML expert mode, checks, templates, revisions
+- **Watch** the launchd folders: a history and a notification when any app adds, changes or removes a job, or when a job starts to fail
+- **Verify** who runs on your Mac: code signatures, login items, background items, privileged helper tools
+- **Monitor** CPU, memory and disk, **explore** processes, **stream** the unified log
 - **Extend** with plugins
+
+| | |
+| --- | --- |
+| ![Services grouped by scope, with smart folders and filters](docs/media/services.png) | ![The job editor: run kind, triggers and checks](docs/media/job-editor.png) |
+| ![Expert mode: the plist as XML with syntax colours](docs/media/job-editor-xml.png) | ![Timeline of the next scheduled runs](docs/media/timeline.png) |
+| ![Job details with the verified code signature](docs/media/job-details.png) | ![Change history of the launchd folders](docs/media/job-changes.png) |
+| ![Dashboard with CPU, memory and disk](docs/media/dashboard.png) | ![Light appearance](docs/media/services-light.png) |
+
+The screenshots use fictional data. `bun run media` regenerates them.
 
 Available as both a **native desktop app** (Tauri) and a **web server** (Bun + Hono). Desktop app uses native macOS APIs — no HTTP server, no Node.js, minimal overhead.
 
